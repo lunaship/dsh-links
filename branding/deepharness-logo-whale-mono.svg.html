@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; padding: 0; width: 1536px; height: 1536px; overflow: hidden; background: #FFFFFF; }
+  svg { display: block; }
+</style>
+</head>
+<body>
+<svg xmlns="http://www.w3.org/2000/svg" width="1536" height="1536" viewBox="0 0 1536 1536">
+  <defs>
+    <clipPath id="body">
+      <ellipse cx="500" cy="1150" rx="580" ry="480"/>
+      <circle cx="1000" cy="780" r="370"/>
+    </clipPath>
+    <radialGradient id="hl" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0"    stop-color="#687CF6" stop-opacity="0.80"/>
+      <stop offset="0.55" stop-color="#687CF6" stop-opacity="0.28"/>
+      <stop offset="1"    stop-color="#687CF6" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="1536" height="1536" fill="#FFFFFF"/>
+
+  <!-- 尾鳍：上叶片朝上，下叶片朝左（更水平），粗柄 -->
+  <ellipse cx="170" cy="400" rx="120" ry="180" fill="#586EF5" transform="rotate(-15 170 400)"/>
+  <ellipse cx="140" cy="720" rx="155" ry="85"  fill="#586EF5" transform="rotate(5 140 720)"/>
+  <ellipse cx="320" cy="570" rx="150" ry="195" fill="#586EF5" transform="rotate(10 320 570)"/>
+
+  <!-- 胸鳍 -->
+  <path d="M920 1150 L1070 1210" stroke="#586EF5" stroke-width="130" stroke-linecap="round"/>
+
+  <!-- 主体 + 高光 + 缰绳 -->
+  <g clip-path="url(#body)">
+    <rect width="1536" height="1536" fill="#586EF5"/>
+    <ellipse cx="850" cy="650" rx="280" ry="230" fill="url(#hl)"/>
+    <rect x="530" y="1090" width="480" height="130" rx="65" fill="#4F63DC" opacity="0.88"
+          transform="rotate(52 770 1155)"/>
+  </g>
+
+  <!-- 面部 -->
+  <g clip-path="url(#body)">
+    <circle cx="1100" cy="720" r="48" fill="#FFFFFF"/>
+    <circle cx="1210" cy="720" r="48" fill="#FFFFFF"/>
+    <path d="M1060 940 Q1180 1010 1300 910" fill="none" stroke="#FFFFFF"
+          stroke-width="58" stroke-linecap="round"/>
+    <circle cx="760" cy="1140" r="48" fill="#FFFFFF"/>
+    <circle cx="760" cy="1140" r="24" fill="#4F63DC"/>
+  </g>
+
+  <!-- 喷水 -->
+  <circle cx="980" cy="400" r="55"  fill="#586EF5"/>
+  <circle cx="1020" cy="325" r="40"  fill="#586EF5"/>
+  <circle cx="1075" cy="250" r="35" fill="#586EF5"/>
+</svg>
+</body>
+</html>
