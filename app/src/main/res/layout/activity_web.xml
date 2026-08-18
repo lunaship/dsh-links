@@ -52,5 +52,19 @@
             android:text="重试"
             android:textColor="@color/ink_text_primary"
             android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/web_fallback"
+            android:layout_width="wrap_content"
+            android:layout_height="48dp"
+            android:layout_marginTop="8dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:minWidth="112dp"
+            android:paddingHorizontal="20dp"
+            android:text="使用原生工作台（回退）"
+            android:textColor="@color/ink_text_secondary"
+            android:textSize="13sp" />
     </LinearLayout>
 </FrameLayout>

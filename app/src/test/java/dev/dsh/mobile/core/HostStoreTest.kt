@@ -9,12 +9,20 @@ class HostStoreTest {
     @Test
     fun `json 序列化往返一致`() {
         val hosts = listOf(
-            Host("书房", "http://10.0.0.2:18640", "tok-1"),
+            Host("书房", "http://10.0.0.2:18640", "tok-1", "dev-abc"),
             Host("办公室", "https://dsh.example.com", "tok-2"),
         )
         val json = HostStore.hostsToJson(hosts)
         val parsed = HostStore.hostsFromJson(json)
         assertEquals(hosts, parsed)
+    }
+
+    @Test
+    fun `旧数据无 deviceId 时兼容为空串`() {
+        val legacy = """[{"name":"老设备","baseUrl":"http://1:18640","token":"t"}]"""
+        val parsed = HostStore.hostsFromJson(legacy)
+        assertEquals("", parsed[0].deviceId)
+        assertEquals("老设备", parsed[0].name)
     }
 
     @Test

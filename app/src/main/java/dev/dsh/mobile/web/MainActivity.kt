@@ -1,4 +1,5 @@
 package dev.dsh.mobile.web
+import dev.dsh.mobile.devices.WorkspaceLauncher
 import dev.dsh.mobile.R
 import dev.dsh.mobile.core.Host
 import dev.dsh.mobile.core.DeviceName
@@ -144,10 +145,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun openWeb(host: Host) {
         startActivity(
-            Intent(this, WebActivity::class.java).apply {
-                putExtra("name", host.name)
+            Intent(this, WorkspaceLauncher::class.java).apply {
                 putExtra("baseUrl", host.baseUrl)
-                putExtra("token", host.token)
             },
         )
     }

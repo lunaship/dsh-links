@@ -8,7 +8,6 @@ import dev.dsh.mobile.core.DeviceName
 import dev.dsh.mobile.core.DshTheme
 import dev.dsh.mobile.core.HostStore
 import dev.dsh.mobile.core.PairClient
-import dev.dsh.mobile.native.WorkspaceActivity
 
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
@@ -88,7 +87,7 @@ class DevicesActivity : ComponentActivity() {
                                 onDone(ok)
                                 if (ok) {
                                     HostStore.upsert(this, host)
-                                    startActivity(Intent(this, WorkspaceActivity::class.java))
+                                    startActivity(Intent(this, WorkspaceLauncher::class.java).putExtra("baseUrl", host.baseUrl))
                                 }
                             }
                         }.start()
@@ -100,7 +99,7 @@ class DevicesActivity : ComponentActivity() {
                         Thread {
                             try {
                                 val r = PairClient.pair(url, code, DeviceName.of(this))
-                                val newHost = Host(name.ifBlank { r.name }, r.baseUrl, r.token)
+                                val newHost = Host(name.ifBlank { r.name }, r.baseUrl, r.token, r.deviceId)
                                 HostStore.upsert(this, newHost)
                                 runOnUiThread {
                                     onSuccess(newHost)

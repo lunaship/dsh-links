@@ -49,6 +49,12 @@
             android:exported="false"
             android:screenOrientation="portrait"
             android:windowSoftInputMode="adjustResize" />
+        <!-- 工作台启动器（Gate 3：web/native 双引擎路由） -->
+        <activity
+            android:name=".devices.WorkspaceLauncher"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
         <!-- 设置 -->
         <activity
             android:name=".native.SettingsActivity"

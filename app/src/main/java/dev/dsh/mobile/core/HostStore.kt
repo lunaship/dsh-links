@@ -7,7 +7,7 @@ import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 
-data class Host(val name: String, val baseUrl: String, val token: String)
+data class Host(val name: String, val baseUrl: String, val token: String, val deviceId: String = "")
 
 object HostStore {
     private const val PREFS = "dsh_hosts"
@@ -62,7 +62,7 @@ object HostStore {
     internal fun hostsToJson(hosts: List<Host>): String {
         val arr = JSONArray()
         for (h in hosts) {
-            arr.put(JSONObject().put("name", h.name).put("baseUrl", h.baseUrl).put("token", h.token))
+            arr.put(JSONObject().put("name", h.name).put("baseUrl", h.baseUrl).put("token", h.token).put("deviceId", h.deviceId))
         }
         return arr.toString()
     }
@@ -72,7 +72,7 @@ object HostStore {
             val arr = JSONArray(json)
             (0 until arr.length()).map { i ->
                 val o = arr.getJSONObject(i)
-                Host(o.getString("name"), o.getString("baseUrl"), o.getString("token"))
+                Host(o.getString("name"), o.getString("baseUrl"), o.getString("token"), o.optString("deviceId"))
             }
         } catch (e: Exception) {
             emptyList()

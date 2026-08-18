@@ -1,6 +1,5 @@
 package dev.dsh.mobile.devices
 import dev.dsh.mobile.R
-import dev.dsh.mobile.native.WorkspaceActivity
 
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge

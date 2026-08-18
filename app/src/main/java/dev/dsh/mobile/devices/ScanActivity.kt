@@ -4,7 +4,6 @@ import dev.dsh.mobile.core.Host
 import dev.dsh.mobile.core.DeviceName
 import dev.dsh.mobile.core.HostStore
 import dev.dsh.mobile.core.PairClient
-import dev.dsh.mobile.native.WorkspaceActivity
 
 import android.Manifest
 import android.content.pm.PackageManager
@@ -88,9 +87,9 @@ class ScanActivity : AppCompatActivity() {
                     try {
                         val r = PairClient.pair(u, code, DeviceName.of(this))
                         runOnUiThread {
-                            HostStore.upsert(this, Host(fallbackName, r.baseUrl, r.token))
+                            HostStore.upsert(this, Host(fallbackName, r.baseUrl, r.token, r.deviceId))
                             Toast.makeText(this, "已连接 $fallbackName", Toast.LENGTH_SHORT).show()
-                            startActivity(android.content.Intent(this@ScanActivity, WorkspaceActivity::class.java))
+                            startActivity(android.content.Intent(this@ScanActivity, WorkspaceLauncher::class.java).putExtra("baseUrl", r.baseUrl))
                             finish()
                         }
                         return@execute

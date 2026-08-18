@@ -1,4 +1,5 @@
 package dev.dsh.mobile.web
+import dev.dsh.mobile.devices.WorkspaceLauncher
 import dev.dsh.mobile.native.MobileBootstrap
 import dev.dsh.mobile.core.Host
 import dev.dsh.mobile.native.MobileSession
@@ -89,13 +90,10 @@ class NativeShellActivity : ComponentActivity() {
     }
 
     private fun openSession(host: Host, session: MobileSession?) {
-        startActivity(Intent(this, WebActivity::class.java).apply {
-            putExtra("name", host.name)
+        startActivity(Intent(this, WorkspaceLauncher::class.java).apply {
             putExtra("baseUrl", host.baseUrl)
-            putExtra("token", host.token)
             session?.let {
                 putExtra("sessionId", it.sessionId)
-                putExtra("sessionTitle", it.title)
             }
         })
     }

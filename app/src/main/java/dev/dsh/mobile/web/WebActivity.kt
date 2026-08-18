@@ -1,6 +1,7 @@
 package dev.dsh.mobile.web
 import dev.dsh.mobile.R
 import dev.dsh.mobile.BuildConfig
+import dev.dsh.mobile.core.HostStore
 import org.json.JSONObject
 
 import android.annotation.SuppressLint
@@ -104,11 +105,18 @@ class WebActivity : AppCompatActivity() {
         errorState = findViewById(R.id.web_error)
         errorMessage = findViewById(R.id.web_error_message)
         findViewById<TextView>(R.id.web_retry).setOnClickListener { reloadPage() }
+        findViewById<TextView>(R.id.web_fallback).setOnClickListener { fallbackToNative() }
 
         baseUrl = intent.getStringExtra("baseUrl").orEmpty()
-        token = intent.getStringExtra("token") ?: ""
         sessionId = intent.getStringExtra("sessionId") ?: ""
         if (baseUrl.isEmpty()) {
+            finish()
+            return
+        }
+        // 设备 token 仅存于 Keystore（HostStore），由原生层读取换 ticket；不接收 token Intent
+        token = HostStore.load(this).firstOrNull { it.baseUrl.trimEnd('/') == baseUrl.trimEnd('/') }?.token ?: ""
+        if (token.isEmpty()) {
+            Toast.makeText(this, "未找到设备凭据，请重新配对", Toast.LENGTH_LONG).show()
             finish()
             return
         }
@@ -453,6 +461,24 @@ class WebActivity : AppCompatActivity() {
         return sb.toString()
     }
 
+
+    /**
+     * 原生回退（Gate 3）：Web 主路径启动失败时用户显式选择。
+     * 仅本次会话回退，不改变引擎默认设置。
+     */
+    private fun fallbackToNative() {
+        try {
+            val intent = Intent(this, Class.forName("dev.dsh.mobile.native.WorkspaceActivity")).apply {
+                putExtra("hostBaseUrl", baseUrl)
+                if (sessionId.isNotEmpty()) putExtra("sessionId", sessionId)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+            startActivity(intent)
+            finish()
+        } catch (e: Exception) {
+            Toast.makeText(this, "原生工作台不可用：" + (e.message ?: ""), Toast.LENGTH_LONG).show()
+        }
+    }
 
     private fun reloadPage() {
         bootChecks = 0

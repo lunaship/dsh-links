@@ -6,7 +6,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 object PairClient {
-    data class Result(val baseUrl: String, val name: String, val token: String)
+    data class Result(val baseUrl: String, val name: String, val token: String, val deviceId: String = "")
 
     /** 补全协议头：漏填 http:// 时自动补上。 */
     private fun normalize(baseUrl: String): String {
@@ -33,7 +33,7 @@ object PairClient {
                 ?.bufferedReader()?.use { it.readText() } ?: ""
             if (respCode != 200) throw Exception("HTTP $respCode: ${body.take(120)}")
             val o = JSONObject(body)
-            return Result(normalized, o.optString("name", deviceName), o.getString("token"))
+            return Result(normalized, o.optString("name", deviceName), o.getString("token"), o.optString("deviceId"))
         } finally {
             conn.disconnect()
         }
