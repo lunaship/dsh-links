@@ -65,11 +65,15 @@ class WebActivity : AppCompatActivity() {
     private var bootChecks = 0
 
     companion object {
-        /**
-         * 返回键桥接：只处理 DeepSeek Harness 自己的 SPA 路由栈；
-         * 当没有可回退的 Web 路由时，Android 返回到设备中心。
-         */
-        private const val BACK_BRIDGE_JS = """
+    /**
+     * 返回键桥接（DSH 会话切换不产生历史记录，需在 DSH 内部导航）：
+     * 1) 详情面板开 → 关闭（消费）；
+     * 2) 抽屉开：返回键打开的（列表层）→ 返回 "0" 退出工作台；用户主动开的 → 关抽屉；
+     * 3) 抽屉关 → 打开抽屉回会话列表（消费）；
+     * 4) SPA 路由深度 > 0 → history.back()；
+     * 5) 否则 → 退出到设备中心。
+     */
+    private const val BACK_BRIDGE_JS = """
             (function () {
               if (!window.__dshBack) {
                 var depth = 0;
@@ -82,18 +86,36 @@ class WebActivity : AppCompatActivity() {
                   depth: function () { return depth; },
                   back: function () { if (depth > 0) { history.back(); return true; } return false; }
                 };
+                // 用户交互（点会话/点菜单）后，返回键开的抽屉不再视为"列表层"
+                window.__dshMobileSystemSidebar = false;
+                document.addEventListener('click', function (e) {
+                  var t = e.target;
+                  if (t && t.closest && (t.closest('[role=treeitem]') || t.closest('button[aria-label="打开侧边栏"], button[aria-label="菜单"]'))) {
+                    window.__dshMobileSystemSidebar = false;
+                  }
+                }, true);
               }
               try {
                 var frame = document.querySelector('[data-mobile-frame]');
                 if (frame) {
-                  if (!frame.hasAttribute('data-sidebar-collapsed')) {
-                    frame.setAttribute('data-sidebar-collapsed', 'true');
-                    return 'ui';
-                  }
-                  if (!frame.hasAttribute('data-details-collapsed')) {
+                  var detailsOpen = !frame.hasAttribute('data-details-collapsed');
+                  if (detailsOpen) {
                     frame.setAttribute('data-details-collapsed', 'true');
                     return 'ui';
                   }
+                  var sidebarOpen = !frame.hasAttribute('data-sidebar-collapsed');
+                  if (sidebarOpen) {
+                    if (window.__dshMobileSystemSidebar) {
+                      window.__dshMobileSystemSidebar = false;
+                      return '0';
+                    }
+                    frame.setAttribute('data-sidebar-collapsed', 'true');
+                    return 'ui';
+                  }
+                  // 抽屉关：打开会话列表（回列表层）
+                  frame.removeAttribute('data-sidebar-collapsed');
+                  window.__dshMobileSystemSidebar = true;
+                  return 'ui';
                 }
               } catch (_) {}
               return String(window.__dshBack.depth());
