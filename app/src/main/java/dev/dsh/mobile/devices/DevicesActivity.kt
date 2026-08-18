@@ -1,4 +1,5 @@
 package dev.dsh.mobile.devices
+import dev.dsh.mobile.native.WorkspaceActivity
 import dev.dsh.mobile.native.EditOutline16
 import dev.dsh.mobile.native.rememberMotionSpin
 import dev.dsh.mobile.native.dialogEnterState
@@ -87,7 +88,9 @@ class DevicesActivity : ComponentActivity() {
                                 onDone(ok)
                                 if (ok) {
                                     HostStore.upsert(this, host)
-                                    startActivity(Intent(this, WorkspaceLauncher::class.java).putExtra("baseUrl", host.baseUrl))
+                                    // 设备中心 → 原生工作台
+                                    startActivity(Intent(this, WorkspaceActivity::class.java)
+                                        .putExtra("hostBaseUrl", host.baseUrl))
                                 }
                             }
                         }.start()

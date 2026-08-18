@@ -3,7 +3,6 @@
     <string name="brand_title">deepharness</string>
 
     <string name="menu_more">更多</string>
-    <string name="menu_manual_add">手动添加</string>
     <string name="subtitle_empty">连接你的 dsh 实例</string>
 
     <!-- 添加卡片 / 配对面板 -->
@@ -20,16 +19,10 @@
     <!-- 设备卡片 -->
     <string name="action_open">打开</string>
     <string name="action_remove">移除</string>
-    <string name="status_checking">检测中</string>
-    <string name="status_online">在线</string>
-    <string name="status_offline">不可达</string>
-    <string name="chip_local">本地</string>
     <string name="chip_desktop">桌面</string>
-    <string name="device_count">%1$d 台</string>
 
     <!-- 错误条 -->
     <string name="error_sync">设备同步失败</string>
-    <string name="error_all_offline">设备都不可达</string>
     <string name="error_retry">重试</string>
 
     <!-- 保留（旧空状态文案，新布局暂未使用） -->

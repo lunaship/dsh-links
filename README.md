@@ -1,6 +1,6 @@
 # DeepHarness
 
-一个手机 App 管理多个 dsh（DeepSeek Harness）实例的完整方案：**纯原生 Android（Kotlin + Jetpack Compose）1:1 复刻 DSH Web UI**，配合一个 dsh 服务端插件提供手机 API。
+一个手机 App 管理多个 dsh（DeepSeek Harness）实例：**纯原生 Android（Kotlin + Jetpack Compose）工作台**，配合一个 dsh 服务端插件提供手机 API。会话、消息流、实时推送全部由原生实现，不依赖 Web UI。
 
 ## 目录
 
@@ -10,33 +10,28 @@ DeepHarness/
 │   └── src/main/java/dev/dsh/mobile/
 │       ├── core/           # 共享：HostStore(主机凭据) / TokenCrypto / PairClient / DshTheme / DshNotifier / AppSettingsStore
 │       ├── devices/        # 设备中心：DevicesActivity / ScanActivity / SplashActivity（启动入口）
-│       ├── web/            # 薄壳 + WebView：WebActivity / MainActivity / NativeShellActivity / HostAdapter
-│       └── native/         # 原生工作台（冻结区）：WorkspaceActivity / MobileApi / SessionStreamClient / DshIcons / ui/ / util/
+│       └── native/         # 原生工作台：WorkspaceActivity / SettingsActivity / MobileApi / SessionStreamClient / DshIcons / ui/ / util/
 ├── dsh-deepharness/        # dsh 插件（npm 包，装到每个 dsh 实例）
 │   └── src/
 │       ├── index.js        # 18640 代理 + 配对 + 手机 API
-│       ├── client.js       # 移动布局壳（Mobile shell v16，构建生成）
-│       └── module2.js      # 「手机连接」面板
-├── evidence/               # 验收截图 / 证据归档（Gate 证据）
+│       ├── client.js       # 「手机连接」面板（构建生成）
+│       └── module2.js      # 面板模块
+├── branding/               # App logo 素材（单色鲸鱼吉祥物）
+├── evidence/               # 验收截图 / 证据归档
 ├── remote/                 # 远程访问（Cloudflare Tunnel）配置与文档
 └── README.md
 ```
 
-## 文件地图（哪个文件属于哪一簇）
+## 架构
 
-> 当前处于「三线并存」过渡期：原生工作台（native/）与 Web 工作台（web/）同时存在，
-> 由 `DevicesActivity` 选择入口。目标是把工作台收敛到 DSH Web UI，原生只保留系统容器能力。
+```
+Splash → DevicesActivity（设备中心：设备列表 / 扫码配对 / 手动添加）
+       → WorkspaceActivity（原生工作台：会话 / 消息 / SSE 实时流 / 审批）
+```
 
-| 簇 | 文件 | 处置 |
-|---|---|---|
-| 设备中心 · 保留 | `devices/DevicesActivity` `devices/ScanActivity` `devices/SplashActivity` | 唯一入口，继续维护 |
-| 共享核心 · 保留 | `core/HostStore` `core/TokenCrypto` `core/PairClient` `core/AppSettingsStore` `core/DeviceName` `core/DshApplication` | 两边都用 |
-| 通知 · 保留改造 | `core/DshNotifier` | 深链改到 Web 工作台 |
-| 主题 · 共享 | `core/DshTheme`（含 `Dsh` / `ThemeManager`） | 设备中心 + 原生工作台共用 |
-| 薄壳 · 保留 | `web/WebActivity` `web/MainActivity` `web/NativeShellActivity` `web/HostAdapter` | WebView 壳，继续维护 |
-| 原生工作台 · 冻结 | `native/WorkspaceActivity` `native/SettingsActivity` `native/SessionStreamClient` `native/MobileApi` `native/CommandPalette` `native/DshIcons` `native/DshMotion` `native/MathRenderer` `native/HistoryMerge` `native/ui/` `native/util/` | 不再加新功能，Web 稳定后归档 |
-
-Git 基线 tag：`native-alpha-0.4.1`（原生三线并存版本，回滚用）。
+- **单一原生路线**：所有界面均为 Kotlin + Compose 原生实现，无 WebView。
+- **DSH 更新不破坏客户端**：原生只依赖 `dsh-deepharness` 插件定义的稳定 API 契约（`/dsh-link/mobile/*`），DSH Web UI 如何变更不影响手机端。
+- 多主机：扫码 / 手动配对，主机切换，局域网 + 远程（Cloudflare Tunnel）并存。
 
 ## 特性
 
@@ -44,8 +39,7 @@ Git 基线 tag：`native-alpha-0.4.1`（原生三线并存版本，回滚用）�
 - **会话管理**：按工作区分组侧边栏（组内 5 条预览 + 显示全部）、重命名/分叉/归档/删除、会话搜索、加载更早、已停止标记
 - **实时推送**：SSE 长连接（15s 心跳、断点续传、seq 去重、1.5s→15s 退避重连、断线横幅）
 - **通知**：后台时审批请求 / 任务完成 / 会话停止 → 系统通知，点击直达对应会话
-- **多主机**：扫码 / 手动配对，主机切换，局域网 + 远程（Cloudflare Tunnel）并存
-- **设计**：1:1 复刻 DSH dsw 设计系统（`#151517` 底 / `#679EFE` 品牌蓝，深浅色两套 token），见 `UI-CHECKLIST.md`
+- **设计**：DSH dsw 设计系统风格（`#151517` 底 / `#679EFE` 品牌蓝，深浅色两套 token）
 
 ## 安装插件到某个 dsh
 

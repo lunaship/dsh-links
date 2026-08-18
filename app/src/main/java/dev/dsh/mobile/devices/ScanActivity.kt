@@ -1,5 +1,6 @@
 package dev.dsh.mobile.devices
 import dev.dsh.mobile.R
+import dev.dsh.mobile.native.WorkspaceActivity
 import dev.dsh.mobile.core.Host
 import dev.dsh.mobile.core.DeviceName
 import dev.dsh.mobile.core.HostStore
@@ -89,7 +90,7 @@ class ScanActivity : AppCompatActivity() {
                         runOnUiThread {
                             HostStore.upsert(this, Host(fallbackName, r.baseUrl, r.token, r.deviceId))
                             Toast.makeText(this, "已连接 $fallbackName", Toast.LENGTH_SHORT).show()
-                            startActivity(android.content.Intent(this@ScanActivity, WorkspaceLauncher::class.java).putExtra("baseUrl", r.baseUrl))
+                            startActivity(android.content.Intent(this@ScanActivity, WorkspaceActivity::class.java).putExtra("hostBaseUrl", r.baseUrl))
                             finish()
                         }
                         return@execute

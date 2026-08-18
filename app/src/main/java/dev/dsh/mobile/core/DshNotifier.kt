@@ -2,7 +2,7 @@ package dev.dsh.mobile.core
 import dev.dsh.mobile.R
 import dev.dsh.mobile.core.DshNotifier
 import dev.dsh.mobile.core.Host
-import dev.dsh.mobile.devices.WorkspaceLauncher
+import dev.dsh.mobile.native.WorkspaceActivity
 
 import android.Manifest
 import android.app.NotificationChannel
@@ -77,7 +77,7 @@ object DshNotifier {
     }
 
     private fun base(context: Context, host: Host, sessionId: String): NotificationCompat.Builder {
-        val intent = Intent(context, WorkspaceLauncher::class.java).apply {
+        val intent = Intent(context, WorkspaceActivity::class.java).apply {
             putExtra("hostBaseUrl", host.baseUrl)
             putExtra("sessionId", sessionId)
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
