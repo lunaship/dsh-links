@@ -375,24 +375,8 @@ class WebActivity : AppCompatActivity() {
 
     private fun injectMobileLayer() {
         try {
-            // 1) 移动布局 CSS（Base64 注入，避免转义问题）
-            val css = assets.open("mobile_override.css").bufferedReader().use { it.readText() }
-            val encodedCss = android.util.Base64.encodeToString(css.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
-            val cssJs = """
-                (function() {
-                    var styleId = 'dsh-native-mobile-css';
-                    var style = document.getElementById(styleId);
-                    if (!style) {
-                        style = document.createElement('style');
-                        style.id = styleId;
-                        document.head.appendChild(style);
-                    }
-                    style.textContent = atob('$encodedCss');
-                })()
-            """.trimIndent()
-            webView.evaluateJavascript(cssJs, null)
-
-            // 2) 移动壳交互 JS（FAB / 抽屉 / 深链桥）+ 结果监听
+            // 移动 UI 布局由 dsh-ui-mobile（DSH 官方插件）提供，App 不再注入 CSS。
+            // 这里只注入深链桥（通知 → 会话定位）。
             val shellJs = assets.open("mobile-client.js").bufferedReader().use { it.readText() }
             val resultBridge = """
                 ;(function() {

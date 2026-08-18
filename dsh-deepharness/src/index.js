@@ -848,7 +848,16 @@ export function apply(ctx, config) {
   if (!state.deviceId) state.deviceId = `dsh-${randomBytes(8).toString("hex")}`
   if (!state.devices) state.devices = []
   if (!state.pairing) state.pairing = {}
+  // 旧版设备（无 deviceId）一次性迁移：自动补发，手机无需重新配对（token 不变）
+  let migrated = false
+  for (const d of state.devices) {
+    if (!d.deviceId) {
+      d.deviceId = `dev-${randomToken(8)}`
+      migrated = true
+    }
+  }
   saveState(stateFile, state)
+  if (migrated) ctx.logger.info("dsh-deepharness: 已为旧设备补发 deviceId")
 
   // ---------- 主 web 服务上的路由（网页界面「手机连接」面板用） ----------
   const disposers = [
