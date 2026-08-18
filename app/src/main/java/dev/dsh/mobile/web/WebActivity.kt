@@ -40,6 +40,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import java.io.File
 
@@ -82,6 +83,19 @@ class WebActivity : AppCompatActivity() {
                   back: function () { if (depth > 0) { history.back(); return true; } return false; }
                 };
               }
+              try {
+                var frame = document.querySelector('[data-mobile-frame]');
+                if (frame) {
+                  if (!frame.hasAttribute('data-sidebar-collapsed')) {
+                    frame.setAttribute('data-sidebar-collapsed', 'true');
+                    return 'ui';
+                  }
+                  if (!frame.hasAttribute('data-details-collapsed')) {
+                    frame.setAttribute('data-details-collapsed', 'true');
+                    return 'ui';
+                  }
+                }
+              } catch (_) {}
               return String(window.__dshBack.depth());
             })()
         """
@@ -100,6 +114,12 @@ class WebActivity : AppCompatActivity() {
         controller.isAppearanceLightNavigationBars = !night
 
         setContentView(R.layout.activity_web)
+        // 沉浸式下 WebView 内容避开系统栏（状态栏/手势条），避免页面头部被遮挡
+        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.web_root)) { v, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            v.setPadding(0, bars.top, 0, bars.bottom)
+            insets
+        }
         webView = findViewById(R.id.webview)
         loading = findViewById(R.id.web_loading)
         errorState = findViewById(R.id.web_error)
