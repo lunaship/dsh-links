@@ -56,6 +56,7 @@ class WebActivity : AppCompatActivity() {
     private lateinit var errorMessage: TextView
     private var token: String = ""
     private var baseUrl: String = ""
+    private var sessionId: String = ""
     private var pendingPermissionRequest: PermissionRequest? = null
     private val bootHandler = Handler(Looper.getMainLooper())
     private var bootChecks = 0
@@ -105,6 +106,7 @@ class WebActivity : AppCompatActivity() {
 
         baseUrl = intent.getStringExtra("baseUrl").orEmpty()
         token = intent.getStringExtra("token") ?: ""
+        sessionId = intent.getStringExtra("sessionId") ?: ""
         if (baseUrl.isEmpty()) {
             finish()
             return
@@ -116,6 +118,8 @@ class WebActivity : AppCompatActivity() {
             setSupportZoom(false)
             allowFileAccess = true
             allowContentAccess = true
+            // 移动壳激活标记：mobile-client.js 依此判断是否启用移动适配层
+            userAgentString = "${webView.settings.userAgentString} DshMobile/1.0"
             // 缓存策略：有缓存时离线可用
             cacheMode = WebSettings.LOAD_CACHE_ELSE_NETWORK
             // 媒体自动播放
@@ -161,6 +165,12 @@ class WebActivity : AppCompatActivity() {
                 webView.evaluateJavascript(BACK_BRIDGE_JS, null)
                 injectMobileLayer()
                 monitorPageBoot()
+                // 深链：通知点击 → 打开目标会话
+                val pending = sessionId
+                if (pending.isNotEmpty()) {
+                    sessionId = ""
+                    openSessionByDeepLink(pending)
+                }
             }
 
             override fun onReceivedError(
@@ -358,9 +368,10 @@ class WebActivity : AppCompatActivity() {
 
     private fun injectMobileLayer() {
         try {
+            // 1) 移动布局 CSS（Base64 注入，避免转义问题）
             val css = assets.open("mobile_override.css").bufferedReader().use { it.readText() }
             val encodedCss = android.util.Base64.encodeToString(css.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
-            val js = """
+            val cssJs = """
                 (function() {
                     var styleId = 'dsh-native-mobile-css';
                     var style = document.getElementById(styleId);
@@ -370,13 +381,77 @@ class WebActivity : AppCompatActivity() {
                         document.head.appendChild(style);
                     }
                     style.textContent = atob('$encodedCss');
-                    document.documentElement.classList.add('dsh-native-mobile-layer');
                 })()
             """.trimIndent()
-            webView.evaluateJavascript(js, null)
+            webView.evaluateJavascript(cssJs, null)
+
+            // 2) 移动壳交互 JS（FAB / 抽屉 / 深链桥）+ 结果监听
+            val shellJs = assets.open("mobile-client.js").bufferedReader().use { it.readText() }
+            val resultBridge = """
+                ;(function() {
+                    if (window.__dshMobileResultBridge) return;
+                    window.__dshMobileResultBridge = true;
+                    window.__dshMobileLastResult = null;
+                    window.addEventListener('dsh-mobile-open-session-result', function(e) {
+                        window.__dshMobileLastResult = (e && e.detail) ? e.detail : null;
+                    });
+                })()
+            """.trimIndent()
+            webView.evaluateJavascript(shellJs + resultBridge, null)
         } catch (e: Exception) {
             e.printStackTrace()
         }
+    }
+
+    /**
+     * 深链：通知点击后定位到目标会话。
+     * 通过 dsh-mobile-open-session 事件交给注入的移动壳处理，
+     * 然后轮询读取结果（V1 简化实现；失败不打断用户）。
+     */
+    private fun openSessionByDeepLink(targetSessionId: String) {
+        val requestId = System.currentTimeMillis().toString()
+        val dispatchJs = """
+            window.dispatchEvent(new CustomEvent('dsh-mobile-open-session', {
+                detail: { sessionId: ${jsonString(targetSessionId)}, requestId: ${jsonString(requestId)} }
+            }));
+        """.trimIndent()
+        webView.evaluateJavascript(dispatchJs, null)
+        // 轮询结果（最多 8 次，每次 600ms）
+        val poll = object : Runnable {
+            var attempts = 0
+            override fun run() {
+                if (attempts++ >= 8) return
+                webView.evaluateJavascript(
+                    "window.__dshMobileLastResult ? (window.__dshMobileLastResult.ok ? '1' : '0') : 'null'"
+                ) { value ->
+                    val v = value?.trim() ?: "null"
+                    if (v != "null") {
+                        if (v != "\"1\"") {
+                            Toast.makeText(this@WebActivity, "无法打开目标会话", Toast.LENGTH_SHORT).show()
+                        }
+                        webView.evaluateJavascript("window.__dshMobileLastResult = null", null)
+                    } else {
+                        bootHandler.postDelayed(this, 600)
+                    }
+                }
+            }
+        }
+        bootHandler.postDelayed(poll, 600)
+    }
+
+    private fun jsonString(s: String): String {
+        val sb = StringBuilder("\"")
+        for (c in s) {
+            when (c) {
+                '\\' -> sb.append("\\\\")
+                '"' -> sb.append("\\\"")
+                '\n' -> sb.append("\\n")
+                '\r' -> sb.append("\\r")
+                else -> sb.append(c)
+            }
+        }
+        sb.append("\"")
+        return sb.toString()
     }
 
     private fun contentUrl(): String = baseUrl.trimEnd('/') + "/"
