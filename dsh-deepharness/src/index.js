@@ -75,6 +75,10 @@ if (/\bDshMobile\b/.test(navigator.userAgent || "")) {
     localStorage.setItem("dsh-ui-mobile:install-promotion-dismissed", "1")
     localStorage.setItem("dsh-ui-mobile:ios-install-hint", "1")
   } catch (_) {}
+  /* beforeinstallprompt 触发的横幅不受 dismissed key 控制，用动态 CSS 隐藏 */
+  var __s = document.createElement("style")
+  __s.textContent = '[aria-label="安装应用"], [aria-label="添加到主屏幕"] { display: none !important }'
+  document.head.appendChild(__s)
 }</script>`
 
 function sha256(text) {
