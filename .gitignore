@@ -16,8 +16,8 @@ captures/
 # --- 运行时状态与凭据（绝不入库） ---
 state.json
 *.state.json
-token*
 *.token
+token_*
 *.pem
 *.key
 secrets*

@@ -6,20 +6,37 @@
 
 ```
 DeepHarness/
-├── app/                    # Android 原生 App（Kotlin + Compose，包名 dev.dsh.mobile）
+├── app/                    # Android App（Kotlin + Compose，包名 dev.dsh.mobile）
 │   └── src/main/java/dev/dsh/mobile/
-│       ├── WorkspaceActivity.kt   # 工作台：会话流 / 输入卡 / 侧边栏 / 轨迹视图 / 审批 / 公式渲染
-│       ├── DevicesActivity.kt     # 设备管理 Hub（扫码配对 / 手动添加 / 在线状态）
-│       ├── SettingsActivity.kt    # 设置 5 tab：通用 / 模型 / 插件 / Agent 预设 / 关于
-│       ├── MobileApi.kt           # 手机 API 客户端（token 认证）
-│       ├── SessionStreamClient.kt # SSE 实时流（断点续传 / 去重 / 自动重连）
-│       ├── DshNotifier.kt         # 审批 / 任务完成系统通知
-│       ├── HostStore.kt           # 主机凭据（Android Keystore AES-GCM 加密存储）
-│       └── ...
+│       ├── core/           # 共享：HostStore(主机凭据) / TokenCrypto / PairClient / DshTheme / DshNotifier / AppSettingsStore
+│       ├── devices/        # 设备中心：DevicesActivity / ScanActivity / SplashActivity（启动入口）
+│       ├── web/            # 薄壳 + WebView：WebActivity / MainActivity / NativeShellActivity / HostAdapter
+│       └── native/         # 原生工作台（冻结区）：WorkspaceActivity / MobileApi / SessionStreamClient / DshIcons / ui/ / util/
 ├── dsh-deepharness/        # dsh 插件（npm 包，装到每个 dsh 实例）
+│   └── src/
+│       ├── index.js        # 18640 代理 + 配对 + 手机 API
+│       ├── client.js       # 移动布局壳（Mobile shell v16，构建生成）
+│       └── module2.js      # 「手机连接」面板
+├── evidence/               # 验收截图 / 证据归档（Gate 证据）
 ├── remote/                 # 远程访问（Cloudflare Tunnel）配置与文档
 └── README.md
 ```
+
+## 文件地图（哪个文件属于哪一簇）
+
+> 当前处于「三线并存」过渡期：原生工作台（native/）与 Web 工作台（web/）同时存在，
+> 由 `DevicesActivity` 选择入口。目标是把工作台收敛到 DSH Web UI，原生只保留系统容器能力。
+
+| 簇 | 文件 | 处置 |
+|---|---|---|
+| 设备中心 · 保留 | `devices/DevicesActivity` `devices/ScanActivity` `devices/SplashActivity` | 唯一入口，继续维护 |
+| 共享核心 · 保留 | `core/HostStore` `core/TokenCrypto` `core/PairClient` `core/AppSettingsStore` `core/DeviceName` `core/DshApplication` | 两边都用 |
+| 通知 · 保留改造 | `core/DshNotifier` | 深链改到 Web 工作台 |
+| 主题 · 共享 | `core/DshTheme`（含 `Dsh` / `ThemeManager`） | 设备中心 + 原生工作台共用 |
+| 薄壳 · 保留 | `web/WebActivity` `web/MainActivity` `web/NativeShellActivity` `web/HostAdapter` | WebView 壳，继续维护 |
+| 原生工作台 · 冻结 | `native/WorkspaceActivity` `native/SettingsActivity` `native/SessionStreamClient` `native/MobileApi` `native/CommandPalette` `native/DshIcons` `native/DshMotion` `native/MathRenderer` `native/HistoryMerge` `native/ui/` `native/util/` | 不再加新功能，Web 稳定后归档 |
+
+Git 基线 tag：`native-alpha-0.4.1`（原生三线并存版本，回滚用）。
 
 ## 特性
 
