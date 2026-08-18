@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 错误条：整行显示，左侧文案 + 右侧重试（48dp 触控） -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginHorizontal="@dimen/grid_gap_half"
+    android:layout_marginVertical="@dimen/grid_gap_half"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:paddingHorizontal="12dp"
+    android:paddingVertical="12dp"
+    android:background="@drawable/bg_pill">
+
+    <TextView
+        android:id="@+id/error_text"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:textSize="@dimen/text_pill"
+        android:textColor="@color/ink_text_secondary" />
+
+    <LinearLayout
+        android:id="@+id/error_retry"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="8dp"
+        android:minWidth="@dimen/action_touch"
+        android:minHeight="@dimen/action_touch"
+        android:gravity="center"
+        android:clickable="true"
+        android:focusable="true">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="@dimen/retry_height"
+            android:minWidth="64dp"
+            android:paddingHorizontal="12dp"
+            android:gravity="center"
+            android:background="@drawable/bg_action"
+            android:text="@string/error_retry"
+            android:textSize="@dimen/text_pill"
+            android:fontFamily="sans-serif-medium"
+            android:textColor="@color/ink_text_primary" />
+    </LinearLayout>
+</LinearLayout>

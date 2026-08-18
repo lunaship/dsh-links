@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/ink_bg_primary">
+
+    <WebView
+        android:id="@+id/webview"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:importantForAutofill="no"
+        android:overScrollMode="never" />
+
+    <ProgressBar
+        android:id="@+id/web_loading"
+        android:layout_width="28dp"
+        android:layout_height="28dp"
+        android:layout_gravity="center"
+        android:indeterminateTint="@color/ink_accent"
+        android:visibility="gone" />
+
+    <LinearLayout
+        android:id="@+id/web_error"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:layout_marginHorizontal="32dp"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:padding="24dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/web_error_message"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:textColor="@color/ink_text_secondary"
+            android:textSize="15sp" />
+
+        <TextView
+            android:id="@+id/web_retry"
+            android:layout_width="wrap_content"
+            android:layout_height="48dp"
+            android:layout_marginTop="16dp"
+            android:background="@drawable/bg_action"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:minWidth="112dp"
+            android:paddingHorizontal="20dp"
+            android:text="重试"
+            android:textColor="@color/ink_text_primary"
+            android:textSize="14sp" />
+    </LinearLayout>
+</FrameLayout>

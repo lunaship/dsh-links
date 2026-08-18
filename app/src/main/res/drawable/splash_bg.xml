@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 启动背景：墨色纯色（Logo 与文字由 activity_splash.xml 绘制） -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/ink_bg_primary" />
+</shape>

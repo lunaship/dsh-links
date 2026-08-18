@@ -1,0 +1,47 @@
+<resources>
+    <!-- ============ 圆角（完全对照 HStudio） ============ -->
+    <dimen name="radius_card">16dp</dimen>
+    <dimen name="radius_pill">8dp</dimen>
+    <dimen name="radius_chip">8dp</dimen>
+    <dimen name="radius_action">8dp</dimen>
+    <dimen name="radius_count">12dp</dimen>
+    <dimen name="radius_method">10dp</dimen>
+
+    <!-- ============ 间距（HStudio 精确值） ============ -->
+    <dimen name="card_padding">16dp</dimen>
+    <dimen name="card_min_height">160dp</dimen>
+    <dimen name="grid_gap_half">6dp</dimen>
+    <dimen name="page_padding_h">16dp</dimen>
+    <dimen name="page_padding_top">16dp</dimen>
+    <dimen name="pill_padding_v">4dp</dimen>
+    <dimen name="pill_padding_h">8dp</dimen>
+    <dimen name="chip_padding_v">4dp</dimen>
+    <dimen name="chip_padding_h">8dp</dimen>
+    <dimen name="action_height">32dp</dimen>
+    <dimen name="action_touch">48dp</dimen>
+    <dimen name="action_gap">8dp</dimen>
+    <dimen name="count_badge_height">24dp</dimen>
+    <dimen name="method_icon_size">40dp</dimen>
+    <dimen name="add_icon_size">38dp</dimen>
+    <dimen name="glyph_size">31dp</dimen>
+    <dimen name="mark_size">32dp</dimen>
+    <dimen name="menu_button_size">48dp</dimen>
+    <dimen name="retry_height">36dp</dimen>
+
+    <!-- ============ 字号（HStudio 原始值） ============ -->
+    <dimen name="text_header_title">20sp</dimen>
+    <dimen name="text_section_desc">12sp</dimen>
+    <dimen name="text_device_name">16sp</dimen>
+    <dimen name="text_device_system">13sp</dimen>
+    <dimen name="text_pill">12sp</dimen>
+    <dimen name="text_chip">11sp</dimen>
+    <dimen name="text_footer">12sp</dimen>
+    <dimen name="text_action">14sp</dimen>
+    <dimen name="text_add_title">14sp</dimen>
+    <dimen name="text_add_desc">12sp</dimen>
+    <dimen name="text_count">12sp</dimen>
+    <dimen name="text_panel_title">18sp</dimen>
+    <dimen name="text_method_title">14sp</dimen>
+    <dimen name="text_method_desc">12sp</dimen>
+    <dimen name="text_add_icon">24sp</dimen>
+</resources>

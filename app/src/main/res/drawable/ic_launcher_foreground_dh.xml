@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  DeepHarness launcher — 方案 C：DH 字标 + 鲸尾负空间
+  viewport 108×108，主体安全区 72×72（边距 18）。
+  设计意图：D 字母右侧内部嵌入鲸鱼尾鳍剪影（向上翻起），让"DeepHarness"首字母自带品牌图腾。
+  通过 evenOdd fillType 让 D 的内部空腔显形，鲸尾再覆盖在空腔上。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!--
+      D 字母：粗壮无衬线轮廓 = 外圆角矩形 - 内圆角矩形（evenOdd 挖洞）
+      字母使用渐变蓝填充
+    -->
+    <path android:pathData="M22,28
+                            L52,28
+                            C66,28 76,38 76,54
+                            C76,70 66,80 52,80
+                            L22,80
+                            C20,80 18,78 18,76
+                            L18,32
+                            C18,30 20,28 22,28 Z
+                            M28,38
+                            L28,70
+                            L50,70
+                            C58,70 66,64 66,54
+                            C66,44 58,38 50,38 Z"
+        android:fillType="evenOdd">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="18" android:startY="28"
+                android:endX="76" android:endY="80">
+                <item android:offset="0.0" android:color="#FF679EFE"/>
+                <item android:offset="1.0" android:color="#FF4176E6"/>
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- 鲸鱼尾鳍（剪影）：嵌入 D 字母内部空腔 -->
+    <path android:pathData="M40,48
+                            C46,42 52,40 58,42
+                            C54,46 52,52 54,58
+                            C50,56 46,54 42,54
+                            C44,52 44,50 40,48 Z
+                            M44,58
+                            C48,60 52,62 56,62
+                            C52,64 48,66 44,66 Z"
+        android:fillColor="#FF151517"/>
+
+    <!--
+      H 字母：两条粗竖 + 横梁
+      与 D 同色渐变
+    -->
+    <path android:pathData="M28,28
+                            L28,80
+                            L34,80
+                            L34,56
+                            L48,56
+                            L48,80
+                            L54,80
+                            L54,28
+                            L48,28
+                            L48,50
+                            L34,50
+                            L34,28 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="28" android:startY="28"
+                android:endX="54" android:endY="80">
+                <item android:offset="0.0" android:color="#FF679EFE"/>
+                <item android:offset="1.0" android:color="#FF4176E6"/>
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- D 字母右上角小高光，呼应鲸鱼高光 -->
+    <path android:pathData="M50,32
+                            L52,32
+                            C58,32 64,36 66,42
+                            C62,40 56,38 50,38 Z"
+        android:fillColor="#FFD3E2FF"
+        android:fillAlpha="0.5"/>
+</vector>

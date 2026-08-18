@@ -1,0 +1,278 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 首页：页头(logo+deepharness+计数徽标+菜单) / 2列设备网格+添加卡片 / 底部配对面板 -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:fitsSystemWindows="true"
+        android:paddingHorizontal="@dimen/page_padding_h"
+        android:paddingTop="@dimen/page_padding_top"
+        android:paddingBottom="24dp">
+
+        <!-- 页头 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <ImageView
+                android:layout_width="@dimen/mark_size"
+                android:layout_height="@dimen/mark_size"
+                android:src="@drawable/ic_dsh_mark"
+                android:contentDescription="@string/app_name" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:text="@string/brand_title"
+                android:textSize="@dimen/text_header_title"
+                android:fontFamily="sans-serif-medium"
+                android:textColor="@color/ink_text_primary" />
+
+            <Space
+                android:layout_width="0dp"
+                android:layout_height="1dp"
+                android:layout_weight="1" />
+
+            <TextView
+                android:id="@+id/device_count"
+                android:layout_width="wrap_content"
+                android:layout_height="@dimen/count_badge_height"
+                android:minWidth="24dp"
+                android:paddingHorizontal="7dp"
+                android:gravity="center"
+                android:background="@drawable/bg_count"
+                android:text="@string/device_count"
+                android:textSize="@dimen/text_count"
+                android:textColor="@color/ink_text_secondary" />
+
+            <ImageButton
+                android:id="@+id/menu_more"
+                android:layout_width="@dimen/menu_button_size"
+                android:layout_height="@dimen/menu_button_size"
+                android:layout_marginStart="8dp"
+                android:src="@drawable/ic_more"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/menu_more" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/subtitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:layout_marginStart="2dp"
+            android:text="@string/subtitle_empty"
+            android:textSize="@dimen/text_section_desc"
+            android:textColor="@color/ink_text_muted" />
+
+        <!-- 设备网格 -->
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:layout_marginTop="16dp">
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/host_list"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:clipToPadding="false"
+                android:paddingHorizontal="@dimen/grid_gap_half"
+                android:paddingTop="@dimen/grid_gap_half"
+                android:paddingBottom="24dp"
+                android:scrollbars="none" />
+
+            <FrameLayout
+                android:id="@+id/loading"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:minHeight="160dp"
+                android:visibility="gone">
+
+                <ImageView
+                    android:id="@+id/loading_spinner"
+                    android:layout_width="18dp"
+                    android:layout_height="18dp"
+                    android:layout_gravity="center"
+                    android:src="@drawable/ic_spinner"
+                    android:contentDescription="@string/status_checking" />
+            </FrameLayout>
+        </FrameLayout>
+    </LinearLayout>
+
+    <!-- 配对面板遮罩 -->
+    <View
+        android:id="@+id/pair_backdrop"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@drawable/bg_pair_backdrop"
+        android:visibility="gone" />
+
+    <!-- 配对面板（底部滑出） -->
+    <LinearLayout
+        android:id="@+id/pair_panel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:orientation="vertical"
+        android:fitsSystemWindows="true"
+        android:background="@drawable/bg_panel"
+        android:paddingHorizontal="@dimen/page_padding_h"
+        android:paddingTop="16dp"
+        android:paddingBottom="24dp"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/pair_title"
+                android:textSize="@dimen/text_panel_title"
+                android:fontFamily="sans-serif-medium"
+                android:textColor="@color/ink_text_primary" />
+
+            <ImageButton
+                android:id="@+id/pair_close"
+                android:layout_width="@dimen/menu_button_size"
+                android:layout_height="@dimen/menu_button_size"
+                android:src="@drawable/ic_close"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/pair_close" />
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="@string/pair_desc"
+            android:textSize="@dimen/text_section_desc"
+            android:textColor="@color/ink_text_muted" />
+
+        <!-- 扫码添加 -->
+        <LinearLayout
+            android:id="@+id/method_scan"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:padding="12dp"
+            android:background="@drawable/bg_method"
+            android:clickable="true"
+            android:focusable="true">
+
+            <FrameLayout
+                android:layout_width="@dimen/method_icon_size"
+                android:layout_height="@dimen/method_icon_size"
+                android:background="@drawable/bg_method_icon">
+
+                <ImageView
+                    android:layout_width="22dp"
+                    android:layout_height="22dp"
+                    android:layout_gravity="center"
+                    android:src="@drawable/ic_scan"
+                    android:contentDescription="@string/method_scan" />
+            </FrameLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="12dp"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/method_scan"
+                    android:textSize="@dimen/text_method_title"
+                    android:fontFamily="sans-serif-medium"
+                    android:textColor="@color/ink_text_primary" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="@string/method_scan_desc"
+                    android:textSize="@dimen/text_method_desc"
+                    android:textColor="@color/ink_text_muted" />
+            </LinearLayout>
+
+            <ImageView
+                android:layout_width="18dp"
+                android:layout_height="18dp"
+                android:src="@drawable/ic_chevron_right"
+                android:contentDescription="@string/method_scan" />
+        </LinearLayout>
+
+        <!-- 手动添加 -->
+        <LinearLayout
+            android:id="@+id/method_manual"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:padding="12dp"
+            android:background="@drawable/bg_method"
+            android:clickable="true"
+            android:focusable="true">
+
+            <FrameLayout
+                android:layout_width="@dimen/method_icon_size"
+                android:layout_height="@dimen/method_icon_size"
+                android:background="@drawable/bg_method_icon">
+
+                <ImageView
+                    android:layout_width="22dp"
+                    android:layout_height="22dp"
+                    android:layout_gravity="center"
+                    android:src="@drawable/ic_edit"
+                    android:contentDescription="@string/method_manual" />
+            </FrameLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="12dp"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/method_manual"
+                    android:textSize="@dimen/text_method_title"
+                    android:fontFamily="sans-serif-medium"
+                    android:textColor="@color/ink_text_primary" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="@string/method_manual_desc"
+                    android:textSize="@dimen/text_method_desc"
+                    android:textColor="@color/ink_text_muted" />
+            </LinearLayout>
+
+            <ImageView
+                android:layout_width="18dp"
+                android:layout_height="18dp"
+                android:src="@drawable/ic_chevron_right"
+                android:contentDescription="@string/method_manual" />
+        </LinearLayout>
+    </LinearLayout>
+</FrameLayout>

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.DSH.Splash" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="android:windowBackground">@drawable/splash_bg</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:navigationBarColor">@color/ink_bg_primary</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+    </style>
+
+    <style name="Theme.DSH" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/ink_accent</item>
+        <item name="colorOnPrimary">@color/ink_on_accent</item>
+        <item name="colorPrimaryContainer">@color/ink_bg_secondary</item>
+        <item name="colorOnPrimaryContainer">@color/ink_text_primary</item>
+        <item name="colorSecondaryContainer">@color/ink_bg_secondary</item>
+        <item name="colorOnSecondaryContainer">@color/ink_text_primary</item>
+        <item name="android:windowBackground">@color/ink_bg_primary</item>
+        <item name="android:statusBarColor">@color/ink_bg_primary</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:navigationBarColor">@color/ink_bg_primary</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+    </style>
+</resources>

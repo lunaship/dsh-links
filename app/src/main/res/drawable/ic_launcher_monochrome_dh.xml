@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  方案 C 单色剪影（Android 13+ 主题图标）。
+  DH 字标主体（不含渐变、不含鲸尾负空间内嵌，因为主题色下负空间会自动显形）。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- D 字母轮廓 -->
+    <path android:pathData="M22,28
+                            L52,28
+                            C66,28 76,38 76,54
+                            C76,70 66,80 52,80
+                            L22,80
+                            C20,80 18,78 18,76
+                            L18,32
+                            C18,30 20,28 22,28 Z
+                            M28,38
+                            L28,70
+                            L50,70
+                            C58,70 66,64 66,54
+                            C66,44 58,38 50,38 Z"
+        android:fillType="evenOdd"
+        android:fillColor="#FF000000"/>
+
+    <!-- H 字母 -->
+    <path android:pathData="M28,28
+                            L28,80
+                            L34,80
+                            L34,56
+                            L48,56
+                            L48,80
+                            L54,80
+                            L54,28
+                            L48,28
+                            L48,50
+                            L34,50
+                            L34,28 Z"
+        android:fillColor="#FF000000"/>
+</vector>

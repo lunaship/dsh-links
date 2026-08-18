@@ -1,0 +1,46 @@
+# dsh-deepharness
+
+DSH 手机一体化插件：**一个插件**同时提供
+
+1. **手机移动布局**（合并自 MIT 协议的 [dsh-mobile-hanui](https://github.com/Z-6354/dsh-mobile-hanui)，窄屏 ≤1023px 自动启用）
+2. **扫码连接**：网页界面右下角「📱 手机连接」按钮 → 二维码 + 一次性配对码（默认 10 分钟有效）
+3. **自带手机接入代理**：监听 `0.0.0.0:18640`，校验连接 token 并重写 Host/Origin 转发到 dsh 本体（127.0.0.1:<web 端口>），手机 App 无需任何其它穿透工具即可接入
+
+## 安装（每个 dsh 实例执行一次）
+
+```bash
+# 本地目录方式（开发）
+dsh plugin --profile web add /path/to/dsh-deepharness
+
+# npm 方式（发布后）
+dsh plugin --profile web add dsh-deepharness
+```
+
+然后重启 `dsh web`，网页右下角出现「📱 手机连接」按钮即成功。
+
+## 配置（profile 配置里的 dsh-deepharness 段）
+
+| 键 | 默认 | 说明 |
+| --- | --- | --- |
+| `port` | `18640` | 手机接入代理端口（0.0.0.0 监听，token 保护） |
+| `autoApprove` | `true` | 扫码配对自动批准 |
+| `pairingTtlSeconds` | `600` | 配对码有效期 |
+| `extraUrls` | `[]` | 额外写进二维码的可达地址（如 frp 公网地址） |
+
+## 接口约定（手机 App 使用）
+
+- `GET  /dsh-link/pair-info` → `{deviceId, name, urls, pairingCode}`
+- `GET  /dsh-link/qr.png` → 二维码 PNG（内容为上方 JSON 的字符串形式）
+- `POST /dsh-link/pair` body `{code, deviceName}` → `{token, deviceId, name, urls}`
+- 后续所有请求带 `Cookie: dsh_link_token=<token>` 或头 `x-dsh-link-token`
+- 网页界面内（同源）：`GET /dsh-link/devices`、`POST /dsh-link/revoke {name}`
+
+## 安全说明
+
+- 代理端口对所有网络可达者开放，但除配对与健康检查外的所有请求必须携带有效 token
+- 配对码一次性且有时效；可随时在面板里吊销已配对设备
+- dsh 具有代码执行能力，**请勿**把代理端口暴露给不受信任的网络
+
+## License
+
+MIT。移动布局部分源自 [dsh-mobile-hanui](https://github.com/Z-6354/dsh-mobile-hanui)（MIT）。

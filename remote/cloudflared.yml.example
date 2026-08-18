@@ -1,0 +1,15 @@
+# Cloudflare Tunnel 配置模板（复制到 ~/.cloudflared/config.yml）
+# 用前：cloudflared tunnel create dsh 拿到隧道 ID，替换下面的 <TUNNEL_ID>；
+#       然后 cloudflared tunnel route dns dsh <你的域名>
+
+tunnel: <TUNNEL_ID>
+credentials-file: /Users/<你的用户名>/.cloudflared/<TUNNEL_ID>.json
+
+ingress:
+  # dsh-deepharness 手机接入代理（含 /dsh-link/* 手机 API + SSE 实时流）
+  - hostname: dsh.example.com
+    service: http://127.0.0.1:18640
+  # 可选：直通 dsh web 管理界面（谨慎，暴露管理界面需配 Cloudflare Access）
+  # - hostname: dsh-admin.example.com
+  #   service: http://127.0.0.1:3080
+  - service: http_status:404

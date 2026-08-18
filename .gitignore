@@ -1,0 +1,38 @@
+# --- 本机配置 ---
+local.properties
+
+# --- Gradle / Android 构建产物 ---
+.gradle/
+.kotlin/
+build/
+app/build/
+captures/
+*.apk
+*.aab
+*.jks
+*.keystore
+*.jks.backup
+
+# --- 运行时状态与凭据（绝不入库） ---
+state.json
+*.state.json
+token*
+*.token
+*.pem
+*.key
+secrets*
+.env
+
+# --- Node 依赖 ---
+node_modules/
+
+# --- IDE / 系统 ---
+.idea/
+*.iml
+.vscode/
+.DS_Store
+
+# --- 日志与临时 ---
+*.log
+*.tmp
+*.bak

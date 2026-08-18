@@ -1,0 +1,39 @@
+{
+  "name": "dsh-deepharness",
+  "version": "0.1.0",
+  "description": "DSH 手机一体化插件：合并移动布局（hanui）与手机扫码连接（二维码配对 + 自带接入代理端口），一个插件搞定手机端使用 dsh",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./client": "./src/client.js",
+    "./package.json": "./package.json"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "qrcode": "^1.5.4",
+    "@deepseek-ai/schemastery": "^3.18.1"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-layout"
+      ]
+    }
+  },
+  "files": [
+    "src",
+    "cordis.patch.yml",
+    "package.json",
+    "README.md",
+    "LICENSE"
+  ]
+}
