@@ -1,6 +1,7 @@
 package dev.dsh.mobile.web
 import dev.dsh.mobile.R
 import dev.dsh.mobile.BuildConfig
+import org.json.JSONObject
 
 import android.annotation.SuppressLint
 import android.app.DownloadManager
@@ -132,11 +133,10 @@ class WebActivity : AppCompatActivity() {
 
         // 保留 WebView 缓存：与 LOAD_CACHE_ELSE_NETWORK 配合，断网时仍可打开已访问页面。
 
-        // Cookie 认证：完整管理 + 自动续期
+        // Cookie 认证：Web session 由 ticket 引导建立（HttpOnly），不再写入设备 token
         val cm = CookieManager.getInstance()
         cm.setAcceptCookie(true)
         cm.setAcceptThirdPartyCookies(webView, true)
-        applyAuthCookie(baseUrl)
 
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean = false
@@ -156,8 +156,6 @@ class WebActivity : AppCompatActivity() {
                 super.onPageStarted(view, url, favicon)
                 bootChecks = 0
                 showLoading()
-                // 每次导航前重新种认证 cookie，防止被页面或系统清掉。
-                applyAuthCookie(baseUrl)
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
@@ -248,7 +246,8 @@ class WebActivity : AppCompatActivity() {
             },
         )
 
-        webView.loadUrl(contentUrl())
+        // 启动：设备 token 换一次性 ticket → web-bootstrap → HttpOnly Web session
+        launchWithTicket()
 
         // 返回键：WebView 内部路由优先（JS 页面栈检测），否则退出
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
@@ -454,11 +453,9 @@ class WebActivity : AppCompatActivity() {
         return sb.toString()
     }
 
-    private fun contentUrl(): String = baseUrl.trimEnd('/') + "/"
 
     private fun reloadPage() {
         bootChecks = 0
-        applyAuthCookie(baseUrl)
         showLoading()
         webView.reload()
     }
@@ -492,20 +489,49 @@ class WebActivity : AppCompatActivity() {
         }
     }
 
-    /** 认证 cookie 自动续期：每次加载前重新种，双 host 覆盖。 */
-    private fun applyAuthCookie(baseUrl: String) {
-        try {
-            if (token.isEmpty()) return
-            val cm = CookieManager.getInstance()
-            val cookie = "dsh_link_token=" + token + "; Path=/"
-            cm.setCookie(baseUrl, cookie)
-            val host = Uri.parse(baseUrl).host
-            if (host != null && !host.startsWith("127.") && host != "localhost") {
-                cm.setCookie("http://" + host, cookie)
-            }
-            cm.flush()
-        } catch (_: Exception) {
+    /**
+     * 工作台启动（Gate 2 安全改造）：
+     * 原生层用设备 token（Keystore）换一次性启动 ticket，再让 WebView 访问
+     * web-bootstrap 换取短期 HttpOnly Web session。设备 token 不再进入
+     * Cookie / URL / JavaScript。
+     */
+    private fun launchWithTicket() {
+        if (token.isEmpty()) {
+            showError("缺少设备凭据")
+            return
         }
+        val base = baseUrl.trimEnd('/')
+        Thread {
+            try {
+                val conn = URL("$base/dsh-link/mobile/web-tickets").openConnection() as HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.setRequestProperty("x-dsh-link-token", token)
+                conn.setRequestProperty("content-type", "application/json")
+                conn.connectTimeout = 8000
+                conn.readTimeout = 8000
+                val code = conn.responseCode
+                if (code == 200) {
+                    val body = conn.inputStream.bufferedReader().use { it.readText() }
+                    val ticket = JSONObject(body).optString("ticket")
+                    val bootstrap = JSONObject(body).optString("bootstrapPath", "/dsh-link/web-bootstrap")
+                    if (ticket.isEmpty()) {
+                        runOnUiThread { showError("工作台会话发放失败"); }
+                    } else {
+                        runOnUiThread { webView.loadUrl("$base$bootstrap?ticket=$ticket") }
+                    }
+                } else if (code == 401) {
+                    runOnUiThread {
+                        Toast.makeText(this@WebActivity, "设备凭据失效，请回到设备列表重新配对", Toast.LENGTH_LONG).show()
+                        finish()
+                    }
+                } else {
+                    runOnUiThread { showError("工作台启动失败（HTTP $code）") }
+                }
+                conn.disconnect()
+            } catch (e: Exception) {
+                runOnUiThread { showError("无法连接 DSH：" + (e.message ?: "网络错误")) }
+            }
+        }.start()
     }
 
     private fun createCameraCaptureUri(): Uri {

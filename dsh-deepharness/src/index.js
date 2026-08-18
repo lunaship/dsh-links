@@ -12,11 +12,16 @@ import { connect } from "node:net"
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { homedir, hostname, networkInterfaces } from "node:os"
-import { createHash, randomBytes, randomInt } from "node:crypto"
+import { createHash, randomBytes } from "node:crypto"
 import { zstdDecompressSync } from "node:zlib"
 import z from "@deepseek-ai/schemastery"
 import QRCode from "qrcode"
 import { projectHistoryPage } from "./history.js"
+import {
+  newAuthStore, issueTicket, consumeTicket, createSession, getSession,
+  revokeDevice, newPairingCode, verifyPairingCode, consumePairingCode,
+  randomToken, SESSION_TTL_MS, TICKET_TTL_MS,
+} from "./auth.js"
 
 export const name = "dsh-deepharness"
 export const inject = ["webServer"]
@@ -42,6 +47,7 @@ export const Config = z.object({
 
 const COOKIE_NAME = "dsh_link_token"
 const HEADER_NAME = "x-dsh-link-token"
+const SESSION_COOKIE = "dsh_web_session"
 
 /**
  * crypto.randomUUID 只在安全上下文（https 或 localhost）可用。
@@ -83,11 +89,9 @@ function now() {
 }
 
 function ensurePairingCode(state, ttlSeconds) {
-  const p = state.pairing ?? (state.pairing = {})
-  if (p.code && p.expiresAt > now()) return p.code
-  p.code = String(randomInt(0, 1000000)).padStart(6, "0")
-  p.expiresAt = now() + ttlSeconds * 1000
-  return p.code
+  const p = state.pairing
+  if (p && p.code && !p.consumed && p.expiresAt > now() && Date.now() >= (p.cooldownUntil ?? 0)) return p.code
+  return newPairingCode(state, ttlSeconds)
 }
 
 function lanUrls(config) {
@@ -139,19 +143,18 @@ function readBody(req, limit = 64 * 1024) {
   })
 }
 
-function cookieToken(req) {
+function authorize(req, state, authStore) {
+  // 1) Web session cookie（WebView 页面/资源/WebSocket；HttpOnly，原生层不可读）
   const raw = req.headers.cookie ?? ""
   for (const part of raw.split(";")) {
     const kv = part.trim()
-    if (kv.startsWith(`${COOKIE_NAME}=`)) {
-      return decodeURIComponent(kv.slice(COOKIE_NAME.length + 1))
+    if (kv.startsWith(`${SESSION_COOKIE}=`)) {
+      const deviceId = getSession(authStore, decodeURIComponent(kv.slice(SESSION_COOKIE.length + 1)))
+      if (deviceId) return (state.devices ?? []).find((d) => d.deviceId === deviceId) ?? null
     }
   }
-  return null
-}
-
-function authorize(req, state) {
-  const token = cookieToken(req) ?? (typeof req.headers[HEADER_NAME] === "string" ? req.headers[HEADER_NAME] : null)
+  // 2) 长期设备 token（仅原生层 header 请求；永不进入 WebView/Cookie/URL）
+  const token = typeof req.headers[HEADER_NAME] === "string" ? req.headers[HEADER_NAME] : null
   if (!token) return null
   const hash = sha256(token)
   return (state.devices ?? []).find((d) => d.tokenHash === hash) ?? null
@@ -179,25 +182,29 @@ async function handlePair(req, res, config, state, stateFile) {
   const body = await readBody(req)
   const code = String(body.code ?? "").trim()
   const deviceName = (String(body.deviceName ?? "手机").trim().slice(0, 32) || "手机")
-  const codeOk = ensurePairingCode(state, config.pairingTtlSeconds) === code && (state.pairing?.expiresAt ?? 0) > now()
-  if (!codeOk) {
-    json(res, 401, { error: "配对码无效或已过期" })
+  const ver = verifyPairingCode(state, code)
+  if (!ver.ok) {
+    saveState(stateFile, state)
+    json(res, 401, { error: ver.error })
     return
   }
   if (!config.autoApprove) {
     json(res, 403, { error: "该主机未开启自动批准" })
     return
   }
-  const token = randomBytes(24).toString("hex")
-  state.devices = (state.devices ?? []).filter((d) => d.name !== deviceName)
-  state.devices.push({
-    name: deviceName,
-    tokenHash: sha256(token),
-    createdAt: now(),
-    lastSeenAt: now(),
-  })
+  // 同名设备不允许静默替换：先吊销旧设备或改名
+  const existing = (state.devices ?? []).find((d) => d.name === deviceName)
+  if (existing) {
+    json(res, 409, { error: "已存在同名设备，请先吊销旧设备或更换名称" })
+    return
+  }
+  const token = randomToken(24)
+  const deviceId = `dev-${randomToken(8)}`
+  state.devices = state.devices ?? []
+  state.devices.push({ deviceId, name: deviceName, tokenHash: sha256(token), createdAt: now(), lastSeenAt: now() })
+  consumePairingCode(state) // 配对码一次性：成功后立即失效
   saveState(stateFile, state)
-  json(res, 200, { ok: true, token, deviceId: state.deviceId, name: deviceName, urls: lanUrls(config) })
+  json(res, 200, { ok: true, token, deviceId, name: deviceName, urls: lanUrls(config) })
 }
 
 /** 拼接多帧 zstd 解压（DSH 存储按帧追加写入）。 */
@@ -834,6 +841,7 @@ const pendingApprovals = new Map() // approvalId → resolve(outcome)
 export function apply(ctx, config) {
   const web = ctx.get("webServer")
   const targetPort = web.port
+  const authStore = newAuthStore()
   mkdirSync(config.stateDir || join(homedir(), ".dsh", "dsh-deepharness"), { recursive: true })
   const stateFile = statePathOf(config)
   const state = loadState(stateFile)
@@ -860,24 +868,27 @@ export function apply(ctx, config) {
     }),
     web.register({
       kind: "exact",
-      path: "/dsh-link/devices",
-      handler: (req, res) => {
-        json(res, 200, {
-          devices: state.devices.map(({ name, createdAt, lastSeenAt }) => ({ name, createdAt, lastSeenAt })),
-        })
+      path: "/dsh-link/revoke",
+      handler: async (req, res) => {
+        const body = await readBody(req)
+        const targetName = String(body.name ?? "").trim()
+        const targetId = String(body.deviceId ?? "").trim()
+        if (!targetName && !targetId) return json(res, 400, { error: "缺少设备名或 deviceId" })
+        const target = (state.devices ?? []).find((d) => d.name === targetName || d.deviceId === targetId)
+        if (!target) return json(res, 404, { error: "设备不存在" })
+        state.devices = (state.devices ?? []).filter((d) => d.deviceId !== target.deviceId)
+        revokeDevice(authStore, target.deviceId) // 吊销：立即清除其全部 ticket 与 Web session
+        saveState(stateFile, state)
+        json(res, 200, { ok: true, removed: 1, deviceId: target.deviceId })
       },
     }),
     web.register({
       kind: "exact",
-      path: "/dsh-link/revoke",
-      handler: async (req, res) => {
-        const body = await readBody(req)
-        const target = String(body.name ?? "").trim()
-        if (!target) return json(res, 400, { error: "缺少设备名" })
-        const before = state.devices.length
-        state.devices = state.devices.filter((d) => d.name !== target)
-        saveState(stateFile, state)
-        json(res, 200, { ok: true, removed: before - state.devices.length })
+      path: "/dsh-link/devices",
+      handler: (req, res) => {
+        json(res, 200, {
+          devices: state.devices.map(({ deviceId, name, createdAt, lastSeenAt }) => ({ deviceId, name, createdAt, lastSeenAt })),
+        })
       },
     }),
   ]
@@ -899,18 +910,44 @@ export function apply(ctx, config) {
       if (pathname === "/dsh-link/health" && req.method === "GET") {
         return json(res, 200, { ok: true, name: "dsh-deepharness", deviceId: state.deviceId })
       }
-      if (pathname === "/dsh-link/pair-info" && req.method === "GET") {
-        return json(res, 200, pairInfo(config, state))
-      }
-      if (pathname === "/dsh-link/qr.png" && req.method === "GET") {
-        return qrPng(res, config, state)
-      }
       if (pathname === "/dsh-link/pair" && req.method === "POST") {
         return handlePair(req, res, config, state, stateFile)
       }
-      const device = authorize(req, state)
+      // 18640 不提供匿名配对信息/二维码：配对码只能从本机 3080 管理界面获得
+      if ((pathname === "/dsh-link/pair-info" || pathname === "/dsh-link/qr.png") && req.method === "GET") {
+        return json(res, 401, { error: "配对信息仅限本机管理界面（3080）" })
+      }
+      // 一次性启动 ticket → 短期 HttpOnly Web session（WebView 入口）
+      if (pathname === "/dsh-link/mobile/web-tickets" && req.method === "POST") {
+        const device = authorize(req, state, authStore)
+        if (!device) return json(res, 401, { error: "无效设备凭据" })
+        const ticket = issueTicket(authStore, device.deviceId)
+        return json(res, 200, {
+          ticket,
+          expiresAt: Date.now() + TICKET_TTL_MS,
+          bootstrapPath: "/dsh-link/web-bootstrap",
+        })
+      }
+      if (pathname === "/dsh-link/web-bootstrap" && req.method === "GET") {
+        const ticket = new URL(req.url ?? "/", "http://x").searchParams.get("ticket") ?? ""
+        const deviceId = consumeTicket(authStore, ticket)
+        if (!deviceId) return json(res, 401, { error: "ticket 无效、已消费或已过期" })
+        const device = (state.devices ?? []).find((d) => d.deviceId === deviceId)
+        if (!device) return json(res, 401, { error: "设备不存在或已吊销" })
+        const sessionValue = createSession(authStore, deviceId)
+        const secure = req.headers["x-forwarded-proto"] === "https"
+        res.writeHead(302, {
+          "set-cookie": `${SESSION_COOKIE}=${sessionValue}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}${secure ? "; Secure" : ""}`,
+          location: "/",
+          "referrer-policy": "no-referrer",
+          "cache-control": "no-store",
+        })
+        res.end()
+        return
+      }
+      const device = authorize(req, state, authStore)
       if (config.debug) {
-        ctx.logger.info(`dsh-deepharness: ${req.method} ${pathname} → ${device ? `device:${device.name}` : "denied"}`)
+        ctx.logger.info(`dsh-deepharness: ${req.method} ${pathname} → ${device ? `device:${device.deviceId}` : "denied"}`)
       }
       if (!device) {
         return json(res, 401, { error: "缺少或无效的连接 token" })
@@ -959,14 +996,14 @@ export function apply(ctx, config) {
   })
 
   proxy.on("upgrade", (req, socket, head) => {
-    const device = authorize(req, state)
+    const device = authorize(req, state, authStore)
     if (!device) {
       socket.destroy()
       return
     }
     touchDevice(state, device, stateFile)
     if (config.debug) {
-      ctx.logger.info(`dsh-deepharness: upgrade ${req.url} headers=${JSON.stringify(req.headers)}`)
+      ctx.logger.info(`dsh-deepharness: upgrade ${req.url}`)
     }
     const upstream = connect(targetPort, "127.0.0.1", () => {
       const lines = [`${req.method} ${req.url} HTTP/${req.httpVersion}`]
