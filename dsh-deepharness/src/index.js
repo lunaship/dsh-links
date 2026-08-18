@@ -64,6 +64,19 @@ if (typeof crypto !== "undefined" && typeof crypto.randomUUID !== "function") {
   }
 }</script>`
 
+/**
+ * dsh-ui-mobile 安装引导抑制：仅对 App WebView（UA 含 DshMobile）生效。
+ * App 内不需要 PWA「安装到主屏幕」引导；桌面/手机浏览器不受影响。
+ * 必须在 dsh-ui-mobile client 启动前（<head> 注入）设置 localStorage。
+ */
+const MOBILE_INSTALL_SUPPRESS = `<script>/* dsh-deepharness: suppress dsh-ui-mobile PWA install prompt inside App WebView */
+if (/\bDshMobile\b/.test(navigator.userAgent || "")) {
+  try {
+    localStorage.setItem("dsh-ui-mobile:install-promotion-dismissed", "1")
+    localStorage.setItem("dsh-ui-mobile:ios-install-hint", "1")
+  } catch (_) {}
+}</script>`
+
 function sha256(text) {
   return createHash("sha256").update(String(text)).digest("hex")
 }
@@ -861,7 +874,7 @@ export function apply(ctx, config) {
 
   // ---------- 主 web 服务上的路由（网页界面「手机连接」面板用） ----------
   const disposers = [
-    web.tapIndex((html) => html.replace(/<head([^>]*)>/i, `<head$1>${RANDOM_UUID_POLYFILL}`)),
+    web.tapIndex((html) => html.replace(/<head([^>]*)>/i, `<head$1>${MOBILE_INSTALL_SUPPRESS}${RANDOM_UUID_POLYFILL}`)),
     web.register({
       kind: "exact",
       path: "/dsh-link/pair-info",
