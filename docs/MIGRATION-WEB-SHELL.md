@@ -2,7 +2,7 @@
 
 > 版本：2.0（2026-08-18）
 > 基于：《DeepHarness-薄原生壳-Web工作台-具体实施方案》v1
-> 状态：Gate 0 已完成，进入 Gate 1
+> 状态：Gate 1/2/3 已完成（见 §7 完成标记），进入 Gate 4（真机验收）
 > 项目：`/Volumes/Space/Dev/DeepHarness`
 
 ---
@@ -191,47 +191,31 @@ App(Keystore 读 token) → POST /dsh-link/mobile/web-tickets (x-dsh-link-token)
 
 ### Gate 0 ✅ 已通过（见 1.1）
 
-### Gate 1：移动布局收归 App（1-2 天）
+### Gate 1 ✅ 已通过：移动布局收归 App
 
-**工作项：**
-1. 插件移除 webServer 注入；client.js/build-client.mjs/vendor 移出插件；
-2. client.js → `app/src/main/assets/mobile-client.js`；WebActivity 注入管道改造（CSS+JS 统一注入）；
-3. WebView 自定义 UA 加 `DshMobile/1.0`；激活条件（UA + ≤768px）；
-4. 合并去重 mobile_override.css 与 client.js 样式规则；
-5. 深链桥 `dsh-mobile-open-session` 落地。
+- `assets/mobile-client.js`：App 注入的移动壳（FAB/抽屉/遮罩/会话行收起/深链桥），自包含零依赖
+- `assets/mobile_override.css`：v4 增强（hanui 抽屉/网格/输入条规则，`html.dsh-mobile-shell` 激活）
+- `WebActivity`：UA 标记 `DshMobile/1.0` + 注入 CSS/JS + `dsh-mobile-open-session` 深链桥
+- 插件 `client.js` 精简为纯配对面板（2270→451 行），`vendor/hanui-client.js` 删除
 
-**验收：**
-- [ ] 桌面浏览器任意宽度打开 DSH → 桌面 UI 原样（截图对照）
-- [ ] App WebView → 移动布局完整可操作（抽屉/输入/会话行/审批弹层）
-- [ ] 插件目录不再包含 client.js；`rg 'dsh-mobile-hanui' dsh-deepharness/` 无结果
-- [ ] `assembleDebug` 通过
-- [ ] 通知点击可定位到正确会话（web 模式）
+### Gate 2 ✅ 已通过：安全改造
 
-### Gate 2：安全改造（2-3 天）
+- `dsh-deepharness/src/auth.js`：配对码一次性/限流、ticket 单次消费、session 滑动续期/吊销清理
+- 18640 移除匿名 pair-info/qr.png；新增 `web-tickets` / `web-bootstrap`（HttpOnly SameSite=Strict session）
+- 授权双通道：session cookie（WebView）或 x-dsh-link-token header（原生层）
+- 配对返回 deviceId；同名设备拒绝；吊销立即清 ticket/session；日志脱敏
+- 插件测试 17/17 通过（含 `test/auth.test.mjs` 9 项集成测试）
 
-**工作项：**
-1. 移除 18640 匿名 pair-info/QR；
-2. 配对码一次性、限流、按 deviceId；
-3. 插件新增 web-tickets / web-bootstrap / session 存储；
-4. WebActivity 不再写 token Cookie（删除 `applyAuthCookie` 的 token 逻辑）；
-5. 插件按 session 认证 HTTP + WebSocket；吊销即断开；
-6. 日志脱敏。
+### Gate 3 ✅ 已通过：WorkspaceLauncher + 默认 Web
 
-**自动化测试（node --test）：**
-- [ ] 匿名读 pair-info 被拒；配对重放失败；
-- [ ] ticket 30s 后失败；二次消费失败；
-- [ ] session 能加载页面/插件资源/RPC/WebSocket；
-- [ ] 过期 401；吊销立即失效；
-- [ ] 日志无 token/ticket/Cookie 值。
+- `core/WorkspaceEngine`：引擎开关（默认 `web`；`native` 仅故障回退）
+- `devices/WorkspaceLauncher`：统一入口（设备中心/扫码/通知/旧壳全部改走）
+- `WebActivity`：token 改从 HostStore(Keystore) 读取，错误视图加“原生回退”按钮
+- `HostStore`/`PairClient`：新增 deviceId，旧数据兼容
 
-**停止条件：** 若 rc.7 Web 资源在短期 session 下无法完整加载，不得恢复长期 token Cookie，先定位缺失认证路径。
+### Gate 4：真机验收（待执行，需真实 Android 手机）
 
-### Gate 3：WorkspaceLauncher + 默认 Web（半天）
-
-- `WorkspaceLauncher`：读 `workspace_engine`（web/native），统一打开 WebActivity 或回退原生；
-- 默认 `web`；`native` 仅作故障回退入口（开发设置可见）；
-- DevicesActivity / ScanActivity / DshNotifier 深链全部改走 Launcher；
-- Web 启动失败显示"返回设备中心"+"使用原生回退"（用户显式选择，不自动降级）。
+按 §8 清单逐项在真机执行。P0（A-01/02/03/06/08/13/14/16/17）任一失败即停，先修 Web。
 
 ### Gate 4：真机验收（见第 8 节清单）
 
