@@ -68,6 +68,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Brush
@@ -309,7 +310,7 @@ fun WorkspaceScreen(
     val workspacePrefs = remember { WorkspacePrefs(context) }
     var flatView by remember { mutableStateOf(workspacePrefs.flatView) }
     var sessionFilter by remember { mutableStateOf(workspacePrefs.sessionFilter) }
-    var collapsedWorkspaces by remember { mutableStateOf(setOf<String>()) }
+    var expandedWorkspaces by remember { mutableStateOf(setOf<String>()) }
     var expandedGroups by remember { mutableStateOf(setOf<String>()) } // 组内"显示全部"展开态
     var deleteWorkspaceTarget by remember { mutableStateOf<String?>(null) } // 待删除的工作区路径
     var deleteSessionTarget by remember { mutableStateOf<MobileSession?>(null) } // 待删除的会话
@@ -1030,31 +1031,43 @@ fun WorkspaceScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text(
-                            "DeepSeek Harness",
-                            color = Dsh.labelPrimary,
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight(500)
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                FishLogo,
+                                contentDescription = null,
+                                tint = Dsh.labelPrimary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                "DeepSeek Harness",
+                                color = Dsh.labelPrimary,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight(600),
+                                letterSpacing = (-0.2).sp
+                            )
+                        }
                         IconButton(
                             onClick = onSwitchHost,
-                            modifier = Modifier.size(28.dp)
+                            modifier = Modifier.size(36.dp)
                         ) {
                             Icon(
                                 Icons.Default.Devices,
                                 contentDescription = "切换设备",
                                 tint = Dsh.labelSecondary,
-                                modifier = Modifier.size(16.dp)
+                                modifier = Modifier.size(20.dp)
                             )
                         }
                     }
 
-                    // 新建会话按钮（DSH newSession：图标 + 文案）
+                    // 新建会话按钮
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                            .clip(RoundedCornerShape(8.dp))
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                            .height(36.dp)
+                            .clip(RoundedCornerShape(DshRadius.md))
+                            .border(1.dp, Dsh.borderL2, RoundedCornerShape(DshRadius.md))
                             .clickable {
                                 scope.launch(Dispatchers.IO) {
                                     try {
@@ -1067,17 +1080,17 @@ fun WorkspaceScreen(
                                     } catch (e: Exception) {}
                                 }
                             }
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                            .padding(horizontal = 12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
                             PlusOutline16,
                             contentDescription = null,
-                            tint = Dsh.labelSecondary,
+                            tint = Dsh.labelPrimary,
                             modifier = Modifier.size(16.dp)
                         )
-                        Spacer(Modifier.width(6.dp))
-                        Text("新会话", color = Dsh.labelSecondary, fontSize = 13.sp, fontWeight = FontWeight(500), lineHeight = 20.sp)
+                        Spacer(Modifier.width(8.dp))
+                        Text("新建会话", color = Dsh.labelPrimary, fontSize = 14.sp, fontWeight = FontWeight(500), lineHeight = 20.sp)
                     }
 
                     Spacer(Modifier.height(4.dp))
@@ -1093,7 +1106,7 @@ fun WorkspaceScreen(
                             Row(
                                 modifier = Modifier
                                     .height(28.dp)
-                                    .clip(RoundedCornerShape(8.dp))
+                                    .clip(RoundedCornerShape(DshRadius.md))
                                     .clickable { flatView = !flatView }
                                     .padding(horizontal = 8.dp),
                                 verticalAlignment = Alignment.CenterVertically
@@ -1117,7 +1130,7 @@ fun WorkspaceScreen(
                         Row(
                             modifier = Modifier
                                 .height(28.dp)
-                                .clip(RoundedCornerShape(8.dp))
+                                .clip(RoundedCornerShape(DshRadius.md))
                                 .clickable { showAddWorkspace = true }
                                 .padding(horizontal = 8.dp),
                             verticalAlignment = Alignment.CenterVertically
@@ -1134,8 +1147,6 @@ fun WorkspaceScreen(
                     }
                     Spacer(Modifier.height(2.dp))
 
-                    // 会话过滤 chip：3 个状态（全部 / 运行中 / 已停止）
-                    // counts 基于"已过滤 archived/deleted/subagent/staleBlank 后的活跃会话"，与下方列表数据源一致
                     val staleCutoffForFilter = System.currentTimeMillis() - 24 * 3600_000
                     val filterCandidates = remember(sessions, archivedIds, deletedIds) {
                         sessions.filter {
@@ -1144,18 +1155,6 @@ fun WorkspaceScreen(
                                 !(it.blank && it.updatedAt < staleCutoffForFilter)
                         }
                     }
-                    val filterCounts = remember(filterCandidates) {
-                        mapOf(
-                            SessionFilter.ALL to filterCandidates.size,
-                            SessionFilter.RUNNING to filterCandidates.count { classifySession(it) == SessionFilter.RUNNING },
-                            SessionFilter.STOPPED to filterCandidates.count { classifySession(it) == SessionFilter.STOPPED }
-                        )
-                    }
-                    SessionFilterChips(
-                        selected = sessionFilter,
-                        counts = filterCounts,
-                        onSelect = { sessionFilter = it }
-                    )
 
                     // 会话列表（Rows.module.css：32dp 行 / 8dp 圆角 / 状态点槽 / 时间 / 工作区分组）
                     LazyColumn(
@@ -1211,7 +1210,7 @@ fun WorkspaceScreen(
                                 .groupBy { it.cwd?.takeUnless { c -> c in deletedWorkspaces } }
                                 .filterKeys { isUserWorkspace(it) }
                             grouped.forEach { (cwd, groupSessions) ->
-                                val collapsed = collapsedWorkspaces.contains(cwd)
+                                val collapsed = !expandedWorkspaces.contains(cwd)
                                 item(key = "ws-$cwd") {
                                     Row(
                                         modifier = Modifier
@@ -1222,7 +1221,7 @@ fun WorkspaceScreen(
                                             .let { base ->
                                                 if (cwd != null) base.clickable {
                                                     val c = cwd
-                                                    collapsedWorkspaces = if (collapsed) collapsedWorkspaces - c else collapsedWorkspaces + c
+                                                    expandedWorkspaces = if (collapsed) expandedWorkspaces + c else expandedWorkspaces - c
                                                 } else base
                                             },
                                         verticalAlignment = Alignment.CenterVertically
@@ -1231,9 +1230,9 @@ fun WorkspaceScreen(
                                         Box(
                                             modifier = Modifier
                                                 .size(22.dp)
-                                                .clip(RoundedCornerShape(6.dp))
+                                                .clip(RoundedCornerShape(DshRadius.sm))
                                                 .clickable {
-                                                    collapsedWorkspaces = if (collapsed) collapsedWorkspaces - cwd!! else collapsedWorkspaces + cwd!!
+                                                    expandedWorkspaces = if (collapsed) expandedWorkspaces + cwd!! else expandedWorkspaces - cwd!!
                                                 },
                                             contentAlignment = Alignment.Center
                                         ) {
@@ -1288,7 +1287,7 @@ fun WorkspaceScreen(
                                             Box(
                                                 modifier = Modifier
                                                     .size(22.dp)
-                                                    .clip(RoundedCornerShape(6.dp))
+                                                    .clip(RoundedCornerShape(DshRadius.sm))
                                                     .clickable { deleteWorkspaceTarget = cwd },
                                                 contentAlignment = Alignment.Center
                                             ) {
@@ -1320,7 +1319,7 @@ fun WorkspaceScreen(
                                                             .fillMaxWidth()
                                                             .height(30.dp)
                                                             .padding(horizontal = 8.dp)
-                                                            .clip(RoundedCornerShape(8.dp))
+                                                            .clip(RoundedCornerShape(DshRadius.md))
                                                             .clickable { expandedGroups = expandedGroups + cwd!! }
                                                             .padding(horizontal = 12.dp),
                                                         verticalAlignment = Alignment.CenterVertically
@@ -1385,7 +1384,7 @@ fun WorkspaceScreen(
                         Row(
                             modifier = Modifier
                                 .weight(1f)
-                                .clip(RoundedCornerShape(8.dp))
+                                .clip(RoundedCornerShape(DshRadius.md))
                                 .background(if (settingsPressed) Dsh.hover else Color.Transparent)
                                 .clickable(interactionSource = settingsInteraction, indication = null, onClick = onOpenSettings)
                                 .padding(horizontal = 8.dp, vertical = 8.dp),
@@ -1404,7 +1403,7 @@ fun WorkspaceScreen(
                         // 快速切换深浅色模式按钮（带太阳/月亮图标与提示文案）
                         Row(
                             modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
+                                .clip(RoundedCornerShape(DshRadius.md))
                                 .background(if (themePressed) Dsh.hover else Color.Transparent)
                                 .clickable(interactionSource = themeInteraction, indication = null) {
                                     ThemeManager.toggleTheme(context, isDarkTheme)
@@ -1477,7 +1476,7 @@ fun WorkspaceScreen(
                     Row(
                         modifier = Modifier
                             .weight(1f)
-                            .clip(RoundedCornerShape(6.dp)),
+                            .clip(RoundedCornerShape(DshRadius.sm)),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         if (running) {
@@ -1512,7 +1511,7 @@ fun WorkspaceScreen(
                         Box(
                             modifier = Modifier
                                 .height(28.dp)
-                                .clip(RoundedCornerShape(999.dp))
+                                .clip(RoundedCornerShape(DshRadius.full))
                                 .background(stopBg)
                                 .graphicsLayer(scaleX = stopScale, scaleY = stopScale)
                                 .clickable(interactionSource = stopInteraction, indication = null) {
@@ -1635,7 +1634,7 @@ fun WorkspaceScreen(
                         Box(
                             modifier = Modifier
                                 .height(26.dp)
-                                .clip(RoundedCornerShape(999.dp))
+                                .clip(RoundedCornerShape(DshRadius.full))
                                 .background(
                                     when {
                                         selected -> Dsh.bgNavActive
@@ -1723,9 +1722,9 @@ fun WorkspaceScreen(
                             .fillMaxWidth()
                             .widthIn(max = COMPOSER_MAX_WIDTH)
                             .height(36.dp)
-                            .clip(RoundedCornerShape(10.dp))
+                            .clip(RoundedCornerShape(DshRadius.md))
                             .background(Dsh.bgInput)
-                            .border(1.dp, Dsh.borderL2, RoundedCornerShape(10.dp))
+                            .border(1.dp, Dsh.borderL2, RoundedCornerShape(DshRadius.md))
                             .padding(horizontal = 10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -1890,8 +1889,8 @@ fun WorkspaceScreen(
                         AnimatedVisibility(
                             visible = true,
                             enter = if (group is MessageGroup.Single && group.msg.entrance)
-                                fadeIn(animationSpec = tween(motionDuration(200))) +
-                                slideInVertically(animationSpec = tween(motionDuration(250), easing = FastOutSlowInEasing), initialOffsetY = { it })
+                                fadeIn(animationSpec = tween(DshDuration.normal)) +
+                                slideInVertically(animationSpec = tween(DshDuration.normal, easing = DshEasing.inOut), initialOffsetY = { 20 })
                             else EnterTransition.None,
                             modifier = Modifier.animateItem()
                         ) {
@@ -2060,9 +2059,9 @@ fun WorkspaceScreen(
                     ) {
                         Row(
                             modifier = Modifier
-                                .clip(RoundedCornerShape(999.dp))
+                                .clip(RoundedCornerShape(DshRadius.full))
                                 .background(Dsh.bgLayer1)
-                                .border(1.dp, Dsh.borderL2, RoundedCornerShape(999.dp))
+                                .border(1.dp, Dsh.borderL2, RoundedCornerShape(DshRadius.full))
                                 .clickable {
                                     showScrollToBottom = false
                                     requestTailPosition()
@@ -2170,9 +2169,7 @@ fun WorkspaceScreen(
         }
     }
 
-    // 模型选择右侧面板
-    // 注意：Dialog 内容渲染在独立窗口，外层 AnimatedVisibility 的变换对其不生效，
-    // 因此滑入动画在 ModelPickerSheet 内部通过 graphicsLayer 实现（只走渲染层）
+    // 模型选择底部抽屉
     if (showModelPicker && currentSessionId != null) {
         ModelPickerSheet(
             catalog = modelCatalog,
@@ -2231,9 +2228,9 @@ fun WorkspaceScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(44.dp)
-                        .clip(RoundedCornerShape(12.dp))
+                        .clip(RoundedCornerShape(DshRadius.lg))
                         .background(Dsh.bgInput)
-                        .border(1.dp, Dsh.borderL2, RoundedCornerShape(12.dp))
+                        .border(1.dp, Dsh.borderL2, RoundedCornerShape(DshRadius.lg))
                         .padding(horizontal = 13.dp),
                     decorationBox = { inner ->
                         Box(contentAlignment = Alignment.CenterStart) {
@@ -2247,7 +2244,7 @@ fun WorkspaceScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(44.dp)
-                        .clip(RoundedCornerShape(13.dp))
+                        .clip(RoundedCornerShape(DshRadius.lg))
                         .background(if (path.isBlank()) Dsh.buttonElevated.copy(alpha = 0.5f) else Dsh.brand400)
                         .clickable(enabled = path.isNotBlank()) {
                             showAddWorkspace = false
@@ -2292,21 +2289,23 @@ fun WorkspaceScreen(
     deleteWorkspaceTarget?.let { path ->
         DshConfirmDialog(
             title = "删除工作区？",
-            message = "将从设备移除「${path.substringAfterLast('/')}」的工作区注册。\n会话不会被删除，之后可在「未分组」中继续访问。",
+            message = "将移除「${path.substringAfterLast('/')}」及其中所有会话。",
             confirmLabel = "删除",
             danger = true,
             onDismiss = { deleteWorkspaceTarget = null },
             onConfirm = {
                 deleteWorkspaceTarget = null
-                // 本地优先隐藏（语义：从设备移除），远程注销 best-effort（静默）
                 setDeletedWorkspace(path)
-                // 双保险：该工作区下的会话一并本地标记删除，确保分组与工作区本身同步消失
-                sessions.filter { it.cwd == path }.forEach { setDeleted(it.sessionId) }
+                val sessionsInWs = sessions.filter { it.cwd == path }
+                sessionsInWs.forEach { setDeleted(it.sessionId) }
                 refreshSessions()
-                collapsedWorkspaces = collapsedWorkspaces - path
+                expandedWorkspaces = expandedWorkspaces - path
                 expandedGroups = expandedGroups - path
                 scope.launch(Dispatchers.IO) {
                     try { client.deleteWorkspace(path) } catch (_: Exception) {}
+                    sessionsInWs.forEach { s ->
+                        try { client.archiveSession(s.sessionId) } catch (_: Exception) {}
+                    }
                 }
             }
         )
@@ -2364,9 +2363,9 @@ private fun DshRenameDialog(
                         scaleX = dlgScale.value
                         scaleY = dlgScale.value
                     }
-                    .clip(RoundedCornerShape(14.dp))
+                    .clip(RoundedCornerShape(DshRadius.lg))
                     .background(Dsh.bgLayer1)
-                    .border(1.dp, Dsh.borderL2, RoundedCornerShape(14.dp))
+                    .border(1.dp, Dsh.borderL2, RoundedCornerShape(DshRadius.lg))
                     .padding(18.dp)
             ) {
                 Text("重命名会话", color = Dsh.labelPrimary, fontSize = 15.sp, fontWeight = FontWeight(500), lineHeight = 21.sp)
@@ -2382,9 +2381,9 @@ private fun DshRenameDialog(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(44.dp)
-                        .clip(RoundedCornerShape(12.dp))
+                        .clip(RoundedCornerShape(DshRadius.lg))
                         .background(Dsh.bgInput)
-                        .border(1.dp, Dsh.borderL2, RoundedCornerShape(12.dp))
+                        .border(1.dp, Dsh.borderL2, RoundedCornerShape(DshRadius.lg))
                         .padding(horizontal = 13.dp)
                 )
                 Spacer(Modifier.height(16.dp))
@@ -2453,9 +2452,9 @@ private fun DshConfirmDialog(
                         scaleX = dlgScale.value
                         scaleY = dlgScale.value
                     }
-                    .clip(RoundedCornerShape(14.dp))
+                    .clip(RoundedCornerShape(DshRadius.lg))
                     .background(Dsh.bgLayer1)
-                    .border(1.dp, Dsh.borderL2, RoundedCornerShape(14.dp))
+                    .border(1.dp, Dsh.borderL2, RoundedCornerShape(DshRadius.lg))
                     .padding(18.dp)
             ) {
                 Text(title, color = Dsh.labelPrimary, fontSize = 15.sp, fontWeight = FontWeight(500), lineHeight = 21.sp)
@@ -2554,8 +2553,8 @@ private fun HeroShell(
                 lineHeight = 18.sp,
                 fontWeight = FontWeight(500),
                 modifier = Modifier
-                    .clip(RoundedCornerShape(24.dp))
-                    .border(1.dp, Dsh.hover, RoundedCornerShape(24.dp))
+                    .clip(RoundedCornerShape(DshRadius.xl))
+                    .border(1.dp, Dsh.hover, RoundedCornerShape(DshRadius.xl))
                     .background(Dsh.brand400.copy(alpha = 0.12f))
                     .padding(horizontal = 7.dp, vertical = 1.dp)
             )
@@ -2580,15 +2579,41 @@ private fun HeroShell(
 
 // ---------- 工作区选择弹层 ----------
 
+@Composable
+private fun SheetGrabber() {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp, bottom = 4.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .width(36.dp)
+                .height(4.dp)
+                .clip(CircleShape)
+                .background(Dsh.borderL3)
+        )
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun WorkspacePickerSheet(
     sessions: List<MobileSession>,
+    selectedPath: String? = null,
     onDismiss: () -> Unit,
     onPick: (String?) -> Unit,
 ) {
     val workspaces = remember(sessions) {
         sessions.mapNotNull { it.cwd }.distinct().filter { isUserWorkspace(it) }.sorted()
+    }
+    var query by remember { mutableStateOf("") }
+    val filtered = remember(workspaces, query) {
+        if (query.isBlank()) workspaces
+        else workspaces.filter {
+            it.contains(query, ignoreCase = true) || it.substringAfterLast('/').contains(query, ignoreCase = true)
+        }
     }
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -2601,33 +2626,53 @@ private fun WorkspacePickerSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 32.dp)
+                .navigationBarsPadding()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 24.dp)
         ) {
-            Text("选择一个工作区开始", color = Dsh.labelPrimary, fontSize = 18.sp, fontWeight = FontWeight(500), lineHeight = 24.sp)
+            SheetGrabber()
+            Text("选择一个工作区开始", color = Dsh.labelPrimary, fontSize = 18.sp, fontWeight = FontWeight(600), lineHeight = 24.sp)
             Spacer(Modifier.height(4.dp))
-            Text("会话将保存在所选工作区", color = Dsh.labelTertiary, fontSize = 12.sp, lineHeight = 18.sp)
-            Spacer(Modifier.height(16.dp))
+            Text("会话将保存在所选工作区", color = Dsh.labelTertiary, fontSize = 13.sp, lineHeight = 18.sp)
+            if (workspaces.size > 6) {
+                Spacer(Modifier.height(12.dp))
+                SheetSearchField(value = query, onValueChange = { query = it }, placeholder = "搜索工作区")
+            }
+            Spacer(Modifier.height(14.dp))
 
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 420.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
                 WorkspaceOptionRow(
                     title = "未分组",
                     path = "不绑定工作区",
-                    selected = false,
+                    selected = selectedPath == null,
                     onClick = {
                         onDismiss()
                         onPick(null)
                     }
                 )
-                workspaces.forEach { ws ->
+                filtered.forEach { ws ->
                     WorkspaceOptionRow(
                         title = ws.substringAfterLast('/'),
                         path = ws,
-                        selected = false,
+                        selected = ws == selectedPath,
                         onClick = {
                             onDismiss()
                             onPick(ws)
                         }
+                    )
+                }
+                if (query.isNotBlank() && filtered.isEmpty()) {
+                    Text(
+                        "没有匹配「$query」的工作区",
+                        color = Dsh.labelTertiary,
+                        fontSize = 13.sp,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 16.dp)
                     )
                 }
             }
@@ -2637,6 +2682,51 @@ private fun WorkspacePickerSheet(
                     onDismiss()
                     onPick(path)
                 }
+            )
+        }
+    }
+}
+
+@Composable
+private fun SheetSearchField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    placeholder: String,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(40.dp)
+            .clip(RoundedCornerShape(DshRadius.lg))
+            .background(Dsh.bgSelector)
+            .border(1.dp, Dsh.borderL2, RoundedCornerShape(DshRadius.lg))
+            .padding(horizontal = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(SearchOutline16, contentDescription = null, tint = Dsh.labelCaption, modifier = Modifier.size(16.dp))
+        Spacer(Modifier.width(8.dp))
+        BasicTextField(
+            value = value,
+            onValueChange = onValueChange,
+            singleLine = true,
+            textStyle = TextStyle(color = Dsh.labelPrimary, fontSize = 14.sp, lineHeight = 20.sp),
+            cursorBrush = SolidColor(Dsh.brand400),
+            modifier = Modifier.weight(1f),
+            decorationBox = { inner ->
+                Box(contentAlignment = Alignment.CenterStart) {
+                    if (value.isEmpty()) Text(placeholder, color = Dsh.labelTertiary, fontSize = 14.sp)
+                    inner()
+                }
+            }
+        )
+        if (value.isNotEmpty()) {
+            Icon(
+                CloseOutline16,
+                contentDescription = "清除",
+                tint = Dsh.labelCaption,
+                modifier = Modifier
+                    .size(16.dp)
+                    .clickable { onValueChange("") }
             )
         }
     }
@@ -2654,70 +2744,139 @@ private fun WorkspaceOptionRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(44.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(if (pressed || selected) Dsh.hover else Color.Transparent)
+            .heightIn(min = 56.dp)
+            .clip(RoundedCornerShape(DshRadius.lg))
+            .background(
+                when {
+                    selected -> Dsh.brand400.copy(alpha = 0.08f)
+                    pressed -> Dsh.hover
+                    else -> Dsh.bgSelector
+                }
+            )
+            .border(
+                1.dp,
+                if (selected) Dsh.brand400.copy(alpha = 0.35f) else Dsh.borderL1,
+                RoundedCornerShape(DshRadius.lg)
+            )
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
-            .padding(horizontal = 10.dp),
+            .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(
-            FolderOpenOutline16,
-            contentDescription = null,
-            tint = if (selected) Dsh.brand400 else Dsh.labelTertiary,
-            modifier = Modifier.size(16.dp)
-        )
-        Spacer(Modifier.width(10.dp))
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .clip(RoundedCornerShape(DshRadius.md))
+                .background(if (selected) Dsh.brand400.copy(alpha = 0.16f) else Dsh.bgLayer1),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                FolderOpenOutline16,
+                contentDescription = null,
+                tint = if (selected) Dsh.brand400 else Dsh.labelSecondary,
+                modifier = Modifier.size(16.dp)
+            )
+        }
+        Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(title, color = Dsh.labelPrimary, fontSize = 14.sp, lineHeight = 20.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(path, color = Dsh.labelTertiary, fontSize = 12.sp, lineHeight = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                title,
+                color = Dsh.labelPrimary,
+                fontSize = 15.sp,
+                fontWeight = FontWeight(500),
+                lineHeight = 20.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                path,
+                color = Dsh.labelTertiary,
+                fontSize = 12.sp,
+                lineHeight = 16.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        if (selected) {
+            Spacer(Modifier.width(8.dp))
+            Icon(CheckOutline16, contentDescription = null, tint = Dsh.brand400, modifier = Modifier.size(16.dp))
         }
     }
 }
 
 @Composable
 private fun AddWorkspaceRow(onCreate: (String) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
     var path by remember { mutableStateOf("") }
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(DshRadius.lg))
             .background(Dsh.bgInput)
-            .border(1.dp, Dsh.borderL2, RoundedCornerShape(12.dp))
-            .padding(10.dp)
+            .border(1.dp, Dsh.borderL2, RoundedCornerShape(DshRadius.lg))
+            .padding(12.dp)
     ) {
-        Text("添加工作区", color = Dsh.labelSecondary, fontSize = 13.sp, fontWeight = FontWeight(500), lineHeight = 20.sp)
-        Spacer(Modifier.height(6.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            BasicTextField(
-                value = path,
-                onValueChange = { path = it },
-                singleLine = true,
-                textStyle = TextStyle(color = Dsh.labelPrimary, fontSize = 13.sp),
-                cursorBrush = SolidColor(Dsh.brand400),
-                modifier = Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Dsh.bgLayer3)
-                    .padding(horizontal = 10.dp, vertical = 8.dp),
-                decorationBox = { inner ->
-                    Box(contentAlignment = Alignment.CenterStart) {
-                        if (path.isEmpty()) Text("输入工作区目录路径", color = Dsh.labelTertiary, fontSize = 13.sp)
-                        inner()
-                    }
-                }
-            )
-            Spacer(Modifier.width(8.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(DshRadius.md))
+                .clickable { expanded = !expanded }
+                .padding(vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Box(
                 modifier = Modifier
-                    .height(32.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(if (path.isBlank()) Dsh.buttonElevated.copy(alpha = 0.5f) else Dsh.brand400)
-                    .clickable(enabled = path.isNotBlank()) { onCreate(path.trim()) }
-                    .padding(horizontal = 14.dp),
+                    .size(28.dp)
+                    .clip(CircleShape)
+                    .background(Dsh.brand400.copy(alpha = 0.12f)),
                 contentAlignment = Alignment.Center
             ) {
-                Text("创建", color = if (path.isBlank()) Dsh.labelTertiary else Color.White, fontSize = 13.sp, fontWeight = FontWeight(500))
+                Icon(PlusOutline16, contentDescription = null, tint = Dsh.brand400, modifier = Modifier.size(14.dp))
+            }
+            Spacer(Modifier.width(10.dp))
+            Text("添加工作区", color = Dsh.labelPrimary, fontSize = 14.sp, fontWeight = FontWeight(500), lineHeight = 20.sp)
+            Spacer(Modifier.weight(1f))
+            Icon(
+                if (expanded) ChevronUpOutline14 else ChevronDownOutline14,
+                contentDescription = null,
+                tint = Dsh.labelCaption,
+                modifier = Modifier.size(14.dp)
+            )
+        }
+        AnimatedVisibility(visible = expanded) {
+            Row(
+                modifier = Modifier.padding(top = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                BasicTextField(
+                    value = path,
+                    onValueChange = { path = it },
+                    singleLine = true,
+                    textStyle = TextStyle(color = Dsh.labelPrimary, fontSize = 13.sp),
+                    cursorBrush = SolidColor(Dsh.brand400),
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(DshRadius.md))
+                        .background(Dsh.bgLayer3)
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                    decorationBox = { inner ->
+                        Box(contentAlignment = Alignment.CenterStart) {
+                            if (path.isEmpty()) Text("输入工作区目录路径", color = Dsh.labelTertiary, fontSize = 13.sp)
+                            inner()
+                        }
+                    }
+                )
+                Spacer(Modifier.width(8.dp))
+                Box(
+                    modifier = Modifier
+                        .height(32.dp)
+                        .clip(RoundedCornerShape(DshRadius.md))
+                        .background(if (path.isBlank()) Dsh.buttonElevated.copy(alpha = 0.5f) else Dsh.brand400)
+                        .clickable(enabled = path.isNotBlank()) { onCreate(path.trim()) }
+                        .padding(horizontal = 14.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("创建", color = if (path.isBlank()) Dsh.labelTertiary else Color.White, fontSize = 13.sp, fontWeight = FontWeight(500))
+                }
             }
         }
     }
@@ -2730,7 +2889,7 @@ private fun TurnStatusRow(elapsedSec: Long) {
     Row(
         modifier = Modifier
             .height(26.dp)
-            .clip(RoundedCornerShape(6.dp)),
+            .clip(RoundedCornerShape(DshRadius.sm)),
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (isReduceMotionEnabled()) {
@@ -2852,395 +3011,217 @@ private fun formatTokens(n: Long): String = when {
     else -> "$n"
 }
 
-@Composable
-private fun StatsLine(stats: MobileSessionStats) {
-    var showDetails by remember { mutableStateOf(false) }
-    val groups = mutableListOf<String>()
-    if (stats.steps > 0) {
-        groups.add("${stats.turns} 轮 · ${stats.steps} 步")
-    }
-    val input = stats.uncachedInputTokens + stats.cacheReadTokens
-    if (input > 0 || stats.outputTokens > 0) {
-        groups.add("输入 ${formatTokens(input)} · 输出 ${formatTokens(stats.outputTokens)} tok")
-    }
-    if (groups.isEmpty()) return
-    Box {
-        Text(
-            groups.joinToString(" | "),
-            color = Dsh.labelTertiary,
-            fontSize = 12.sp,
-            lineHeight = 20.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(6.dp))
-                .clickable { showDetails = true }
-                .padding(vertical = 2.dp)
-        )
-        // 详情面板（DSH DetailsPanel：token/耗时明细）
-        DropdownMenu(
-            expanded = showDetails,
-            onDismissRequest = { showDetails = false },
-            containerColor = Dsh.bgLayer1,
-            shape = RoundedCornerShape(12.dp),
-            tonalElevation = 0.dp,
-            shadowElevation = 12.dp,
-            border = BorderStroke(1.dp, Dsh.borderL2)
-        ) {
-            Column(
-                modifier = Modifier
-                    .width(250.dp)
-                    .padding(10.dp)
-            ) {
-                Text(
-                    "会话统计",
-                    color = Dsh.labelPrimary,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight(500),
-                    lineHeight = 20.sp,
-                    modifier = Modifier.padding(bottom = 6.dp)
-                )
-                DetailRow("轮次", "${stats.turns}")
-                DetailRow("步骤", "${stats.steps}")
-                DetailRow("LLM 耗时", formatDuration(stats.llmMs))
-                DetailRow("工具调用耗时", formatDuration(stats.toolMs))
-                DetailRow("首 token 平均", if (stats.ttftSteps > 0) formatDuration(stats.ttftMs / stats.ttftSteps) else "-")
-                DetailRow("吞吐", if (stats.decodeMs > 0 && stats.decodeTokens > 0)
-                    String.format(Locale.US, "%.0f tok/s", stats.decodeTokens / (stats.decodeMs / 1000.0)) else "-")
-                DetailRow("输入 tokens", formatTokens(stats.uncachedInputTokens + stats.cacheReadTokens))
-                DetailRow("缓存读取", formatTokens(stats.cacheReadTokens))
-                DetailRow("输出 tokens", formatTokens(stats.outputTokens))
-            }
-        }
-    }
-}
-
-@Composable
-private fun ContextPreview(stats: MobileSessionStats) {
-    val window = stats.contextWindow
-    if (window <= 0) return
-    val sys = stats.systemTokens
-    val tools = stats.toolsTokens
-    val msg = stats.messageTokens
-    val pressure = stats.contextPressureTokens
-    val pct = if (window > 0) ((pressure * 100) / window).toInt() else 0
-    val parts = buildList {
-        if (sys > 0) add("系统 ${formatTokens(sys)}")
-        if (tools > 0) add("工具 ${formatTokens(tools)}")
-        if (msg > 0) add("消息 ${formatTokens(msg)}")
-    }
-    if (parts.isEmpty()) return
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .widthIn(max = COMPOSER_MAX_WIDTH)
-            .padding(horizontal = COMPOSER_SIDE_CLEARANCE, vertical = 2.dp)
-            .padding(start = 16.dp, end = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            buildAnnotatedString {
-                append("已注入上下文")
-                append("  " + parts.joinToString(" · "))
-                append("  ·  窗口 ${pct}%")
-            },
-            color = Dsh.labelTertiary,
-            fontSize = 12.sp,
-            lineHeight = 18.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-    }
-}
-
-private fun RecommendationCard(
-    sessionStats: MobileSessionStats?,
-    running: Boolean,
-    modifier: Modifier = Modifier,
-    onSuggestionClick: (String) -> Unit = {},
-) {
-    if (!running || sessionStats == null) return
-
-    val used = sessionStats.contextPressureTokens
-    val window = sessionStats.contextWindow
-    if (window <= 0) return
-    val percent = ((used * 100) / window).toInt()
-
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(44.dp)
-            .padding(vertical = 4.dp)
-            .background(Dsh.bgLayer3)
-            .border(1.dp, Dsh.borderL2, RoundedCornerShape(8.dp))
-            .semantics {
-                this.contentDescription = "推荐操作：基于当前上下文压力"
-            },
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            // 左侧：上下文压力概览
-            Box(
-                modifier = Modifier
-                    .width(8.dp)
-                    .height(8.dp)
-                    .clip(CircleShape)
-                    .background(
-                        if (percent > 80) Dsh.error
-                        else if (percent > 50) Dsh.warn
-                        else Dsh.success
-                    )
-            )
-
-            // 右侧：推荐文本 + 可点击建议
-            Text(
-                text = buildAnnotatedString {
-                    if (percent > 80) {
-                        append("⚠️ 上下文压力较高，建议：").apply {
-                            // /clear - 可点击
-                            append("\n  ").apply {
-                                val style = Annotation.SpanStyle()
-                                style.flags = Annotation.SpanStyle.FLAG_SKIP_BY_STATIC_MOTION
-                                style.backgroundColor = Dsh.brand400.copy(alpha = 0.1f)
-                                style.textColor = Dsh.brand400
-                                addAnnotation(Annotation("clear", style), start = text.length, end = text.length + 7)
-                                addTouchHandler(0, 7) { onSuggestionClick("/clear") }
-                            }
-                            append("clear")
-                            append(" - 清除上下文")
-
-                            // /goal - 可点击
-                            append("\n  ").apply {
-                                val style = Annotation.SpanStyle()
-                                style.flags = Annotation.SpanStyle.FLAG_SKIP_BY_STATIC_MOTION
-                                style.backgroundColor = Dsh.brand400.copy(alpha = 0.1f)
-                                style.textColor = Dsh.brand400
-                                addAnnotation(Annotation("goal", style), start = text.length, end = text.length + 6)
-                                addTouchHandler(text.length - 8, text.length - 2) { onSuggestionClick("/goal") }
-                            }
-                            append("goal")
-                            append(" - 设定持续目标")
-                        }
-                    } else if (percent > 50) {
-                        append("💡 上下文压力中等，建议：").apply {
-                            append("\n  •  /plan - 生成执行计划")
-                            append("\n  •  /pause - 暂停当前任务")
-                        }
-                    } else {
-                        append("✅ 上下文充足，建议：").apply {
-                            append("\n  •  /resume - 继续任务")
-                            append("\n  •  /skills - 查看可用技能")
-                        }
-                    }
-                },
-                color = Dsh.labelPrimary,
-                fontSize = 11.sp,
-                lineHeight = 16.sp,
-                style = MaterialTheme.typography.body2,
-            )
-        }
-    }
-}
-
-// 内部类：用于 Text 中的 touch handler
-private data class Annotation(
-    val key: String,
-    val spanStyle: Annotation.SpanStyle
-) : Annotation.Key(key)
-
-// 扩展函数：为 Text 添加点击处理
-private fun Text.addTouchHandler(start: Int, end: Int, onClick: () -> Unit) {
-    // 通过重写 onTextClick 或使用Annotation机制
-    // 这里使用 Compose 的 Annotation 机制标记可点击区域
-    // 实际点击响应在外层 Composable 中通过 onSuggestionClick 回调处理
-}
 
 // @Composable
 // private fun DetailRow(label: String, value: String) {
-//
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 3.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(label, color = Dsh.labelTertiary, fontSize = 12.sp, lineHeight = 18.sp, modifier = Modifier.weight(1f))
-        Text(value, color = Dsh.labelSecondary, fontSize = 12.sp, lineHeight = 18.sp, fontFamily = FontFamily.Monospace)
-    }
-}
+//     Row(
+//         modifier = Modifier
+//             .fillMaxWidth()
+//             .padding(vertical = 3.dp),
+//         verticalAlignment = Alignment.CenterVertically
+//     ) {
+//         Text(label, color = Dsh.labelTertiary, fontSize = 12.sp, lineHeight = 18.sp, modifier = Modifier.weight(1f))
+//         Text(value, color = Dsh.labelSecondary, fontSize = 12.sp, lineHeight = 18.sp, fontFamily = FontFamily.Monospace)
+//     }
+// }
 
-// ---------- 模型选择右侧面板（DSH ModelPicker 移动版：右侧滑出，供应商在左模型在右） ----------
+// ---------- 模型选择（底部抽屉，对标工作区/访问模式） ----------
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ModelPickerSheet(
     catalog: MobileModelCatalog?,
     onDismiss: () -> Unit,
     onSelect: (provider: String, model: String) -> Unit,
 ) {
-    val (dlgAlpha, dlgScale) = dialogEnterState()
-    Dialog(
+    var query by remember { mutableStateOf("") }
+    val filteredGroups = remember(catalog, query) {
+        val groups = catalog?.groups.orEmpty()
+        if (query.isBlank()) groups
+        else groups.mapNotNull { group ->
+            val models = group.models.filter {
+                it.id.contains(query, ignoreCase = true) ||
+                    (it.name?.contains(query, ignoreCase = true) == true)
+            }
+            if (models.isEmpty()) null else group.copy(models = models)
+        }
+    }
+    ModalBottomSheet(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+        containerColor = Dsh.bgLayer1,
+        contentColor = Dsh.labelPrimary,
+        shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
+        dragHandle = null,
+        modifier = Modifier.fillMaxWidth()
     ) {
-        Box(
+        Column(
             modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer { alpha = dlgAlpha.value }
-                .background(Dsh.bgOverlay)
-                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss)
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 20.dp)
         ) {
-            // 右侧面板（宽 320dp）—— 滑入动画在 Dialog 内部（独立窗口），走 graphicsLayer 渲染层
-            Column(
-                modifier = Modifier
-                    .align(Alignment.CenterEnd)
-                    .fillMaxHeight()
-                    .width(320.dp)
-                    .graphicsLayer {
-                        alpha = dlgAlpha.value
-                        translationX = (1f - dlgAlpha.value) * 320.dp.toPx()
-                        scaleX = dlgScale.value
-                        scaleY = dlgScale.value
-                    }
-                    .background(Dsh.bgLayer1)
-                    .border(1.dp, Dsh.borderL2)
-                    .padding(horizontal = 16.dp)
-                    .statusBarsPadding()
-                    .padding(top = 12.dp)
-            ) {
-                // 头部
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("选择模型", color = Dsh.labelPrimary, fontSize = 16.sp, fontWeight = FontWeight(500), lineHeight = 22.sp)
-                        Spacer(Modifier.height(2.dp))
-                        Text(
-                            if (catalog?.currentModel != null) "当前 ${catalog.currentModel}" else "选择本会话使用的模型",
-                            color = Dsh.labelTertiary,
-                            fontSize = 12.sp,
-                            lineHeight = 17.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                    Box(
-                        modifier = Modifier
-                            .size(26.dp)
-                            .clip(CircleShape)
-                            .background(Dsh.bgLayer3)
-                            .clickable(onClick = onDismiss),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text("×", color = Dsh.labelSecondary, fontSize = 19.sp, fontWeight = FontWeight(300))
-                    }
-                }
-                Spacer(Modifier.height(12.dp))
-                Box(
+            SheetGrabber()
+            Text("选择模型", color = Dsh.labelPrimary, fontSize = 18.sp, fontWeight = FontWeight(600), lineHeight = 24.sp)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                if (catalog?.currentModel != null) "当前 ${catalog.currentModel}" else "选择本会话使用的模型",
+                color = Dsh.labelTertiary,
+                fontSize = 13.sp,
+                lineHeight = 18.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(Modifier.height(12.dp))
+            SheetSearchField(value = query, onValueChange = { query = it }, placeholder = "搜索模型或供应商")
+            Spacer(Modifier.height(12.dp))
+
+            when {
+                catalog == null -> Text(
+                    "正在加载模型列表…",
+                    color = Dsh.labelTertiary,
+                    fontSize = 13.sp,
+                    modifier = Modifier.padding(vertical = 16.dp)
+                )
+                catalog.groups.isEmpty() -> Text(
+                    "没有可用的模型。",
+                    color = Dsh.labelTertiary,
+                    fontSize = 13.sp,
+                    modifier = Modifier.padding(vertical = 16.dp)
+                )
+                filteredGroups.isEmpty() -> Text(
+                    "没有匹配「$query」的模型",
+                    color = Dsh.labelTertiary,
+                    fontSize = 13.sp,
+                    modifier = Modifier.padding(vertical = 16.dp)
+                )
+                else -> Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(1.dp)
-                        .background(Dsh.borderL1)
-                )
-                Spacer(Modifier.height(8.dp))
-
-                if (catalog == null) {
-                    Text("正在加载模型列表…", color = Dsh.labelTertiary, fontSize = 13.sp, modifier = Modifier.padding(vertical = 16.dp))
-                } else if (catalog.groups.isEmpty()) {
-                    Text("没有可用的模型。", color = Dsh.labelTertiary, fontSize = 13.sp, modifier = Modifier.padding(vertical = 16.dp))
-                } else {
-                    // 供应商分组 + 模型列表（纵向滚动）
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .verticalScroll(rememberScrollState())
-                    ) {
-                        catalog.groups.forEach { group ->
+                        .heightIn(max = 480.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    filteredGroups.forEach { group ->
+                        Row(
+                            modifier = Modifier.padding(top = 10.dp, bottom = 6.dp, start = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(18.dp)
+                                    .clip(RoundedCornerShape(5.dp))
+                                    .background(providerAccent(group.provider).copy(alpha = 0.16f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    group.provider.take(1).uppercase(),
+                                    color = providerAccent(group.provider),
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight(600),
+                                    lineHeight = 12.sp
+                                )
+                            }
+                            Spacer(Modifier.width(8.dp))
                             Text(
                                 group.provider,
                                 color = Dsh.labelTertiary,
                                 fontSize = 12.sp,
-                                lineHeight = 18.sp,
-                                modifier = Modifier.padding(top = 12.dp, bottom = 4.dp, start = 4.dp)
+                                fontWeight = FontWeight(500),
+                                lineHeight = 16.sp
                             )
-                            group.models.forEach { model ->
-                                val selected = model.id == catalog.currentModel && group.provider == catalog.currentProvider
-                                val interaction = remember { MutableInteractionSource() }
-                                val pressed by interaction.collectIsPressedAsState()
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(if (pressed || selected) Dsh.hover else Color.Transparent)
-                                        .clickable(interactionSource = interaction, indication = null) {
-                                            onSelect(group.provider, model.id)
-                                        }
-                                        .padding(horizontal = 10.dp, vertical = 6.dp)
-                                ) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        if (selected) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .size(6.dp)
-                                                    .clip(CircleShape)
-                                                    .background(Dsh.brand400)
-                                            )
-                                            Spacer(Modifier.width(10.dp))
-                                        }
-                                        Text(
-                                            model.name ?: model.id,
-                                            color = Dsh.labelPrimary,
-                                            fontSize = 14.sp,
-                                            lineHeight = 20.sp,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            modifier = Modifier.weight(1f)
-                                        )
-                                        if (model.contextWindow != null) {
-                                            Text(
-                                                formatTokens(model.contextWindow),
-                                                color = Dsh.labelTertiary,
-                                                fontSize = 12.sp,
-                                                lineHeight = 20.sp
-                                            )
-                                        }
-                                    }
-                                    // 推理等级（DSH reasoning efforts）
-                                    if (model.reasoningEfforts.isNotEmpty()) {
-                                        Spacer(Modifier.height(2.dp))
-                                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                            model.reasoningEfforts.take(4).forEach { effort ->
-                                                Box(
-                                                    modifier = Modifier
-                                                        .clip(RoundedCornerShape(4.dp))
-                                                        .background(Dsh.bgLayer3)
-                                                        .padding(horizontal = 5.dp, vertical = 1.dp)
-                                                ) {
-                                                    Text(
-                                                        effort.replaceFirstChar { it.uppercase() },
-                                                        color = Dsh.labelTertiary,
-                                                        fontSize = 10.sp,
-                                                        lineHeight = 14.sp
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                        }
+                        group.models.forEach { model ->
+                            val selected = model.id == catalog.currentModel && group.provider == catalog.currentProvider
+                            ModelOptionRow(
+                                name = model.name ?: model.id,
+                                contextWindow = model.contextWindow,
+                                reasoningEfforts = model.reasoningEfforts,
+                                selected = selected,
+                                onClick = { onSelect(group.provider, model.id) }
+                            )
                         }
                     }
                 }
             }
+        }
+    }
+}
+
+private fun providerAccent(provider: String): Color {
+    val palettes = listOf(
+        Color(0xFF4D88FF),
+        Color(0xFF8B7CF6),
+        Color(0xFF06B6D4),
+        Color(0xFF22C55E),
+        Color(0xFFF59E0B),
+        Color(0xFFEC4899),
+    )
+    val idx = (provider.hashCode() and 0x7FFFFFFF) % palettes.size
+    return palettes[idx]
+}
+
+@Composable
+private fun ModelOptionRow(
+    name: String,
+    contextWindow: Long?,
+    reasoningEfforts: List<String>,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(DshRadius.lg))
+            .background(
+                when {
+                    selected -> Dsh.brand400.copy(alpha = 0.08f)
+                    pressed -> Dsh.hover
+                    else -> Color.Transparent
+                }
+            )
+            .border(
+                1.dp,
+                if (selected) Dsh.brand400.copy(alpha = 0.28f) else Color.Transparent,
+                RoundedCornerShape(DshRadius.lg)
+            )
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                name,
+                color = Dsh.labelPrimary,
+                fontSize = 15.sp,
+                fontWeight = if (selected) FontWeight(500) else FontWeight(400),
+                lineHeight = 20.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            val meta = buildList {
+                if (contextWindow != null) add(formatTokens(contextWindow))
+                if (reasoningEfforts.isNotEmpty()) {
+                    add(reasoningEfforts.take(4).joinToString(" · ") { it.replaceFirstChar { c -> c.uppercase() } })
+                }
+            }
+            if (meta.isNotEmpty()) {
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    meta.joinToString("  ·  "),
+                    color = Dsh.labelTertiary,
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+        if (selected) {
+            Spacer(Modifier.width(8.dp))
+            Icon(CheckOutline16, contentDescription = null, tint = Dsh.brand400, modifier = Modifier.size(16.dp))
         }
     }
 }
@@ -3273,12 +3254,16 @@ private fun SessionRowItem(
             modifier = Modifier
                 .weight(1f)
                 .height(32.dp)
-                .clip(RoundedCornerShape(8.dp))
+                .clip(RoundedCornerShape(DshRadius.sm))
                 .background(
-                    if (isSelected || itemPressed) Dsh.hover else Color.Transparent
+                    when {
+                        isSelected -> Dsh.bgNavActive
+                        itemPressed -> Dsh.bgNavHover
+                        else -> Color.Transparent
+                    }
                 )
                 .clickable(interactionSource = itemInteraction, indication = null, onClick = onClick)
-                .padding(horizontal = 8.dp),
+                .padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             // 状态点槽（16x20）
@@ -3331,7 +3316,7 @@ private fun SessionRowItem(
             Box(
                 modifier = Modifier
                     .size(24.dp)
-                    .clip(RoundedCornerShape(6.dp))
+                    .clip(RoundedCornerShape(DshRadius.sm))
                     .clickable { menuOpen = true },
                 contentAlignment = Alignment.Center
             ) {
@@ -3388,7 +3373,7 @@ private fun DshMenu(
         expanded = expanded,
         onDismissRequest = onDismiss,
         containerColor = Dsh.bgLayer1,
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(DshRadius.lg),
         tonalElevation = 0.dp,
         shadowElevation = 12.dp,
         border = BorderStroke(1.dp, Dsh.borderL2)
@@ -3405,7 +3390,7 @@ private fun DshMenu(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(38.dp)
-                        .clip(RoundedCornerShape(8.dp))
+                        .clip(RoundedCornerShape(DshRadius.md))
                         .background(if (pressed) Dsh.hover else Color.Transparent)
                         .clickable(interactionSource = interaction, indication = null, onClick = item.onClick)
                         .padding(horizontal = 10.dp),
@@ -3441,11 +3426,10 @@ private fun ApprovalCard(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
-            .background(Dsh.bgInput)
-            .border(1.dp, Dsh.warn.copy(alpha = 0.5f), RoundedCornerShape(20.dp))
+            .clip(RoundedCornerShape(DshRadius.lg))
+            .background(Dsh.bgCode)
+            .border(1.dp, Dsh.borderL2, RoundedCornerShape(DshRadius.lg))
     ) {
-        // 警告条（DSH strip：warn 色 + 圆点 + 等待审批）——背景用 warn 色系而非 brand800（原用错 token）
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -3494,7 +3478,7 @@ private fun ApprovalCard(
                 Box(
                     modifier = Modifier
                         .height(30.dp)
-                        .clip(RoundedCornerShape(999.dp))
+                        .clip(RoundedCornerShape(DshRadius.full))
                         .background(rejectBg)
                         .graphicsLayer(scaleX = rejectScale, scaleY = rejectScale)
                         .clickable(
@@ -3520,7 +3504,7 @@ private fun ApprovalCard(
                 Box(
                     modifier = Modifier
                         .height(30.dp)
-                        .clip(RoundedCornerShape(999.dp))
+                        .clip(RoundedCornerShape(DshRadius.full))
                         .background(if (answered) Dsh.brand400.copy(alpha = 0.4f) else Dsh.brand400)
                         .clickable(enabled = !answered) {
                             answered = true
@@ -3604,7 +3588,7 @@ private fun ContextMeterButton(stats: MobileSessionStats) {
             expanded = expanded,
             onDismissRequest = { expanded = false },
             containerColor = Dsh.bgLayer3,
-            shape = RoundedCornerShape(12.dp)
+            shape = RoundedCornerShape(DshRadius.lg)
         ) {
             Column(modifier = Modifier.width(240.dp).padding(12.dp)) {
                 // header：上下文已用 + 百分比 + 用量数字
@@ -3726,9 +3710,9 @@ private fun CommandSuggestions(
             modifier = Modifier
                 .fillMaxWidth()
                 .widthIn(max = COMPOSER_MAX_WIDTH)
-                .clip(RoundedCornerShape(12.dp))
+                .clip(RoundedCornerShape(DshRadius.lg))
                 .background(Dsh.bgLayer1)
-                .border(1.dp, Dsh.borderL2, RoundedCornerShape(12.dp))
+                .border(1.dp, Dsh.borderL2, RoundedCornerShape(DshRadius.lg))
                 .padding(vertical = 6.dp)
         ) {
             grouped.forEach { (group, entries) ->
@@ -3746,7 +3730,7 @@ private fun CommandSuggestions(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(36.dp)
-                            .clip(RoundedCornerShape(6.dp))
+                            .clip(RoundedCornerShape(DshRadius.sm))
                             .background(if (pressed) Dsh.hover else Color.Transparent)
                             .clickable(interactionSource = interaction, indication = null) { onPick(entry.command) }
                             .padding(horizontal = 14.dp),
@@ -3823,9 +3807,9 @@ private fun HistoryView(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(40.dp)
-                .clip(RoundedCornerShape(12.dp))
+                .clip(RoundedCornerShape(DshRadius.lg))
                 .background(Dsh.bgInput)
-                .border(1.dp, if (searchPressed) Dsh.borderL3 else Dsh.borderL2, RoundedCornerShape(12.dp))
+                .border(1.dp, if (searchPressed) Dsh.borderL3 else Dsh.borderL2, RoundedCornerShape(DshRadius.lg))
                 .clickable(interactionSource = searchInteraction, indication = null) {}
                 .padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -3880,9 +3864,9 @@ private fun HistoryView(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
+                    .clip(RoundedCornerShape(DshRadius.md))
                     .background(Dsh.bgLayer1)
-                    .border(1.dp, Dsh.borderL2, RoundedCornerShape(8.dp))
+                    .border(1.dp, Dsh.borderL2, RoundedCornerShape(DshRadius.md))
                     .padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -3895,7 +3879,7 @@ private fun HistoryView(
                 )
                 Box(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(999.dp))
+                        .clip(RoundedCornerShape(DshRadius.full))
                         .background(Dsh.brand400)
                         .clickable { onRetry() }
                         .padding(horizontal = 10.dp, vertical = 4.dp)
@@ -4035,7 +4019,7 @@ private fun HistorySnippetRow(snippet: String, onClick: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 48.dp)
-            .clip(RoundedCornerShape(8.dp))
+            .clip(RoundedCornerShape(DshRadius.md))
             .background(if (pressed) Dsh.hover else Color.Transparent)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 6.dp),
@@ -4064,7 +4048,7 @@ private fun HistoryRow(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 48.dp)
-            .clip(RoundedCornerShape(8.dp))
+            .clip(RoundedCornerShape(DshRadius.md))
             .background(if (pressed) Dsh.hover else Color.Transparent)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 6.dp),
@@ -4113,11 +4097,29 @@ private fun HistoryRow(
     }
 }
 
-// ---------- 轨迹视图（TrajectoryView：时间轴渲染会话每一步执行） ----------
+// ---------- 轨迹视图（TrajectoryView：对标 DSH Web 彩色时间轴） ----------
 
 private fun formatTraceDuration(ms: Long): String = when {
     ms >= 1000 -> String.format(Locale.US, "+%.1fs", ms / 1000.0)
     else -> "+${ms}ms"
+}
+
+private data class TraceRoleVisual(
+    val label: String,
+    val color: Color,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector,
+)
+
+@Composable
+private fun traceRoleVisual(role: String): TraceRoleVisual = when (role) {
+    "user" -> TraceRoleVisual("目标", Dsh.brand400, GoalOutline16)
+    "reasoning" -> TraceRoleVisual("思考", Color(0xFF8B7CF6), ThinkOutline16)
+    "tool_call" -> TraceRoleVisual("工具调用", Dsh.warn, CodeOutline16)
+    "tool_result" -> TraceRoleVisual("执行结果", Dsh.success, CheckOutline16)
+    "approval" -> TraceRoleVisual("授权", Color(0xFFF97316), WarningOutline16)
+    "todo" -> TraceRoleVisual("任务", Color(0xFF06B6D4), ChecklistOutline14)
+    "compaction" -> TraceRoleVisual("压缩", Dsh.labelTertiary, ArchiveOutline20)
+    else -> TraceRoleVisual("回答", Dsh.brand400, Sparkle16)
 }
 
 @Composable
@@ -4135,21 +4137,71 @@ private fun TrajectoryView(
             .padding(horizontal = 20.dp, vertical = 16.dp)
     ) {
         if (messages.isEmpty()) {
-            Text(
-                "暂无轨迹数据。\n开始一段对话后，每一步执行（思考、工具调用、结果与回答）都会记录在这里。",
-                color = Dsh.labelTertiary,
-                fontSize = 13.sp,
-                lineHeight = 20.sp,
-                modifier = Modifier.padding(vertical = 24.dp)
-            )
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 48.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(CircleShape)
+                        .background(Dsh.brand400.copy(alpha = 0.12f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(ThinkOutline16, contentDescription = null, tint = Dsh.brand400, modifier = Modifier.size(20.dp))
+                }
+                Spacer(Modifier.height(14.dp))
+                Text("暂无轨迹", color = Dsh.labelPrimary, fontSize = 15.sp, fontWeight = FontWeight(500))
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "开始一段对话后，思考、工具调用、结果与回答会按步骤记录在这里。",
+                    color = Dsh.labelTertiary,
+                    fontSize = 13.sp,
+                    lineHeight = 20.sp,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    modifier = Modifier.padding(horizontal = 24.dp)
+                )
+            }
             return@Column
         }
 
-        if (running) {
-            Spacer(Modifier.height(8.dp))
-            TurnStatusRow(elapsedSec)
+        stats?.takeIf { it.turns > 0 || it.steps > 0 }?.let { s ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 14.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                DshTag(
+                    text = "${s.turns} 轮",
+                    color = Dsh.brand400.copy(alpha = 0.12f),
+                    contentColor = Dsh.brand400,
+                    shape = RoundedCornerShape(DshRadius.full),
+                )
+                DshTag(
+                    text = "${s.steps} 步",
+                    color = Color(0xFF8B7CF6).copy(alpha = 0.12f),
+                    contentColor = Color(0xFF8B7CF6),
+                    shape = RoundedCornerShape(DshRadius.full),
+                )
+                if (s.outputTokens > 0) {
+                    DshTag(
+                        text = "${formatTokens(s.outputTokens)} out",
+                        color = Dsh.success.copy(alpha = 0.12f),
+                        contentColor = Dsh.success,
+                        shape = RoundedCornerShape(DshRadius.full),
+                    )
+                }
+            }
         }
-        Spacer(Modifier.height(18.dp))
+
+        if (running) {
+            Spacer(Modifier.height(4.dp))
+            TurnStatusRow(elapsedSec)
+            Spacer(Modifier.height(14.dp))
+        }
         messages.forEachIndexed { index, msg ->
             val nextTime = messages.getOrNull(index + 1)?.time ?: 0L
             val durationMs = if (msg.time > 0 && nextTime > msg.time) nextTime - msg.time else null
@@ -4172,34 +4224,31 @@ private fun TraceStepRow(
     durationMs: Long?,
     running: Boolean,
 ) {
+    val visual = traceRoleVisual(msg.role)
+    val accent = visual.color
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .height(IntrinsicSize.Min)
     ) {
-        // 左侧：序号节点 + 竖向连接线
         Column(
-            modifier = Modifier.width(26.dp),
+            modifier = Modifier.width(28.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Box(
                 modifier = Modifier
-                    .size(20.dp)
+                    .size(22.dp)
                     .clip(CircleShape)
-                    .background(if (running) Dsh.brand400 else Dsh.bgLayer1)
-                    .border(
-                        1.dp,
-                        if (running) Dsh.brand400 else Dsh.borderL2,
-                        CircleShape
-                    ),
+                    .background(if (running) accent else accent.copy(alpha = 0.16f))
+                    .border(1.5.dp, accent, CircleShape),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     "$number",
-                    color = if (running) Color.White else Dsh.labelTertiary,
+                    color = if (running) Color.White else accent,
                     fontSize = 10.sp,
-                    lineHeight = 14.sp,
-                    fontWeight = FontWeight(500)
+                    lineHeight = 12.sp,
+                    fontWeight = FontWeight(600)
                 )
             }
             if (number < total) {
@@ -4207,52 +4256,52 @@ private fun TraceStepRow(
                     modifier = Modifier
                         .width(2.dp)
                         .weight(1f)
-                        .background(Dsh.borderL1)
+                        .background(accent.copy(alpha = 0.28f))
                 )
             }
         }
-        Spacer(Modifier.width(10.dp))
-        // 右侧：步骤内容
+        Spacer(Modifier.width(12.dp))
         Column(
             modifier = Modifier
                 .weight(1f)
-                .padding(bottom = 18.dp)
+                .padding(bottom = 14.dp)
+                .clip(RoundedCornerShape(DshRadius.lg))
+                .background(accent.copy(alpha = 0.06f))
+                .border(1.dp, accent.copy(alpha = 0.16f), RoundedCornerShape(DshRadius.lg))
         ) {
-            TraceStepHeader(msg = msg, durationMs = durationMs)
-            Spacer(Modifier.height(6.dp))
-            TraceStepBody(msg = msg, running = running)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(3.dp)
+                    .background(accent)
+            )
+            Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                TraceStepHeader(msg = msg, durationMs = durationMs, visual = visual)
+                Spacer(Modifier.height(8.dp))
+                TraceStepBody(msg = msg, running = running, accent = accent)
+            }
         }
     }
 }
 
 @Composable
-private fun TraceStepHeader(msg: MobileMessage, durationMs: Long?) {
-    val chipLabel: String
-    val chipColor: Color
-    when (msg.role) {
-        "user" -> { chipLabel = "目标"; chipColor = Dsh.labelPrimary }
-        "reasoning" -> { chipLabel = "思考"; chipColor = Dsh.labelTertiary }
-        "tool_call" -> { chipLabel = "工具调用"; chipColor = Dsh.brand400 }
-        "tool_result" -> { chipLabel = "执行结果"; chipColor = Dsh.success }
-        "approval" -> { chipLabel = "授权"; chipColor = Dsh.warn }
-        "todo" -> { chipLabel = "任务"; chipColor = Dsh.brand400 }
-        "compaction" -> { chipLabel = "压缩"; chipColor = Dsh.warn }
-        else -> { chipLabel = "回答"; chipColor = Dsh.labelPrimary }
-    }
+private fun TraceStepHeader(msg: MobileMessage, durationMs: Long?, visual: TraceRoleVisual) {
     Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(visual.icon, contentDescription = null, tint = visual.color, modifier = Modifier.size(14.dp))
+        Spacer(Modifier.width(6.dp))
         DshTag(
-            text = chipLabel,
-            color = chipColor.copy(alpha = 0.12f),
-            contentColor = chipColor,
-            shape = RoundedCornerShape(999.dp),
-            contentDescription = "步骤类型：$chipLabel",
+            text = visual.label,
+            color = visual.color.copy(alpha = 0.14f),
+            contentColor = visual.color,
+            shape = RoundedCornerShape(DshRadius.full),
+            contentDescription = "步骤类型：${visual.label}",
         )
         if (msg.role == "tool_call") {
-            Spacer(Modifier.width(6.dp))
+            Spacer(Modifier.width(8.dp))
             Text(
                 msg.toolName ?: "工具调用",
-                color = Dsh.labelSecondary,
-                fontSize = 12.sp,
+                color = Dsh.labelPrimary,
+                fontSize = 13.sp,
                 lineHeight = 18.sp,
                 fontWeight = FontWeight(500),
                 maxLines = 1,
@@ -4265,7 +4314,7 @@ private fun TraceStepHeader(msg: MobileMessage, durationMs: Long?) {
         if (durationMs != null && msg.role != "user") {
             Text(
                 formatTraceDuration(durationMs),
-                color = Dsh.labelCaption,
+                color = visual.color.copy(alpha = 0.8f),
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
                 fontFamily = FontFamily.Monospace
@@ -4275,10 +4324,10 @@ private fun TraceStepHeader(msg: MobileMessage, durationMs: Long?) {
 }
 
 @Composable
-private fun TraceStepBody(msg: MobileMessage, running: Boolean) {
+private fun TraceStepBody(msg: MobileMessage, running: Boolean, accent: Color) {
     when (msg.role) {
-        "tool_call" -> TraceCodeBlock(msg.toolArgs ?: msg.text, running)
-        "tool_result" -> TraceCodeBlock(msg.text, running)
+        "tool_call" -> TraceCodeBlock(msg.toolArgs ?: msg.text, running, accent)
+        "tool_result" -> TraceCodeBlock(msg.text, running, accent)
         "reasoning" -> TraceExpandableText(msg.text, maxLines = 4)
         "todo" -> {
             val done = msg.todos.count { it.status == "completed" }
@@ -4307,16 +4356,16 @@ private fun TraceStepBody(msg: MobileMessage, running: Boolean) {
 }
 
 @Composable
-private fun TraceCodeBlock(text: String, running: Boolean) {
+private fun TraceCodeBlock(text: String, running: Boolean, accent: Color) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
+            .clip(RoundedCornerShape(DshRadius.md))
             .background(Dsh.bgCode)
             .border(
                 1.dp,
-                if (running) Dsh.brand400.copy(alpha = 0.5f) else Dsh.borderL1,
-                RoundedCornerShape(10.dp)
+                if (running) accent.copy(alpha = 0.55f) else accent.copy(alpha = 0.18f),
+                RoundedCornerShape(DshRadius.md)
             )
             .padding(horizontal = 10.dp, vertical = 8.dp)
     ) {
@@ -4377,7 +4426,7 @@ private fun WorkspaceComposerRow(
                 .widthIn(max = COMPOSER_MAX_WIDTH)
                 .heightIn(min = 28.dp)
                 .padding(start = 8.dp)
-                .clip(RoundedCornerShape(8.dp))
+                .clip(RoundedCornerShape(DshRadius.md))
                 .clickable { showPicker = true }
                 .padding(vertical = 2.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -4388,40 +4437,30 @@ private fun WorkspaceComposerRow(
                 tint = Dsh.labelPrimary,
                 modifier = Modifier.size(16.dp)
             )
-            Spacer(Modifier.width(4.dp))
+            Spacer(Modifier.width(6.dp))
             Text(
-                "选择一个工作区开始",
+                if (workspaces.isNotEmpty()) workspaces.first().substringAfterLast('/') else "选择工作区",
                 color = Dsh.labelPrimary,
                 fontSize = 13.sp,
                 fontWeight = FontWeight(500),
-                lineHeight = 20.sp
+                lineHeight = 20.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
             Spacer(Modifier.width(4.dp))
             Icon(
                 ChevronDownOutline14,
                 contentDescription = null,
                 tint = Dsh.labelCaption,
-                modifier = Modifier.size(16.dp)
+                modifier = Modifier.size(14.dp)
             )
-            Spacer(Modifier.weight(1f))
-            // 已选工作区（第一个用户工作区）
-            if (workspaces.isNotEmpty()) {
-                Text(
-                    workspaces.first(),
-                    color = Dsh.labelTertiary,
-                    fontSize = 11.sp,
-                    lineHeight = 18.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-            }
         }
     }
 
     if (showPicker) {
         WorkspacePickerSheet(
             sessions = sessions,
+            selectedPath = workspaces.firstOrNull(),
             onDismiss = { showPicker = false },
             onPick = { cwd ->
                 showPicker = false
@@ -4480,65 +4519,65 @@ private fun PermissionPickerSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 32.dp)
+                .navigationBarsPadding()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 24.dp)
         ) {
-            Text("访问模式", color = Dsh.labelPrimary, fontSize = 18.sp, fontWeight = FontWeight(500), lineHeight = 24.sp)
+            SheetGrabber()
+            Text("访问模式", color = Dsh.labelPrimary, fontSize = 18.sp, fontWeight = FontWeight(600), lineHeight = 24.sp)
             Spacer(Modifier.height(4.dp))
-            Text("选择新会话的默认权限模式", color = Dsh.labelTertiary, fontSize = 12.sp, lineHeight = 18.sp)
-            Spacer(Modifier.height(16.dp))
-            listOf(
-                Triple("read-only", "只读", "agent 只读，所有写入操作需确认"),
-                Triple("workspace-write", "工作区写入", "允许 agent 在工作区内修改文件"),
-                Triple("danger-full-access", "完全访问", "减少确认步骤，可执行敏感操作与外部命令"),
-            ).forEach { (id, title, desc) ->
-                val isSelected = id == selected
-                val interaction = remember { MutableInteractionSource() }
-                val pressed by interaction.collectIsPressedAsState()
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 48.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(if (pressed || isSelected) Dsh.hover else Color.Transparent)
-                        .clickable(interactionSource = interaction, indication = null, enabled = !saving) {
-                            selected = id
-                            if (id == "danger-full-access") {
-                                showFullAccessConfirm = true
-                            } else {
-                                apply(id)
-                            }
-                        }
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(title, color = Dsh.labelPrimary, fontSize = 14.sp, lineHeight = 20.sp)
-                        Text(desc, color = Dsh.labelTertiary, fontSize = 12.sp, lineHeight = 17.sp)
+            Text("选择新会话的默认权限模式", color = Dsh.labelTertiary, fontSize = 13.sp, lineHeight = 18.sp)
+            Spacer(Modifier.height(14.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                PermissionModeOption(
+                    title = "只读",
+                    desc = "agent 只读，所有写入操作需确认",
+                    accent = Dsh.labelSecondary,
+                    icon = BrowseOutline16,
+                    selected = selected == "read-only",
+                    enabled = !saving,
+                    onClick = {
+                        selected = "read-only"
+                        apply("read-only")
                     }
-                    if (isSelected) {
-                        Box(
-                            modifier = Modifier
-                                .size(8.dp)
-                                .clip(CircleShape)
-                                .background(Dsh.brand400)
-                        )
+                )
+                PermissionModeOption(
+                    title = "工作区写入",
+                    desc = "允许 agent 在工作区内修改文件",
+                    accent = Dsh.brand400,
+                    icon = FolderOpenOutline16,
+                    selected = selected == "workspace-write",
+                    enabled = !saving,
+                    onClick = {
+                        selected = "workspace-write"
+                        apply("workspace-write")
                     }
-                }
+                )
+                PermissionModeOption(
+                    title = "完全访问",
+                    desc = "减少确认步骤，可执行敏感操作与外部命令",
+                    accent = Dsh.warn,
+                    icon = WarningOutline16,
+                    selected = selected == "danger-full-access",
+                    enabled = !saving,
+                    onClick = {
+                        selected = "danger-full-access"
+                        showFullAccessConfirm = true
+                    }
+                )
             }
-            // 保存失败：行内错误 + 重试（不关闭弹层）
             if (saving) {
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(10.dp))
                 Text("保存中…", color = Dsh.labelTertiary, fontSize = 12.sp)
             }
             if (error != null) {
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(10.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("保存失败：$error", color = Dsh.error, fontSize = 12.sp, modifier = Modifier.weight(1f))
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(7.dp))
-                            .background(Dsh.bgLayer1)
+                            .background(Dsh.bgSelector)
                             .clickable(enabled = !saving) { apply(selected) }
                             .padding(horizontal = 12.dp, vertical = 5.dp),
                         contentAlignment = Alignment.Center
@@ -4574,9 +4613,9 @@ private fun PermissionPickerSheet(
                             scaleX = dlgScale.value
                             scaleY = dlgScale.value
                         }
-                        .clip(RoundedCornerShape(14.dp))
+                        .clip(RoundedCornerShape(DshRadius.lg))
                         .background(Dsh.bgLayer1)
-                        .border(1.dp, Dsh.borderL2, RoundedCornerShape(14.dp))
+                        .border(1.dp, Dsh.borderL2, RoundedCornerShape(DshRadius.lg))
                         .padding(18.dp)
                 ) {
                     Text("确认启用 Full access？", color = Dsh.labelPrimary, fontSize = 15.sp, fontWeight = FontWeight(500), lineHeight = 21.sp)
@@ -4619,6 +4658,79 @@ private fun PermissionPickerSheet(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PermissionModeOption(
+    title: String,
+    desc: String,
+    accent: Color,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    selected: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(DshRadius.lg))
+            .background(
+                when {
+                    selected -> accent.copy(alpha = 0.08f)
+                    pressed -> Dsh.hover
+                    else -> Dsh.bgSelector
+                }
+            )
+            .border(
+                1.dp,
+                if (selected) accent.copy(alpha = 0.4f) else Dsh.borderL1,
+                RoundedCornerShape(DshRadius.lg)
+            )
+            .clickable(interactionSource = interaction, indication = null, enabled = enabled, onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .clip(RoundedCornerShape(DshRadius.md))
+                .background(accent.copy(alpha = 0.14f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.size(16.dp))
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                title,
+                color = Dsh.labelPrimary,
+                fontSize = 15.sp,
+                fontWeight = FontWeight(500),
+                lineHeight = 20.sp
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(desc, color = Dsh.labelTertiary, fontSize = 12.sp, lineHeight = 16.sp)
+        }
+        Spacer(Modifier.width(10.dp))
+        Box(
+            modifier = Modifier
+                .size(20.dp)
+                .border(1.5.dp, if (selected) accent else Dsh.borderL3, CircleShape)
+                .padding(4.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            if (selected) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(CircleShape)
+                        .background(accent)
+                )
             }
         }
     }
@@ -4702,15 +4814,27 @@ private fun InputBar(
             .padding(start = COMPOSER_SIDE_CLEARANCE, end = COMPOSER_SIDE_CLEARANCE),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // 输入卡主体（radius 22, bg #2C2C2E, border rgba(255,255,255,.06)）
+        // 输入卡主体
+        var composerFocused by remember { mutableStateOf(false) }
+        val composerBorderColor by animateColorAsState(
+            targetValue = if (composerFocused) Dsh.brand400 else Dsh.borderL2,
+            animationSpec = tween(DshDuration.normal),
+            label = "composerBorder"
+        )
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .widthIn(max = COMPOSER_MAX_WIDTH)
-                .clip(RoundedCornerShape(22.dp))
+                .clip(RoundedCornerShape(DshRadius.lg))
                 .background(Dsh.bgInput)
-                .border(1.dp, Dsh.borderL2, RoundedCornerShape(22.dp))
-                .padding(top = 10.dp)
+                .border(1.dp, composerBorderColor, RoundedCornerShape(DshRadius.lg))
+                .then(
+                    if (composerFocused) Modifier.border(
+                        3.dp, Dsh.brand400.copy(alpha = 0.12f), RoundedCornerShape(DshRadius.lg)
+                    ) else Modifier
+                )
+                .padding(top = 6.dp)
+                .onFocusChanged { composerFocused = it.hasFocus }
         ) {
             // 待发送图片缩略图（DSH 待发送图片行）
             if (pendingImages.isNotEmpty()) {
@@ -4730,7 +4854,7 @@ private fun InputBar(
                                 contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                                 modifier = Modifier
                                     .size(56.dp)
-                                    .clip(RoundedCornerShape(10.dp))
+                                    .clip(RoundedCornerShape(DshRadius.md))
                             )
                             // 移除按钮
                             Box(
@@ -4753,14 +4877,14 @@ private fun InputBar(
                     }
                 }
             }
-            // 文本输入（padding 4px 12px 0 16px, 16px/24px, caret 品牌蓝）
             BasicTextField(
                 value = inputText,
                 onValueChange = onInputChange,
                 textStyle = TextStyle(
                     color = Dsh.labelPrimary,
-                    fontSize = 16.sp,
-                    lineHeight = 24.sp,
+                    fontSize = 15.sp,
+                    lineHeight = 23.sp,
+                    letterSpacing = (-0.1).sp,
                 ),
                 cursorBrush = SolidColor(Dsh.brand400),
                 modifier = Modifier
@@ -4792,18 +4916,6 @@ private fun InputBar(
 
 
 
-            RecommendationCard(
-                sessionStats = sessionStats,
-                running = running,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = COMPOSER_SIDE_CLEARANCE, end = COMPOSER_SIDE_CLEARANCE),
-                onSuggestionClick = { command ->
-                    // TODO: 绑定命令执行
-                    // 可选：显示 Toast 或发送 /clear /goal 等指令
-                    //例如：onSendCommand(command) 或 Snackbar
-                }
-            )
 
             // 底部工具行（padding 2px 8px 6px）—— 对标 web UI toolbar 布局
             Row(
@@ -4820,13 +4932,6 @@ private fun InputBar(
                         contentDescription = "添加附件",
                         onClick = onPickImage
                     )
-                    Spacer(Modifier.width(8.dp))
-                    // 模式（对话/计划/目标，对齐 webui InputBar modes）
-                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        ModeChip(label = "对话", selected = heroMode == HeroMode.CHAT, onClick = { onModeChange(HeroMode.CHAT) })
-                        ModeChip(label = "计划", selected = heroMode == HeroMode.PLAN, onClick = { onModeChange(HeroMode.PLAN) })
-                        ModeChip(label = "目标", selected = heroMode == HeroMode.GOAL, onClick = { onModeChange(HeroMode.GOAL) })
-                    }
                 }
 
                 // 访问模式（DSH input.accessMode）
@@ -4836,7 +4941,7 @@ private fun InputBar(
                     Row(
                         modifier = Modifier
                             .height(28.dp)
-                            .clip(RoundedCornerShape(999.dp))
+                            .clip(RoundedCornerShape(DshRadius.full))
                             .background(if (permPressed) Dsh.hover else Color.Transparent)
                             .clickable(interactionSource = permInteraction, indication = null, onClick = onOpenPermissionPicker)
                             .minimumInteractiveComponentSize()
@@ -4900,7 +5005,7 @@ private fun InputBar(
                     Row(
                         modifier = Modifier
                             .height(28.dp)
-                            .clip(RoundedCornerShape(24.dp))
+                            .clip(RoundedCornerShape(DshRadius.xl))
                             .background(if (modelPressed) Dsh.hover else Color.Transparent)
                             .clickable(interactionSource = modelInteraction, indication = null, onClick = onOpenModelPicker)
                             .minimumInteractiveComponentSize()
@@ -4948,10 +5053,16 @@ private fun InputBar(
                     label = "sendBg"
                 )
                 Spacer(Modifier.width(8.dp))
+                val sendScale by animateFloatAsState(
+                    targetValue = if (sendPressed) 0.88f else 1f,
+                    animationSpec = tween(DshDuration.fast),
+                    label = "sendScale"
+                )
                 Box(
                     modifier = Modifier
                         .size(34.dp)
                         .offset(y = (-2).dp)
+                        .graphicsLayer(scaleX = sendScale, scaleY = sendScale)
                         .clip(CircleShape)
                         .minimumInteractiveComponentSize()
                         .background(sendBg)
@@ -5038,9 +5149,9 @@ private fun ToolGroupHeader(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
+                .clip(RoundedCornerShape(DshRadius.lg))
                 .background(Dsh.bgCode)
-                .border(1.dp, Dsh.borderL1, RoundedCornerShape(12.dp))
+                .border(1.dp, Dsh.borderL1, RoundedCornerShape(DshRadius.lg))
                 .clickable(interactionSource = interaction, indication = null) { expanded = !expanded }
                 .padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
@@ -5206,9 +5317,9 @@ private fun RawMessageCard(msg: MobileMessage) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
+            .clip(RoundedCornerShape(DshRadius.md))
             .background(Dsh.bgLayer1)
-            .border(1.dp, Dsh.borderL1, RoundedCornerShape(8.dp))
+            .border(1.dp, Dsh.borderL1, RoundedCornerShape(DshRadius.md))
             .padding(12.dp)
     ) {
         Row(
@@ -5252,7 +5363,7 @@ private fun CompactionRow(summary: String, running: Boolean) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(6.dp))
+            .clip(RoundedCornerShape(DshRadius.sm))
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { expanded = !expanded }
             .padding(vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -5346,7 +5457,7 @@ private fun ContextInjectionRow(text: String) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
+            .clip(RoundedCornerShape(DshRadius.md))
             .background(Dsh.bgLayer3.copy(alpha = 0.5f))
             .clickable { expanded = !expanded }
             .padding(horizontal = 12.dp, vertical = 8.dp)
@@ -5413,9 +5524,9 @@ private fun TodoPanel(todos: List<MobileTodoItem>) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(DshRadius.lg))
             .background(Dsh.bgInput)
-            .border(1.dp, Dsh.borderL1, RoundedCornerShape(12.dp))
+            .border(1.dp, Dsh.borderL1, RoundedCornerShape(DshRadius.lg))
     ) {
         Row(
             modifier = Modifier
@@ -5525,7 +5636,7 @@ private fun LoadOlderRow(loading: Boolean, onClick: () -> Unit) {
             fontSize = 12.sp,
             lineHeight = 18.sp,
             modifier = Modifier
-                .clip(RoundedCornerShape(14.dp))
+                .clip(RoundedCornerShape(DshRadius.lg))
                 .background(Dsh.bgInput)
                 .clickable(enabled = !loading, interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick)
                 .padding(horizontal = 12.dp, vertical = 4.dp)
@@ -5557,7 +5668,7 @@ private fun ReasoningRow(text: String, running: Boolean = false) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(6.dp))
+                .clip(RoundedCornerShape(DshRadius.sm))
                 .clickable(interactionSource = interaction, indication = null) { expanded = !expanded }
                 .padding(vertical = 2.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -5654,26 +5765,31 @@ private fun UserBubble(text: String, longPress: Modifier = Modifier) {
             modifier = longPress
                 .fillMaxWidth(0.82f)
                 .widthIn(max = 525.dp)
-                .clip(RoundedCornerShape(22.dp))
-                .background(Dsh.bgInput)
+                .clip(RoundedCornerShape(
+                    topStart = DshRadius.xl,
+                    topEnd = DshRadius.xl,
+                    bottomStart = DshRadius.xl,
+                    bottomEnd = 4.dp
+                ))
+                .background(Dsh.bubbleBg)
                 .padding(horizontal = 16.dp, vertical = 10.dp)
         ) {
             Text(
                 text,
-                color = Dsh.labelPrimary,
-                fontSize = 16.sp,
-                lineHeight = 24.sp
+                color = if (Dsh.isDark) Dsh.labelPrimary else Color(0xFF0F1115),
+                fontSize = 15.sp,
+                lineHeight = 23.sp,
+                letterSpacing = (-0.1).sp
             )
         }
     }
 }
 
-// 助手消息：全宽 markdown（16px/28px）
 @Composable
 private fun AssistantMarkdown(text: String, longPress: Modifier = Modifier) {
     Column(
         modifier = longPress.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         MarkdownContent(decodeHtmlEntities(text))
     }
@@ -5774,9 +5890,9 @@ private fun MarkdownContent(text: String) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
+                        .clip(RoundedCornerShape(DshRadius.md))
                         .background(Dsh.bgLayer1)
-                        .border(1.dp, Dsh.borderL1, RoundedCornerShape(8.dp))
+                        .border(1.dp, Dsh.borderL1, RoundedCornerShape(DshRadius.md))
                 ) {
                     block.rows.forEachIndexed { rowIdx, cells ->
                         Row(modifier = Modifier.fillMaxWidth()) {
@@ -5822,7 +5938,7 @@ private fun MarkdownContent(text: String) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
+                        .clip(RoundedCornerShape(DshRadius.lg))
                         .background(Dsh.bgLayer1)
                         .clickable {
                             // 点击用系统浏览器打开原图
@@ -5852,9 +5968,9 @@ private fun MarkdownCodeBlock(lang: String?, content: String) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(DshRadius.lg))
             .background(Dsh.bgCode)
-            .border(1.dp, Dsh.borderL1, RoundedCornerShape(12.dp))
+            .border(1.dp, Dsh.borderL1, RoundedCornerShape(DshRadius.lg))
     ) {
         // 语言标签 + 复制（DSH code-block-banner）
         Row(
@@ -5877,7 +5993,7 @@ private fun MarkdownCodeBlock(lang: String?, content: String) {
             Row(
                 modifier = Modifier
                     .height(22.dp)
-                    .clip(RoundedCornerShape(6.dp))
+                    .clip(RoundedCornerShape(DshRadius.sm))
                     .background(if (copyPressed) Dsh.hover else Color.Transparent)
                     .clickable(interactionSource = copyInteraction, indication = null) {
                         val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
@@ -6202,7 +6318,7 @@ private fun RunningSweep() {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .clip(RoundedCornerShape(12.dp)),
+            .clip(RoundedCornerShape(DshRadius.lg)),
         contentAlignment = Alignment.CenterStart
     ) {
         Box(
@@ -6228,9 +6344,9 @@ private fun CommandCard(title: String, body: String?, running: Boolean = false, 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(DshRadius.lg))
             .background(Dsh.bgCode)
-            .border(1.dp, Dsh.borderL1, RoundedCornerShape(12.dp))
+            .border(1.dp, Dsh.borderL2, RoundedCornerShape(DshRadius.lg))
             .clickable(interactionSource = interaction, indication = null) { expanded = !expanded }
             .padding(horizontal = 16.dp, vertical = 12.dp)
     ) {
@@ -6238,7 +6354,6 @@ private fun CommandCard(title: String, body: String?, running: Boolean = false, 
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // 2px 圆点分隔符风格
             Box(
                 modifier = Modifier
                     .size(4.dp)
@@ -6324,7 +6439,7 @@ fun EmptyHostScreen(onScan: () -> Unit) {
             Box(
                 modifier = Modifier
                     .height(44.dp)
-                    .clip(RoundedCornerShape(999.dp))
+                    .clip(RoundedCornerShape(DshRadius.full))
                     .background(Dsh.brand500)
                     .clickable(onClick = onScan)
                     .padding(horizontal = 24.dp),

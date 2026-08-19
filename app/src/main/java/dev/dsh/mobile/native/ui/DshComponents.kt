@@ -3,6 +3,9 @@ package dev.dsh.mobile.native.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -37,9 +40,12 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.dsh.mobile.core.Dsh
+import dev.dsh.mobile.native.DshRadius
+import dev.dsh.mobile.native.MobileSessionStats
 
 /**
  * DSH 设计系统语义组件（WI-005 / WI-006）—— 通用 filter chip、tag、badge、banner。
@@ -77,7 +83,7 @@ fun DshFilterChip(
     Box(
         modifier = modifier
             .height(28.dp)
-            .clip(RoundedCornerShape(999.dp))
+            .clip(RoundedCornerShape(DshRadius.full))
             .background(bg)
             .clickable(
                 interactionSource = interaction,
@@ -127,7 +133,7 @@ fun DshTag(
     color: Color = Dsh.bgLayer3,
     contentColor: Color = Dsh.labelSecondary,
     borderColor: Color? = null,
-    shape: Shape = RoundedCornerShape(6.dp),
+    shape: Shape = RoundedCornerShape(DshRadius.sm),
     contentDescription: String? = null,
 ) {
     val mod = modifier
@@ -180,7 +186,7 @@ fun DshBadge(
     }
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(999.dp))
+            .clip(RoundedCornerShape(DshRadius.full))
             .background(color)
             .padding(horizontal = if (showCount) 6.dp else 0.dp, vertical = if (showCount) 2.dp else 0.dp)
             .semantics {
@@ -216,7 +222,7 @@ fun DiffTable(
     val originalBlocks = parseMarkdown(original)
     val revisedBlocks = parseMarkdown(revised)
 
-    var scrollState by remember { ScrollState() }
+    val scrollState = rememberScrollState()
 
     Column(
         modifier = modifier
@@ -226,9 +232,9 @@ fun DiffTable(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(blockSize * 28.dp)
+                .height((blockSize * 28).dp)
                 .background(Dsh.bgLayer1)
-                .border(1.dp, Dsh.borderL1, RoundedCornerShape(8.dp)),
+                .border(1.dp, Dsh.borderL1, RoundedCornerShape(DshRadius.md)),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             // 原内容标题
@@ -259,8 +265,8 @@ fun DiffTable(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(Dsh.bgLayer1)
-                .border(1.dp, Dsh.borderL1, RoundedCornerShape(8.dp)),
-            verticalArrangement = Arrangement.SpaceBetween,
+                .border(1.dp, Dsh.borderL1, RoundedCornerShape(DshRadius.md)),
+            horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             // 左侧：原内容
             Column(
@@ -305,7 +311,7 @@ private fun parseMarkdown(text: String): List<MarkdownBlock> {
                 ?.split("|")
                 ?.map { it.trim() } ?: emptyList()
             if (cells.size >= 2) {
-                currentRows.add(cells)
+                currentRows = currentRows + listOf(cells)
                 inTable = true
             }
         } else if (inTable && line.isNotEmpty() && !line.startsWith("|")) {
@@ -335,7 +341,7 @@ private fun parseMarkdown(text: String): List<MarkdownBlock> {
     return blocks
 }
 
-private sealed class MarkdownBlock(
+private class MarkdownBlock(
     val type: MarkdownBlockType,
     val rows: List<List<String>> = emptyList(), // 二维：每行是 cell 列表
     val content: String = ""
@@ -343,7 +349,12 @@ private sealed class MarkdownBlock(
 
 private enum class MarkdownBlockType { PARAGRAPH, HEADING, LIST, CODE, QUOTE, TABLE, HR, IMAGE, MATH, EMPTY }
 
+@Composable
 private fun renderBlock(block: MarkdownBlock, isOriginal: Boolean) {
+    val bgLayer3 = Dsh.bgLayer3
+    val bgLayer1 = Dsh.bgLayer1
+    val borderL2 = Dsh.borderL2
+    val borderL1 = Dsh.borderL1
     when (block.type) {
         MarkdownBlockType.TABLE -> {
             // 计算列宽：平均分配或基于内容
@@ -353,28 +364,28 @@ private fun renderBlock(block: MarkdownBlock, isOriginal: Boolean) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(if (isOriginal) Dsh.bgLayer3 else Dsh.bgLayer1)
-                    .border(1.dp, if (isOriginal) Dsh.borderL2 else Dsh.borderL1, RoundedCornerShape(8.dp))
+                    .background(if (isOriginal) bgLayer3 else bgLayer1)
+                    .border(1.dp, if (isOriginal) borderL2 else borderL1, RoundedCornerShape(DshRadius.md))
             ) {
                 block.rows.forEachIndexed { rowIdx, cells ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 4.dp, vertical = 2.dp),
-                        verticalAlignment = if (rowIdx == 0) Alignment.CenterVertically else Alignment.Start
+                        verticalAlignment = if (rowIdx == 0) Alignment.CenterVertically else Alignment.Top
                     ) {
                         cells.forEachIndexed { colIdx, cell ->
                             Box(
                                 modifier = Modifier
                                     .weight(useWidth)
                                     .background(
-                                        if (rowIdx == 0) (if (isOriginal) Dsh.bgLayer3 else Dsh.bgLayer1)
+                                        if (rowIdx == 0) (if (isOriginal) bgLayer3 else bgLayer1)
                                             else Color.Transparent
                                     )
                                     .border(
                                         0.5.dp,
-                                        if (rowIdx == 0) (if (isOriginal) Dsh.borderL2 else Dsh.borderL1)
-                                            else Dsh.borderL1,
+                                        if (rowIdx == 0) (if (isOriginal) borderL2 else borderL1)
+                                            else borderL1,
                                         RoundedCornerShape(4.dp)
                                     )
                                     .padding(horizontal = 6.dp, vertical = 3.dp)
@@ -415,6 +426,7 @@ private fun renderBlock(block: MarkdownBlock, isOriginal: Boolean) {
     }
 }
 
+@Composable
 private fun InlineText(text: String) {
     Text(text = text, color = Dsh.labelPrimary, fontSize = 13.sp, lineHeight = 20.sp)
 }
@@ -430,6 +442,7 @@ fun RecommendationCard(
     sessionStats: MobileSessionStats?,
     running: Boolean,
     modifier: Modifier = Modifier,
+    onSuggestionClick: (String) -> Unit = {},
 ) {
     if (!running || sessionStats == null) return
 
@@ -444,7 +457,7 @@ fun RecommendationCard(
             .height(44.dp)
             .padding(vertical = 4.dp)
             .background(Dsh.bgLayer3)
-            .border(1.dp, Dsh.borderL2, RoundedCornerShape(8.dp))
+            .border(1.dp, Dsh.borderL2, RoundedCornerShape(DshRadius.md))
             .semantics {
                 this.contentDescription = "推荐操作：基于当前上下文压力"
             },
@@ -514,7 +527,7 @@ fun DshBanner(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
+            .clip(RoundedCornerShape(DshRadius.md))
             .background(bg)
             .padding(horizontal = 12.dp, vertical = 8.dp)
             .semantics {
@@ -546,7 +559,7 @@ fun DshBanner(
             val pressed by interaction.collectIsPressedAsState()
             Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(6.dp))
+                    .clip(RoundedCornerShape(DshRadius.sm))
                     .background(if (pressed) Dsh.hover else Color.Transparent)
                     .clickable(interactionSource = interaction, indication = null, onClick = onAction)
                     .padding(horizontal = 8.dp, vertical = 4.dp)
@@ -598,7 +611,7 @@ fun ChatLoadingSkeleton(
                 modifier = Modifier
                     .fillMaxWidth(widthFrac)
                     .height(14.dp)
-                    .clip(RoundedCornerShape(6.dp))
+                    .clip(RoundedCornerShape(DshRadius.sm))
                     .background(Dsh.bgLayer3)
             )
         }
@@ -611,7 +624,7 @@ fun ChatLoadingSkeleton(
                 modifier = Modifier
                     .width(120.dp)
                     .height(28.dp)
-                    .clip(RoundedCornerShape(14.dp))
+                    .clip(RoundedCornerShape(DshRadius.lg))
                     .background(Dsh.bgLayer3)
             )
         }
@@ -620,7 +633,7 @@ fun ChatLoadingSkeleton(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(64.dp)
-                .clip(RoundedCornerShape(8.dp))
+                .clip(RoundedCornerShape(DshRadius.md))
                 .background(Dsh.bgCode)
         )
     }

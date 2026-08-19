@@ -1,6 +1,8 @@
 package dev.dsh.mobile.native
 import dev.dsh.mobile.core.Dsh
 
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.ui.unit.dp
 import android.provider.Settings
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
@@ -28,6 +30,31 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+
+/**
+ * DSH 设计系统：排版、圆角、动效 token。
+ * 排版对齐 DSH Web `--dsw-font-family` 体系；
+ * 圆角统一为 4 档 + pill（取代散布的 5/6/7/8/10/12/13/14/24dp）；
+ * 动效时长与 easing 对齐 `--ds-transition-duration*` 系列。
+ */
+object DshRadius {
+    val sm = 6.dp
+    val md = 10.dp
+    val lg = 12.dp
+    val xl = 18.dp
+    val full = 999.dp
+}
+
+object DshDuration {
+    const val fast = 100
+    const val normal = 200
+    const val slow = 300
+}
+
+object DshEasing {
+    val inOut = CubicBezierEasing(0.4f, 0f, 0.2f, 1f)
+    val out = CubicBezierEasing(0.32f, 0.72f, 0f, 1f)
+}
 
 /**
  * 全局动效工具：对应 Web 端 `@media(prefers-reduced-motion: reduce)`。

@@ -55,6 +55,11 @@ class DshColors(
     val errorBg: Color,
     val buttonElevated: Color,
     val buttonFloating: Color,
+    val bgSurface: Color = Color.Unspecified,
+    val textInk2: Color = Color.Unspecified,
+    val shadowCard: Color = Color.Unspecified,
+    val bubbleBg: Color = Color.Unspecified,
+    val bubbleHighlight: Color = Color.Unspecified,
 )
 
 val DarkDshColors = DshColors(
@@ -95,7 +100,9 @@ val DarkDshColors = DshColors(
     errorBg = Color(0x26F25A5A),
     buttonElevated = Color(0xFF43454A),
     buttonFloating = Color(0xFF2C2C2E),
-    shadowCard = Color(0x1F000000),     // NEW: card shadow color (rgba equivalent)
+    shadowCard = Color(0x1F000000),
+    bubbleBg = Color(0xFF232326),
+    bubbleHighlight = Color(0xFF43454A),
 )
 
 val LightDshColors = DshColors(
@@ -143,7 +150,9 @@ val LightDshColors = DshColors(
     // 按钮 — CSS body{} alias tokens
     buttonElevated = Color(0xFFD1D5DB),   // 浅色主题下不能用纯白（白底白=消失，禁用态看不见）；改用中性浅灰保证轮廓
     buttonFloating = Color(0xFFFFFFFF),   // alias-button-floating-fill: bluish-00
-    shadowCard = Color(0x00000012),       // NEW: card shadow color (light: rgba(0,0,0,.05))
+    shadowCard = Color(0x0D000000),
+    bubbleBg = Color(0xFFEDF3FE),
+    bubbleHighlight = Color(0xFFD3E2FF),
 )
 
 val LocalDshColors = staticCompositionLocalOf { DarkDshColors }
@@ -400,4 +409,29 @@ object Dsh {
         @Composable
         @ReadOnlyComposable
         get() = LocalDshColors.current.buttonFloating
+
+    val bgSurface: Color
+        @Composable
+        @ReadOnlyComposable
+        get() = LocalDshColors.current.bgSurface
+
+    val textInk2: Color
+        @Composable
+        @ReadOnlyComposable
+        get() = LocalDshColors.current.textInk2
+
+    val shadowCard: Color
+        @Composable
+        @ReadOnlyComposable
+        get() = LocalDshColors.current.shadowCard
+
+    val bubbleBg: Color
+        @Composable
+        @ReadOnlyComposable
+        get() = LocalDshColors.current.bubbleBg
+
+    val bubbleHighlight: Color
+        @Composable
+        @ReadOnlyComposable
+        get() = LocalDshColors.current.bubbleHighlight
 }

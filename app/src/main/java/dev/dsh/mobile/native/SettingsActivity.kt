@@ -53,6 +53,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -92,6 +93,7 @@ class SettingsActivity : ComponentActivity() {
 private enum class SettingsTab(val title: String) {
     GENERAL("通用设置"),
     MODELS("模型"),
+    SESSIONS("会话"),
     PLUGINS("插件"),
     ABOUT("关于"),
 }
@@ -241,7 +243,7 @@ private fun SettingsScreen(
                 Box(
                     modifier = Modifier
                         .size(28.dp)
-                        .clip(RoundedCornerShape(999.dp))
+                        .clip(RoundedCornerShape(DshRadius.full))
                         .background(if (backPressed) Dsh.hover else Color.Transparent)
                         .clickable(interactionSource = backInteraction, indication = null, onClick = onBack),
                     contentAlignment = Alignment.Center
@@ -273,7 +275,7 @@ private fun SettingsScreen(
                 .horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            for (t in listOf(SettingsTab.GENERAL, SettingsTab.MODELS, SettingsTab.PLUGINS, SettingsTab.ABOUT)) {
+            for (t in listOf(SettingsTab.GENERAL, SettingsTab.MODELS, SettingsTab.SESSIONS, SettingsTab.PLUGINS, SettingsTab.ABOUT)) {
                 val selected = t == tab
                 val interaction = remember { MutableInteractionSource() }
                 val pressed by interaction.collectIsPressedAsState()
@@ -281,7 +283,7 @@ private fun SettingsScreen(
                     modifier = Modifier
                         .minimumInteractiveComponentSize()
                         .height(32.dp)
-                        .clip(RoundedCornerShape(999.dp))
+                        .clip(RoundedCornerShape(DshRadius.full))
                         .background(
                             when {
                                 selected -> Dsh.bgNavActive
@@ -343,9 +345,9 @@ private fun SettingsScreen(
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
+                                .clip(RoundedCornerShape(DshRadius.lg))
                                 .background(Dsh.bgLayer1)
-                                .border(1.dp, Dsh.borderL1, RoundedCornerShape(12.dp))
+                                .border(1.dp, Dsh.borderL1, RoundedCornerShape(DshRadius.lg))
                                 .clickable(interactionSource = interaction, indication = null) {
                                     expandedProviders = if (expanded) expandedProviders - group.provider else expandedProviders + group.provider
                                 }
@@ -408,102 +410,8 @@ private fun SettingsScreen(
                                                 fontSize = 11.sp,
                                                 lineHeight = 18.sp
                                             )
-}
-}
-}
-
-// ---------- 微调卡片（Fine-tune Card：模型参数、推理设置、自动审配） ----------
-@Composable
-fun FineTuneCard(
-    appSettings: AppSettings,
-    onModelChange: () -> Unit = {},
-) {
-    var expanded by remember { mutableStateOf(false) }
-    val providerById = appSettings.modelProviders?.associate { it.id to it } ?: mapOf()
-    val currentProviderId = appSettings.defaultModelProvider?.id
-    val currentModelId = appSettings.defaultModel?.id
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        // 模型供应商选择
-        if (appSettings.modelProviders?.isNotEmpty() == true) {
-            SettingsSection("模型供应商") {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    Text("当前供应商", color = Dsh.labelTertiary, fontSize = 12.sp)
-                    Spacer(Modifier.width(4.dp))
-                    Text(
-                        currentProviderId?.let { it.capitalize() } ?: "未选择",
-                        color = Dsh.labelPrimary,
-                        fontSize = 12.sp,
-                    )
-                    Icon(
-                        ChevronRightOutline14,
-                        tint = Dsh.labelCaption,
-                        modifier = Modifier.size(16.dp),
-                    )
-                }
-            }
-        }
-
-        // 推理等级选择
-        SettingsSection("推理设置") {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Text("推理等级", color = Dsh.labelTertiary, fontSize = 12.sp)
-                Spacer(Modifier.width(4.dp))
-                Text(
-                    appSettings.defaultReasoningEffort?.toString() ?: "默认",
-                    color = Dsh.labelPrimary,
-                    fontSize = 12.sp,
-                )
-                Icon(
-                    ChevronRightOutline14,
-                    tint = Dsh.labelCaption,
-                    modifier = Modifier.size(16.dp),
-                )
-            }
-        }
-
-        // 自动审批开关
-        SettingsSection("自动审批") {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("允许一次", color = Dsh.labelTertiary, fontSize = 12.sp)
-                Spacer(Modifier.width(4.dp))
-                Switch(
-                    checked = appSettings.autoApprove ?: false,
-                    onCheckedChange = { isChecked -> {
-                        // 保存 autoApprove 设置到 SharedPreferences
-                        val editor = context.getSharedPreferences("dsh_settings", Context.MODE_PRIVATE).edit()
-                        editor.putBoolean("auto_approve", isChecked)
-                        editor.apply()
-                        // 更新 appSettings 以保持一致
-                        appSettings = appSettings.copy(autoApprove = isChecked)
-                    } },
-                    colors = SwitchDefaults.colors(
-                        defaultColor = Dsh.brand400,
-                        thumbColor = { Dsh.labelPrimary },
-                        trackColor = { Dsh.bgLayer1 },
-                    ),
-                )
-            }
-        }
-    }
-}
-// ---------- End FineTuneCard
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -513,9 +421,9 @@ fun FineTuneCard(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
+                            .clip(RoundedCornerShape(DshRadius.lg))
                             .background(Dsh.bgLayer1)
-                            .border(1.dp, Dsh.borderL2, RoundedCornerShape(12.dp))
+                            .border(1.dp, Dsh.borderL2, RoundedCornerShape(DshRadius.lg))
                             .padding(horizontal = 14.dp, vertical = 12.dp)
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -531,6 +439,16 @@ fun FineTuneCard(
                             lineHeight = 17.sp
                         )
                     }
+                }
+
+                SettingsTab.SESSIONS -> {
+                    Text(
+                        "会话管理功能请在侧边栏长按会话操作（归档/删除）。",
+                        color = Dsh.labelTertiary,
+                        fontSize = 13.sp,
+                        lineHeight = 20.sp,
+                        modifier = Modifier.padding(vertical = 12.dp)
+                    )
                 }
 
                 SettingsTab.PLUGINS -> PluginsSettings(context)
@@ -572,9 +490,9 @@ fun FineTuneCard(
                     modifier = Modifier
                         .widthIn(max = 360.dp)
                         .fillMaxWidth(0.9f)
-                        .clip(RoundedCornerShape(14.dp))
+                        .clip(RoundedCornerShape(DshRadius.lg))
                         .background(Dsh.bgLayer1)
-                        .border(1.dp, Dsh.borderL2, RoundedCornerShape(14.dp))
+                        .border(1.dp, Dsh.borderL2, RoundedCornerShape(DshRadius.lg))
                         .padding(18.dp)
                 ) {
                     Text("确认启用 Full access？", color = Dsh.labelPrimary, fontSize = 15.sp, fontWeight = FontWeight(500), lineHeight = 21.sp)
@@ -708,70 +626,6 @@ private fun GeneralSettings(
     )
     HorizontalDivider(color = Dsh.borderL1, modifier = Modifier.padding(vertical = 4.dp))
 
-    // --- 外观（ui-theme.preference：写入服务端并同步应用本地主题） ---
-    SettingsSection("外观")
-    val currentTheme = appSettings.theme
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        ThemeCard(
-            label = "浅色",
-            icon = LightOutline16,
-            selected = currentTheme == "light",
-            modifier = Modifier.weight(1f),
-            onClick = {
-                ThemeManager.setThemeMode(context, "light")
-                onSave("ui-theme", org.json.JSONObject().put("preference", "light"), {})
-            }
-        )
-        ThemeCard(
-            label = "深色",
-            icon = DarkOutline16,
-            selected = currentTheme == "dark",
-            modifier = Modifier.weight(1f),
-            onClick = {
-                ThemeManager.setThemeMode(context, "dark")
-                onSave("ui-theme", org.json.JSONObject().put("preference", "dark"), {})
-            }
-        )
-        ThemeCard(
-            label = "跟随系统",
-            icon = SettingsOutline16,
-            selected = currentTheme == "system",
-            modifier = Modifier.weight(1f),
-            onClick = {
-                ThemeManager.setThemeMode(context, "system")
-                onSave("ui-theme", org.json.JSONObject().put("preference", "system"), {})
-            }
-        )
-    }
-    if (savingNs == "ui-theme") {
-        Text("保存中…", color = Dsh.labelTertiary, fontSize = 12.sp, modifier = Modifier.padding(start = 4.dp, top = 4.dp))
-    }
-    saveErrors["ui-theme"]?.let { err ->
-        Row(
-            modifier = Modifier.padding(start = 4.dp, top = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("保存失败：$err", color = Dsh.error, fontSize = 12.sp, modifier = Modifier.weight(1f))
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(7.dp))
-                    .background(Dsh.bgLayer1)
-                    .clickable {
-                        onSave("ui-theme", org.json.JSONObject().put("preference", currentTheme), {})
-                    }
-                    .padding(horizontal = 10.dp, vertical = 4.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text("重试", color = Dsh.brand400, fontSize = 12.sp, fontWeight = FontWeight(500))
-            }
-        }
-    }
-    HorizontalDivider(color = Dsh.borderL1, modifier = Modifier.padding(vertical = 8.dp))
 
     // --- 繁忙时 Enter 键行为（ui-conversation.busyEnter） ---
     SettingsSelectItem(
@@ -788,213 +642,9 @@ private fun GeneralSettings(
         }
     )
 
-    // --- 默认模型（agent-default-model 只读展示：创建会话由 DSH 服务端应用） ---
-    if (appSettings.defaultModelProvider != null || appSettings.defaultModel != null) {
-        HorizontalDivider(color = Dsh.borderL1, modifier = Modifier.padding(vertical = 8.dp))
-        SettingsSection("模型与推理")
-        SettingsItem(
-            title = "默认模型",
-            description = listOfNotNull(
-                appSettings.defaultModelProvider?.let { "供应商 $it" },
-                appSettings.defaultModel?.let { "模型 $it" },
-                appSettings.defaultReasoningEffort?.let { "推理等级 $it" },
-            ).joinToString(" · ").ifBlank { "未配置" } + "。新会话由 Harness 服务端应用，手机端只读。",
-            onClick = {}
-        )
-    }
 
-    // --- 微调卡片（Fine-tune Card：模型参数、推理设置、自动审配） ----------
-    FineTuneCard(appSettings = appSettings, onModelChange = { /* TODO: model refresh */ })
-
-    // --- 会话管理（归档 / 删除） ---
-    HorizontalDivider(color = Dsh.borderL1, modifier = Modifier.padding(vertical = 8.dp))
-    var sessionMgmtExpanded by remember { mutableStateOf(false) }
-    val mgmtInteraction = remember { MutableInteractionSource() }
-    val mgmtPressed by mgmtInteraction.collectIsPressedAsState()
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(if (mgmtPressed) Dsh.hover else Color.Transparent)
-            .clickable(interactionSource = mgmtInteraction, indication = null) {
-                sessionMgmtExpanded = !sessionMgmtExpanded
-            }
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            "会话管理",
-            color = Dsh.labelSecondary,
-            fontSize = 13.sp,
-            fontWeight = FontWeight(500),
-            modifier = Modifier.weight(1f)
-        )
-        Icon(
-            if (sessionMgmtExpanded) ChevronUpOutline14 else ChevronDownOutline14,
-            contentDescription = null,
-            tint = Dsh.labelTertiary,
-            modifier = Modifier.size(16.dp)
-        )
-    }
-
-    AnimatedVisibility(
-        visible = sessionMgmtExpanded,
-        enter = expandVertically(animationSpec = tween(motionDuration(220), easing = FastOutSlowInEasing)) + fadeIn(animationSpec = tween(motionDuration(150))),
-        exit = shrinkVertically(animationSpec = tween(motionDuration(180), easing = FastOutSlowInEasing)) + fadeOut(animationSpec = tween(motionDuration(150)))
-    ) {
-        val workspacePrefs = remember { dev.dsh.mobile.native.util.WorkspacePrefs(context) }
-        var archivedIds by remember { mutableStateOf(workspacePrefs.archivedSessionIds) }
-        var deletedIds by remember { mutableStateOf(workspacePrefs.deletedSessionIds) }
-        var sessionList by remember { mutableStateOf<List<MobileSession>>(emptyList()) }
-
-        // 加载会话列表
-        LaunchedEffect(Unit) {
-            if (host != null) {
-                withContext(Dispatchers.IO) {
-                    try {
-                        val client = MobileApiClient(host)
-                        val list = client.getSessions()
-                        withContext(Dispatchers.Main) { sessionList = list }
-                    } catch (_: Exception) {}
-                }
-            }
-        }
-
-        val archivedSessions = sessionList.filter { it.sessionId in archivedIds }
-        val deletedSessions = sessionList.filter { it.sessionId in deletedIds }
-
-        if (archivedSessions.isEmpty() && deletedSessions.isEmpty()) {
-            Text(
-                "没有已归档或已删除的会话",
-                color = Dsh.labelTertiary,
-                fontSize = 13.sp,
-                modifier = Modifier.padding(vertical = 8.dp)
-            )
-        }
-
-        // 已归档会话列表
-        if (archivedSessions.isNotEmpty()) {
-            Text(
-                "已归档 (${archivedSessions.size})",
-                color = Dsh.labelSecondary,
-                fontSize = 13.sp,
-                fontWeight = FontWeight(500),
-                modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)
-            )
-            archivedSessions.forEach { s ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .padding(horizontal = 4.dp, vertical = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        s.title,
-                        color = Dsh.labelPrimary,
-                        fontSize = 14.sp,
-                        lineHeight = 20.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
-                    )
-                    // 取消归档
-                    Box(
-                        modifier = Modifier
-                            .size(28.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .clickable {
-                                val next = archivedIds - s.sessionId
-                                archivedIds = next
-                                workspacePrefs.archivedSessionIds = next
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            ChevronRightOutline14,
-                            contentDescription = "取消归档",
-                            tint = Dsh.labelSecondary,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-                    Spacer(Modifier.width(4.dp))
-                    // 删除
-                    Box(
-                        modifier = Modifier
-                            .size(28.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .clickable {
-                                val nextA = archivedIds - s.sessionId
-                                archivedIds = nextA
-                                workspacePrefs.archivedSessionIds = nextA
-                                val nextD = deletedIds + s.sessionId
-                                deletedIds = nextD
-                                workspacePrefs.deletedSessionIds = nextD
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            TrashOutline16,
-                            contentDescription = "删除",
-                            tint = Dsh.error,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-                }
-            }
-        }
-
-        // 已删除会话列表
-        if (deletedSessions.isNotEmpty()) {
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "已删除 (${deletedSessions.size})",
-                color = Dsh.labelSecondary,
-                fontSize = 13.sp,
-                fontWeight = FontWeight(500),
-                modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)
-            )
-            deletedSessions.forEach { s ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .padding(horizontal = 4.dp, vertical = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        s.title,
-                        color = Dsh.labelTertiary,
-                        fontSize = 14.sp,
-                        lineHeight = 20.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
-                    )
-                    // 恢复
-                    Box(
-                        modifier = Modifier
-                            .size(28.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .clickable {
-                                val next = deletedIds - s.sessionId
-                                deletedIds = next
-                                workspacePrefs.deletedSessionIds = next
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            RefreshOutline16,
-                            contentDescription = "恢复",
-                            tint = Dsh.brand400,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-                }
-            }
-        }
-    }
 }
+
 
 /** 外观三卡片（浅色/深色/跟随系统） */
 @Composable
@@ -1009,12 +659,12 @@ private fun ThemeCard(
     val pressed by interaction.collectIsPressedAsState()
     Column(
         modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(DshRadius.lg))
             .background(if (pressed) Dsh.hover else Color.Transparent)
             .border(
                 1.dp,
                 if (selected) Dsh.brand400.copy(alpha = 0.5f) else Dsh.borderL2,
-                RoundedCornerShape(12.dp)
+                RoundedCornerShape(DshRadius.lg)
             )
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .padding(vertical = 14.dp),
@@ -1036,7 +686,7 @@ private fun ThemeCard(
     }
 }
 
-/** 下拉选择设置项（DSH Select：点击触发 inline DropdownMenu，选中项带品牌蓝勾选） */
+/** 下拉选择设置项（DSH Select：菜单从右侧下拉角标弹出，选中项带品牌蓝勾选） */
 @Composable
 private fun SettingsSelectItem(
     title: String,
@@ -1052,32 +702,17 @@ private fun SettingsSelectItem(
     var expanded by remember { mutableStateOf(false) }
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
-    Box {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(8.dp))
-                .background(if (pressed) Dsh.hover else Color.Transparent)
-                .clickable(interactionSource = interaction, indication = null, enabled = !saving) { expanded = true }
-                .padding(horizontal = 10.dp, vertical = 8.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(title, color = Dsh.labelPrimary, fontSize = 14.sp, lineHeight = 20.sp, modifier = Modifier.weight(1f))
-                if (saving) {
-                    Text("保存中…", color = Dsh.labelTertiary, fontSize = 12.sp, lineHeight = 20.sp)
-                } else {
-                    Text(value, color = Dsh.labelTertiary, fontSize = 13.sp, lineHeight = 20.sp)
-                    Icon(
-                        ChevronDownOutline14,
-                        contentDescription = null,
-                        tint = Dsh.labelCaption,
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
-            }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(DshRadius.md))
+            .background(if (pressed) Dsh.hover else Color.Transparent)
+            .clickable(interactionSource = interaction, indication = null, enabled = !saving) { expanded = true }
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, color = Dsh.labelPrimary, fontSize = 14.sp, lineHeight = 20.sp)
             if (description != null) {
                 Spacer(Modifier.height(2.dp))
                 Text(
@@ -1087,7 +722,6 @@ private fun SettingsSelectItem(
                     lineHeight = 17.sp
                 )
             }
-            // 保存失败：行内错误 + 重试（不关闭页面、不清空选择）
             if (error != null) {
                 Spacer(Modifier.height(2.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1105,53 +739,70 @@ private fun SettingsSelectItem(
                 }
             }
         }
-
-        // Inline 下拉选择器（对标 web UI DropdownMenu 风格）
-        DropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false },
-            containerColor = Dsh.bgLayer1,
-            shape = RoundedCornerShape(12.dp),
-            tonalElevation = 0.dp,
-            shadowElevation = 12.dp,
-            border = BorderStroke(1.dp, Dsh.borderL2)
-        ) {
-            Column(
-                modifier = Modifier
-                    .width(200.dp)
-                    .padding(vertical = 4.dp)
+        Spacer(Modifier.width(8.dp))
+        Box(modifier = Modifier.wrapContentSize(Alignment.TopEnd)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                options.forEach { (label, id) ->
-                    val isSelected = id == (selectedId ?: value)
-                    val optInteraction = remember { MutableInteractionSource() }
-                    val optPressed by optInteraction.collectIsPressedAsState()
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(40.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(if (optPressed) Dsh.hover else Color.Transparent)
-                            .clickable(interactionSource = optInteraction, indication = null) {
-                                onSelect(label, id)
-                                expanded = false
-                            }
-                            .padding(horizontal = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            label,
-                            color = if (isSelected) Dsh.brand400 else Dsh.labelPrimary,
-                            fontSize = 13.sp,
-                            lineHeight = 20.sp,
-                            modifier = Modifier.weight(1f)
-                        )
-                        if (isSelected) {
-                            Icon(
-                                CheckOutline16,
-                                contentDescription = null,
-                                tint = Dsh.brand400,
-                                modifier = Modifier.size(16.dp)
+                if (saving) {
+                    Text("保存中…", color = Dsh.labelTertiary, fontSize = 12.sp, lineHeight = 20.sp)
+                } else {
+                    Text(value, color = Dsh.labelTertiary, fontSize = 13.sp, lineHeight = 20.sp)
+                    Icon(
+                        ChevronDownOutline14,
+                        contentDescription = null,
+                        tint = Dsh.labelCaption,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false },
+                containerColor = Dsh.bgLayer1,
+                shape = RoundedCornerShape(DshRadius.lg),
+                tonalElevation = 0.dp,
+                shadowElevation = 12.dp,
+                border = BorderStroke(1.dp, Dsh.borderL2),
+                offset = DpOffset(0.dp, 4.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .widthIn(min = 160.dp, max = 240.dp)
+                        .padding(vertical = 4.dp)
+                ) {
+                    options.forEach { (label, id) ->
+                        val isSelected = id == (selectedId ?: value)
+                        val optInteraction = remember { MutableInteractionSource() }
+                        val optPressed by optInteraction.collectIsPressedAsState()
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(40.dp)
+                                .clip(RoundedCornerShape(DshRadius.md))
+                                .background(if (optPressed || isSelected) Dsh.hover else Color.Transparent)
+                                .clickable(interactionSource = optInteraction, indication = null) {
+                                    onSelect(label, id)
+                                    expanded = false
+                                }
+                                .padding(horizontal = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                label,
+                                color = if (isSelected) Dsh.brand400 else Dsh.labelPrimary,
+                                fontSize = 13.sp,
+                                lineHeight = 20.sp,
+                                modifier = Modifier.weight(1f)
                             )
+                            if (isSelected) {
+                                Icon(
+                                    CheckOutline16,
+                                    contentDescription = null,
+                                    tint = Dsh.brand400,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -1233,9 +884,9 @@ private fun PresetsSettings(context: Context) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
+                .clip(RoundedCornerShape(DshRadius.lg))
                 .background(if (pressed || isDefault) Dsh.hover else Dsh.bgLayer1)
-                .border(1.dp, if (isDefault) Dsh.brand400.copy(alpha = 0.5f) else Dsh.borderL1, RoundedCornerShape(12.dp))
+                .border(1.dp, if (isDefault) Dsh.brand400.copy(alpha = 0.5f) else Dsh.borderL1, RoundedCornerShape(DshRadius.lg))
                 .clickable(interactionSource = interaction, indication = null) {
                     defaultPreset = id
                     prefs.edit().putString("default_preset", id).apply()
@@ -1248,7 +899,7 @@ private fun PresetsSettings(context: Context) {
                 if (isDefault) {
                     Box(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(999.dp))
+                            .clip(RoundedCornerShape(DshRadius.full))
                             .background(Dsh.brand400.copy(alpha = 0.15f))
                             .padding(horizontal = 8.dp, vertical = 2.dp)
                     ) {
@@ -1292,7 +943,7 @@ private fun SettingsItem(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 52.dp)
-            .clip(RoundedCornerShape(8.dp))
+            .clip(RoundedCornerShape(DshRadius.md))
             .background(if (pressed) Dsh.hover else Color.Transparent)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 8.dp),
