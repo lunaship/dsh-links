@@ -1218,7 +1218,13 @@ fun WorkspaceScreen(
                                             .fillMaxWidth()
                                             .height(34.dp)
                                             .padding(horizontal = 8.dp, vertical = 0.dp)
-                                            .padding(horizontal = 4.dp),
+                                            .padding(horizontal = 4.dp)
+                                            .let { base ->
+                                                if (cwd != null) base.clickable {
+                                                    val c = cwd
+                                                    collapsedWorkspaces = if (collapsed) collapsedWorkspaces - c else collapsedWorkspaces + c
+                                                } else base
+                                            },
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         // chevron 单独可点（折叠/展开）
@@ -1296,65 +1302,67 @@ fun WorkspaceScreen(
                                         }
                                     }
                                 }
-                                if (!collapsed) {
-                                    // 组内默认预览 5 条 + 「显示全部」占位行（对齐 Web UI SessionListPage）
-                                    val showMore = groupSessions.size > 5 && cwd !in expandedGroups
-                                    val preview = if (showMore) groupSessions.take(5) else groupSessions
-                                    val rows: List<MobileSession?> = if (showMore) preview + null else preview
-                                    items(rows, key = { it?.sessionId ?: "ws-more-${cwd ?: ""}" }) { s ->
-                                        if (s == null) {
-                                            Row(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .height(30.dp)
-                                                    .padding(horizontal = 8.dp)
-                                                    .clip(RoundedCornerShape(8.dp))
-                                                    .clickable { expandedGroups = expandedGroups + cwd!! }
-                                                    .padding(horizontal = 12.dp),
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Text(
-                                                    "显示全部 ${groupSessions.size} 项",
-                                                    color = Dsh.labelTertiary,
-                                                    fontSize = 12.sp,
-                                                    lineHeight = 18.sp
-                                                )
-                                            }
-                                        } else {
-                                            AnimatedVisibility(
-                                                visible = true,
-                                                enter = fadeIn(animationSpec = tween(180)) + slideInHorizontally(animationSpec = tween(220, easing = FastOutSlowInEasing), initialOffsetX = { -it }),
-                                                modifier = Modifier.animateItem()
-                                            ) {
-                                                SessionRowItem(
-                                                    session = s,
-                                                    isSelected = s.sessionId == currentSessionId,
-                                                    onClick = {
-                                                        currentSessionId = s.sessionId
-                                                        scope.launch { drawerState.close() }
-                                                    },
-                                                    onRename = { renameTarget = s },
-                                                    onArchive = { setArchived(s.sessionId) },
-                                                    onDelete = { deleteSessionTarget = s },
-                                                    onFork = {
-                                                        scope.launch(Dispatchers.IO) {
-                                                            try {
-                                                                val newId = client.forkSession(s.sessionId)
-                                                                withContext(Dispatchers.Main) {
-                                                                    if (newId != null) {
-                                                                        currentSessionId = newId
-                                                                        refreshSessions()
-                                                                        drawerState.close()
+                                // 组内默认预览 5 条 + 「显示全部」占位行（对齐 Web UI SessionListPage）
+                                val showMore = groupSessions.size > 5 && cwd !in expandedGroups
+                                val preview = if (showMore) groupSessions.take(5) else groupSessions
+                                val rows: List<MobileSession?> = if (showMore) preview + null else preview
+                                item(key = "ws-body-${cwd ?: ""}") {
+                                    AnimatedVisibility(
+                                        visible = !collapsed,
+                                        enter = fadeIn(animationSpec = tween(150)) + expandVertically(animationSpec = tween(220, easing = FastOutSlowInEasing), expandFrom = Alignment.Top),
+                                        exit = fadeOut(animationSpec = tween(110)) + shrinkVertically(animationSpec = tween(150, easing = FastOutSlowInEasing), shrinkTowards = Alignment.Top)
+                                    ) {
+                                        Column {
+                                            rows.forEach { s ->
+                                                if (s == null) {
+                                                    Row(
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .height(30.dp)
+                                                            .padding(horizontal = 8.dp)
+                                                            .clip(RoundedCornerShape(8.dp))
+                                                            .clickable { expandedGroups = expandedGroups + cwd!! }
+                                                            .padding(horizontal = 12.dp),
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        Text(
+                                                            "显示全部 ${groupSessions.size} 项",
+                                                            color = Dsh.labelTertiary,
+                                                            fontSize = 12.sp,
+                                                            lineHeight = 18.sp
+                                                        )
+                                                    }
+                                                } else {
+                                                    SessionRowItem(
+                                                        session = s,
+                                                        isSelected = s.sessionId == currentSessionId,
+                                                        onClick = {
+                                                            currentSessionId = s.sessionId
+                                                            scope.launch { drawerState.close() }
+                                                        },
+                                                        onRename = { renameTarget = s },
+                                                        onArchive = { setArchived(s.sessionId) },
+                                                        onDelete = { deleteSessionTarget = s },
+                                                        onFork = {
+                                                            scope.launch(Dispatchers.IO) {
+                                                                try {
+                                                                    val newId = client.forkSession(s.sessionId)
+                                                                    withContext(Dispatchers.Main) {
+                                                                        if (newId != null) {
+                                                                            currentSessionId = newId
+                                                                            refreshSessions()
+                                                                            drawerState.close()
+                                                                        }
                                                                     }
-                                                                }
-                                                            } catch (e: Exception) {}
-                                                        }
-                                                },
-                                            )
+                                                                } catch (e: Exception) {}
+                                                            }
+                                                        },
+                                                    )
+                                                }
+                                            }
                                         }
                                     }
                                 }
-                            }
                         }
                     }
                     }
@@ -2295,20 +2303,15 @@ fun WorkspaceScreen(
             onDismiss = { deleteWorkspaceTarget = null },
             onConfirm = {
                 deleteWorkspaceTarget = null
+                // 本地优先隐藏（语义：从设备移除），远程注销 best-effort（静默）
+                setDeletedWorkspace(path)
+                // 双保险：该工作区下的会话一并本地标记删除，确保分组与工作区本身同步消失
+                sessions.filter { it.cwd == path }.forEach { setDeleted(it.sessionId) }
+                refreshSessions()
+                collapsedWorkspaces = collapsedWorkspaces - path
+                expandedGroups = expandedGroups - path
                 scope.launch(Dispatchers.IO) {
-                    try {
-                        client.deleteWorkspace(path)
-                        withContext(Dispatchers.Main) {
-                            setDeletedWorkspace(path) // 服务端删注册 + 本地隐藏该 cwd 组（会话归"未分组"）
-                            refreshSessions()
-                            collapsedWorkspaces = collapsedWorkspaces - path
-                            expandedGroups = expandedGroups - path
-                        }
-                    } catch (e: Exception) {
-                        withContext(Dispatchers.Main) {
-                            Toast.makeText(context, "删除失败：${e.message ?: "未知错误"}", Toast.LENGTH_SHORT).show()
-                        }
-                    }
+                    try { client.deleteWorkspace(path) } catch (_: Exception) {}
                 }
             }
         )
@@ -2318,14 +2321,18 @@ fun WorkspaceScreen(
     deleteSessionTarget?.let { target ->
         DshConfirmDialog(
             title = "删除会话？",
-            message = "将从设备移除「${target.title}」。\n电脑端的数据不受影响，24 小时后自动清理。",
+            message = "将从设备移除「${target.title}」，并归档到服务端。",
             confirmLabel = "删除",
             danger = true,
             onDismiss = { deleteSessionTarget = null },
             onConfirm = {
                 deleteSessionTarget = null
-                setDeleted(target.sessionId)
+                // 对标 web：删除 = 服务端归档（workspace.archiveSession）+ 本机隐藏
+                setArchived(target.sessionId)
                 refreshSessions()
+                scope.launch(Dispatchers.IO) {
+                    try { client.archiveSession(target.sessionId) } catch (_: Exception) {}
+                }
             }
         )
     }
@@ -2880,24 +2887,10 @@ private fun StatsLine(stats: MobileSessionStats) {
     val groups = mutableListOf<String>()
     if (stats.steps > 0) {
         groups.add("${stats.turns} 轮 · ${stats.steps} 步")
-        val durations = mutableListOf<String>()
-        if (stats.llmMs > 0) durations.add("LLM ${formatDuration(stats.llmMs)}")
-        if (stats.toolMs > 0) durations.add("工具调用 ${formatDuration(stats.toolMs)}")
-        if (durations.isNotEmpty()) groups.add(durations.joinToString(" · "))
-        val speeds = mutableListOf<String>()
-        if (stats.ttftSteps > 0) speeds.add("首 token 平均 ${formatDuration(stats.ttftMs / stats.ttftSteps)}")
-        if (stats.decodeMs > 0 && stats.decodeTokens > 0) {
-            speeds.add(String.format(Locale.US, "%.0f tok/s", stats.decodeTokens / (stats.decodeMs / 1000.0)))
-        }
-        if (speeds.isNotEmpty()) groups.add(speeds.joinToString(" · "))
     }
     val input = stats.uncachedInputTokens + stats.cacheReadTokens
     if (input > 0 || stats.outputTokens > 0) {
-        val total = input + stats.cacheReadTokens
-        if (stats.cacheReadTokens > 0 && total > 0) {
-            groups.add("缓存命中 ${(stats.cacheReadTokens * 100 / total)}%")
-        }
-        groups.add("输入 ${formatTokens(input)} tok · 输出 ${formatTokens(stats.outputTokens)} tok")
+        groups.add("输入 ${formatTokens(input)} · 输出 ${formatTokens(stats.outputTokens)} tok")
     }
     if (groups.isEmpty()) return
     Box {
@@ -2950,6 +2943,44 @@ private fun StatsLine(stats: MobileSessionStats) {
                 DetailRow("输出 tokens", formatTokens(stats.outputTokens))
             }
         }
+    }
+}
+
+@Composable
+private fun ContextPreview(stats: MobileSessionStats) {
+    val window = stats.contextWindow
+    if (window <= 0) return
+    val sys = stats.systemTokens
+    val tools = stats.toolsTokens
+    val msg = stats.messageTokens
+    val pressure = stats.contextPressureTokens
+    val pct = if (window > 0) ((pressure * 100) / window).toInt() else 0
+    val parts = buildList {
+        if (sys > 0) add("系统 ${formatTokens(sys)}")
+        if (tools > 0) add("工具 ${formatTokens(tools)}")
+        if (msg > 0) add("消息 ${formatTokens(msg)}")
+    }
+    if (parts.isEmpty()) return
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .widthIn(max = COMPOSER_MAX_WIDTH)
+            .padding(horizontal = COMPOSER_SIDE_CLEARANCE, vertical = 2.dp)
+            .padding(start = 16.dp, end = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            buildAnnotatedString {
+                append("已注入上下文")
+                append("  " + parts.joinToString(" · "))
+                append("  ·  窗口 ${pct}%")
+            },
+            color = Dsh.labelTertiary,
+            fontSize = 12.sp,
+            lineHeight = 18.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 
@@ -4681,11 +4712,13 @@ private fun InputBar(
                 }
             )
 
+            sessionStats?.let { ContextPreview(it) }
+
             // 底部工具行（padding 2px 8px 6px）—— 对标 web UI toolbar 布局
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 4.dp, end = 8.dp, top = 2.dp, bottom = 6.dp),
+                    .padding(start = 8.dp, end = 8.dp, top = 2.dp, bottom = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 // 左侧：+ 按钮（DSH input add：图片/附件）
@@ -4696,7 +4729,7 @@ private fun InputBar(
                         contentDescription = "添加附件",
                         onClick = onPickImage
                     )
-                    Spacer(Modifier.width(6.dp))
+                    Spacer(Modifier.width(8.dp))
                 }
 
                 // 访问模式（DSH input.accessMode）
@@ -4739,16 +4772,25 @@ private fun InputBar(
                 if (running) {
                     val stopInteraction = remember { MutableInteractionSource() }
                     val stopPressed by stopInteraction.collectIsPressedAsState()
+                    val stopBg = if (stopPressed)
+                        if (Dsh.isDark) Dsh.brand400.copy(alpha = 0.28f) else Dsh.brand500.copy(alpha = 0.2f)
+                    else
+                        if (Dsh.isDark) Dsh.brand400.copy(alpha = 0.18f) else Dsh.brand500.copy(alpha = 0.12f)
                     Box(
                         modifier = Modifier
-                            .height(28.dp)
-                            .clip(RoundedCornerShape(999.dp))
-                            .background(if (stopPressed) Dsh.hover else Color.Transparent)
+                            .size(34.dp)
+                            .clip(CircleShape)
+                            .background(stopBg)
                             .clickable(interactionSource = stopInteraction, indication = null, onClick = onStop)
-                            .padding(horizontal = 12.dp),
+                            .minimumInteractiveComponentSize(),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text("停止生成", color = Dsh.labelSecondary, fontSize = 12.sp, fontWeight = FontWeight(500))
+                        Icon(
+                            StopFill16,
+                            contentDescription = "停止生成",
+                            tint = Dsh.labelPrimary,
+                            modifier = Modifier.size(16.dp)
+                        )
                     }
                 }
 
@@ -4791,7 +4833,7 @@ private fun InputBar(
                 // 上下文计量（DSH ContextMeter：环形按钮 + 用量弹层；contextPressure 投影可用时显示）
                 if (!running && sessionStats != null && sessionStats.contextWindow > 0) {
                     ContextMeterButton(stats = sessionStats)
-                    Spacer(Modifier.width(6.dp))
+                    Spacer(Modifier.width(8.dp))
                 }
 
                 // 右侧：发送按钮（34x34 圆形品牌蓝，上浮 2px）
@@ -4808,6 +4850,7 @@ private fun InputBar(
                     animationSpec = tween(motionDuration(120)),
                     label = "sendBg"
                 )
+                Spacer(Modifier.width(8.dp))
                 Box(
                     modifier = Modifier
                         .size(34.dp)
@@ -4862,7 +4905,11 @@ private fun RoundIconButton(
         modifier = Modifier
             .size(28.dp)
             .clip(CircleShape)
-            .background(if (pressed) Dsh.hover else Dsh.bgSelector)
+            .background(
+                if (pressed)
+                    if (Dsh.isDark) Dsh.brand400.copy(alpha = 0.18f) else Dsh.brand500.copy(alpha = 0.12f)
+                else Dsh.bgSelector
+            )
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .minimumInteractiveComponentSize(),
         contentAlignment = Alignment.Center
@@ -5012,6 +5059,10 @@ fun MessageItem(
                 // 检测 system-reminder 消息，折叠为「上下文注入」行
                 if (msg.text.contains("<system-reminder>") && msg.text.contains("</system-reminder>")) {
                     ContextInjectionRow(msg.text)
+                } else if (isRawFallback(msg)) {
+                    // 降级中心：无文本内容的未知消息类型（多为 dsh 新增的结构化类型）
+                    // 渲染为可折叠原始 JSON，避免空白/崩溃，便于排查与按需补洞。
+                    RawMessageCard(msg)
                 } else {
                     AssistantMarkdown(msg.text, longPressModifier)
                 }
@@ -5036,6 +5087,64 @@ fun MessageItem(
                 },
             )
         )
+    }
+}
+
+/** 降级判定：无文本内容的消息（多为 dsh 新增的结构化类型）渲染为可折叠原始 JSON。 */
+fun isRawFallback(msg: MobileMessage): Boolean = msg.text.isBlank()
+
+// 降级渲染：未知/未支持的消息类型 → 可折叠原始 JSON（不崩、不空白、可排查）
+@Composable
+private fun RawMessageCard(msg: MobileMessage) {
+    var expanded by remember { mutableStateOf(false) }
+    val detail = remember(msg) {
+        buildString {
+            append("role: ").append(msg.role).append('\n')
+            append("type: ").append(msg.type).append('\n')
+            append("id: ").append(msg.id).append('\n')
+            if (msg.toolName != null) append("toolName: ").append(msg.toolName).append('\n')
+            append("text: ").append(msg.text.take(2000))
+        }
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(Dsh.bgLayer1)
+            .border(1.dp, Dsh.borderL1, RoundedCornerShape(8.dp))
+            .padding(12.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { expanded = !expanded },
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                if (expanded) Icons.Default.KeyboardArrowDown else Icons.Default.KeyboardArrowRight,
+                contentDescription = null,
+                tint = Dsh.labelTertiary,
+                modifier = Modifier.size(14.dp)
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                "未支持的消息类型：${msg.role}",
+                color = Dsh.labelSecondary,
+                fontSize = 13.sp,
+                lineHeight = 20.sp
+            )
+        }
+        if (expanded) {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                detail,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 12.sp,
+                lineHeight = 16.sp,
+                color = Dsh.labelTertiary,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
     }
 }
 
@@ -5692,7 +5801,7 @@ private fun MarkdownCodeBlock(lang: String?, content: String) {
             }
         }
         Text(
-            content.trimEnd(),
+            highlightCode(content.trimEnd(), lang, Dsh.isDark),
             color = Dsh.labelPrimary,
             fontFamily = FontFamily.Monospace,
             fontSize = 13.sp,

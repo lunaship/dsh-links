@@ -241,6 +241,11 @@ class MobileApiClient(private val host: Host) {
         request("POST", "/dsh-link/mobile/workspaces/delete", JSONObject().put("path", path))
     }
 
+    /** 删除会话（服务端归档，workspace.archiveSession 语义；对标 web 删除）。 */
+    fun archiveSession(sessionId: String) {
+        request("POST", "/dsh-link/mobile/sessions/" + java.net.URLEncoder.encode(sessionId, "UTF-8") + "/archive", JSONObject())
+    }
+
     /** 选择会话模型。 */
     fun selectModel(sessionId: String, provider: String, model: String) {
         request("POST", "/dsh-link/mobile/sessions/" + java.net.URLEncoder.encode(sessionId, "UTF-8") + "/model",

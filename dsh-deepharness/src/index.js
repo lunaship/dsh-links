@@ -716,6 +716,14 @@ async function handleMobileApi(req, res, targetPort, state, device, pathname) {
       return json(res, 200, { ok: true, sessionId: value.sessionId ?? null })
     }
 
+    // 删除会话（服务端归档，workspace.archiveSession 语义；对标 web 删除）
+    const archiveMatch = pathname.match(/^\/dsh-link\/mobile\/sessions\/([^/]+)\/archive$/)
+    if (req.method === "POST" && archiveMatch) {
+      const sessionId = decodeURIComponent(archiveMatch[1])
+      const value = await callLocalRpc(targetPort, "workspace.archiveSession", { sessionId })
+      return json(res, 200, { ok: true, archived: Boolean(value?.ok), sessionId })
+    }
+
     const approvalMatch = pathname.match(/^\/dsh-link\/mobile\/sessions\/([^/]+)\/approval$/)
     if (req.method === "POST" && approvalMatch) {
       const sessionId = decodeURIComponent(approvalMatch[1])
@@ -995,9 +1003,7 @@ export function apply(ctx, config) {
           try {
             // 通过 DSH sessions 服务写入策略事件（与 /permission 命令等效）
             const sessions = ctx.get("sessions")
-            console.error(`[dsh-deepharness] sessions type=${typeof sessions} keys=${sessions ? Object.keys(sessions).slice(0, 12).join(",") : "null"}`)
             const session = typeof sessions?.get === "function" ? await sessions.get(sessionId) : undefined
-            console.error(`[dsh-deepharness] session ${sessionId} -> ${session ? "ok" : "undefined"}`)
             if (!session) return json(res, 404, { error: "会话不存在" })
             session.append("permission/preset", { preset })
             session.append("approval/policy", { policy: spec.approval })
