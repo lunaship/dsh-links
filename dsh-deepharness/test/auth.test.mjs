@@ -232,3 +232,26 @@ test("5 次失败配对触发冷却（限流）", async () => {
   const body = await last.json()
   assert.match(body.error, /频繁/)
 })
+
+test("lanUrls 分类功能：返回结构含 urls + infos", async () => {
+  // pair-info 仅在 3080 面板可见（18640 返回 401），从注册路由取
+  const info = await callRoute(pairInfoRoute())
+  assert.equal(info.status, 200)
+  assert.ok(info.body.urls && Array.isArray(info.body.urls))
+  assert.ok(info.body.infos && Array.isArray(info.body.infos))
+  assert.ok(info.body.infos.length === info.body.urls.length)
+  // 验证每个条目都有分类标记
+  for (const item of info.body.infos) {
+    assert.ok(item.category && typeof item.category === "string")
+    assert.ok(typeof item.isRecommended === "boolean")
+  }
+})
+
+test("pair-info 分类信息：至少一条局域网 IP 且推荐标记合理", async () => {
+  const info = await callRoute(pairInfoRoute())
+  const infos = info.body.infos ?? []
+  assert.ok(infos.length > 0, "应至少展示一个可用地址")
+  // 推荐标记只有一个
+  const recommended = infos.filter((u) => u.isRecommended)
+  assert.equal(recommended.length, 1, "推荐地址应唯一")
+})

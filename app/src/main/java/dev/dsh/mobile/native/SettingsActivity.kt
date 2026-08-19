@@ -122,6 +122,23 @@ private fun SettingsScreen(
     var savingNs by remember { mutableStateOf<String?>(null) }
     var saveErrors by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
 
+    // DeepSeek 余额（经插件代查，关于页展示）
+    var balance by remember { mutableStateOf<MobileBalance?>(null) }
+
+    LaunchedEffect(tab, host) {
+        if (tab == SettingsTab.ABOUT && host != null) {
+            balance = null
+            withContext(Dispatchers.IO) {
+                try {
+                    val b = MobileApiClient(host!!).getBalance()
+                    withContext(Dispatchers.Main) { balance = b }
+                } catch (e: Exception) {
+                    withContext(Dispatchers.Main) { balance = null }
+                }
+            }
+        }
+    }
+
     LaunchedEffect(host) {
         if (host == null) return@LaunchedEffect
         withContext(Dispatchers.IO) {
@@ -519,6 +536,17 @@ fun FineTuneCard(
                 SettingsTab.PLUGINS -> PluginsSettings(context)
 
                 SettingsTab.ABOUT -> {
+                    SettingsSection("账户余额")
+                    val b = balance
+                    if (b == null) {
+                        SettingsItem(title = "DeepSeek 余额", description = "查询中…", onClick = {})
+                    } else {
+                        SettingsItem(
+                            title = "DeepSeek 余额",
+                            description = "${b.balance} ${b.currency}  ·  已用 ${b.used}  ·  剩余 ${b.remainder}",
+                            onClick = {}
+                        )
+                    }
                     SettingsSection("关于")
                     SettingsItem(title = "DeepSeek Harness 移动端", description = "版本 0.4.1 · 1:1 复刻 DeepSeek Harness", onClick = {})
                     SettingsItem(title = "开源许可", description = "MIT License", onClick = {})

@@ -113,6 +113,14 @@ data class MobileAgentPreset(
     val isDefault: Boolean = false,
 )
 
+/** DeepSeek 余额视图（经插件代查，密钥不下发手机）。 */
+data class MobileBalance(
+    val balance: Double = 0.0,
+    val used: Double = 0.0,
+    val remainder: Double = 0.0,
+    val currency: String = "USD",
+)
+
 /** 服务端为源的 AppSettings（WI-004）：默认 Agent 预设/权限/语言/主题/Enter 行为/默认模型。 */
 data class AppSettings(
     val agentPreset: String = "standard",
@@ -410,6 +418,17 @@ class MobileApiClient(private val host: Host) {
                 isDefault = p.optBoolean("isDefault", false),
             )
         }
+    }
+
+    /** DeepSeek 余额（经插件 /dsh-link/mobile/balance 代查，密钥不下发）。 */
+    fun getBalance(): MobileBalance {
+        val root = request("GET", "/dsh-link/mobile/balance")
+        return MobileBalance(
+            balance = root.optDouble("balance", 0.0),
+            used = root.optDouble("used", 0.0),
+            remainder = root.optDouble("remainder", 0.0),
+            currency = root.optString("currency", "USD"),
+        )
     }
 
     private fun parseSession(json: JSONObject): MobileSession = MobileSession(

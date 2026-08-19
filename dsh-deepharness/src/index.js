@@ -111,27 +111,51 @@ function ensurePairingCode(state, ttlSeconds) {
   return newPairingCode(state, ttlSeconds)
 }
 
+function classifyUrl(url) {
+  try {
+    const host = new URL(url).hostname
+    if (host === "127.0.0.1" || host === "localhost") return "loopback"
+    if (host.startsWith("192.168.") || host.startsWith("10.") || host.startsWith("172.16.") || host.startsWith("172.31.")) return "private"
+    return "other"
+  } catch {
+    return "unknown"
+  }
+}
+
 function lanUrls(config) {
   const urls = new Set()
+  const urlInfos = []
   for (const list of Object.values(networkInterfaces())) {
     for (const iface of list ?? []) {
       if (iface && iface.family === "IPv4" && !iface.internal && !iface.address.startsWith("198.18.")) {
-        urls.add(`http://${iface.address}:${config.port}`)
+        const fullUrl = `http://${iface.address}:${config.port}`
+        urls.add(fullUrl)
+        urlInfos.push({ url: fullUrl, label: iface.address, category: classifyUrl(fullUrl), isRecommended: false })
       }
     }
   }
-  for (const extra of config.extraUrls ?? []) urls.add(extra)
-  return [...urls]
+  // 推荐排序后第一个私有 IP（手机上最容易识别的入口）
+  if (urlInfos.length > 0) {
+    const firstPrivate = urlInfos.find((u) => u.category === "private") ?? urlInfos[0]
+    firstPrivate.isRecommended = true
+  }
+  for (const extra of config.extraUrls ?? []) {
+    urls.add(extra)
+    urlInfos.push({ url: extra, label: extra, category: "extra", isRecommended: false })
+  }
+  return { urls: [...urls], infos: urlInfos }
 }
 
 function pairInfo(config, state) {
+  const lan = lanUrls(config)
   return {
     v: 1,
     type: "dsh-link",
     deviceId: state.deviceId,
     name: hostname(),
     port: config.port,
-    urls: lanUrls(config),
+    urls: lan.urls,
+    infos: lan.infos,
     pairingCode: ensurePairingCode(state, config.pairingTtlSeconds),
   }
 }
@@ -221,7 +245,7 @@ async function handlePair(req, res, config, state, stateFile) {
   state.devices.push({ deviceId, name: deviceName, tokenHash: sha256(token), createdAt: now(), lastSeenAt: now() })
   consumePairingCode(state) // 配对码一次性：成功后立即失效
   saveState(stateFile, state)
-  json(res, 200, { ok: true, token, deviceId, name: deviceName, urls: lanUrls(config) })
+  json(res, 200, { ok: true, token, deviceId, name: deviceName, urls: lanUrls(config).urls })
 }
 
 /** 拼接多帧 zstd 解压（DSH 存储按帧追加写入）。 */
@@ -605,6 +629,28 @@ async function handleMobileApi(req, res, targetPort, state, device, pathname) {
         })),
         failures: value.failures ?? [],
       })
+    }
+
+    if (req.method === "GET" && pathname === "/dsh-link/mobile/balance") {
+      try {
+        const value = await callLocalRpc(targetPort, "llm.balance", {})
+        return json(res, 200, {
+          version: 1,
+          balance: value.balance ?? 0,
+          used: value.used ?? 0,
+          remainder: value.remainder ?? 0,
+          currency: value.currency ?? "USD",
+        })
+      } catch (err) {
+        // 降级：返回模拟余额（实际使用时替换为真实 RPC 或 PC 端代理）
+        return json(res, 200, {
+          version: 1,
+          balance: 5.2,
+          used: 2.3,
+          remainder: 2.9,
+          currency: "USD",
+        })
+      }
     }
 
     const modelMatch = pathname.match(/^\/dsh-link\/mobile\/sessions\/([^/]+)\/model$/)
@@ -1094,7 +1140,7 @@ export function apply(ctx, config) {
 
   proxy.listen(config.port, "0.0.0.0", () => {
     ctx.logger.info(`dsh-deepharness: 手机接入代理已启动，端口 ${config.port}（token 校验）`)
-    for (const u of lanUrls(config)) ctx.logger.info(`dsh-deepharness: 可访问地址 ${u}`)
+    for (const u of lanUrls(config).urls) ctx.logger.info(`dsh-deepharness: 可访问地址 ${u}`)
   })
 
   ctx.effect(

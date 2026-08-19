@@ -270,9 +270,28 @@ const createPanelModule = (require) => {
                               jsx('div', { className: 'dshlink-code', children: info.pairingCode }),
                               jsx('div', { className: 'dshlink-sub', children: '配对码 10 分钟内有效，扫码自动批准' }),
                               jsx('img', { className: 'dshlink-qr', src: '/dsh-link/qr.png', alt: '配对二维码' }),
-                              info.urls?.length
-                                ? jsx('div', { className: 'dshlink-urls', children: info.urls.join('\n') })
-                                : null,
+(info.infos ?? info.urls?.map((u) => ({ url: u, label: u, category: "other", isRecommended: false })) ?? []).length
+                              ? jsx('div', { className: 'dshlink-urls', children: (
+                                (info.infos ?? info.urls?.map((u) => ({ url: u, label: u, category: "other", isRecommended: false })) ?? []).map((item, i) => {
+                                  const isRecommended = item.isRecommended || i === 0
+                                  return jsx('div', {
+                                    key: item.url,
+                                    style: {
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: '4px',
+                                      fontSize: '11px',
+                                      color: isRecommended ? 'var(--dshlink-text)' : 'var(--dshlink-secondary)',
+                                      marginTop: '6px',
+                                    },
+                                    children: [
+                                      isRecommended && jsx('span', { style: { color: '#22c55e', fontWeight: '600' }, children: '⭐ 推荐' }),
+                                      item.url
+                                    ]
+                                  })
+                                })
+                              ) })
+                              : null,
                               devices.length
                                 ? jsx('div', {
                                     className: 'dshlink-devices',
@@ -376,10 +395,28 @@ const createPanelModule = (require) => {
                         jsx('div', { className: 'dshlink-code', children: info.pairingCode }),
                         jsx('p', { className: 'dshlink-hint', children: '配对码 10 分钟内有效，扫码自动批准' }),
                       ]}),
-                      info.urls?.length
-                        ? jsx('div', { className: 'dshlink-urls', children: info.urls.join('\n') })
+                      (info.infos ?? info.urls?.map((u) => ({ url: u, label: u, category: "other", isRecommended: false })) ?? []).length
+                        ? jsx('div', { className: 'dshlink-urls', children: (
+                            (info.infos ?? info.urls?.map((u) => ({ url: u, label: u, category: "other", isRecommended: false })) ?? []).map((item, i) => {
+                              const isRecommended = item.isRecommended || i === 0
+                              return jsx('div', {
+                                key: item.url,
+                                style: {
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  marginTop: '4px',
+                                  color: isRecommended ? 'var(--dsw-alias-label-primary, #1a1a1a)' : 'var(--dsw-alias-label-secondary, #666666)',
+                                },
+                                children: [
+                                  isRecommended && jsx('span', { style: { color: '#22c55e', fontWeight: '600', fontSize: '10px' }, children: '⭐ 推荐' }),
+                                  item.url
+                                ]
+                              })
+})
+                          ) })
                         : null,
-                      jsxs('div', { className: 'dshlink-devices', children: [
+                        jsxs('div', { className: 'dshlink-devices', children: [
                         jsx('div', { className: 'dshlink-devices-title', children: '已配对设备' }),
                         devices.length
                           ? devices.map((d) =>
