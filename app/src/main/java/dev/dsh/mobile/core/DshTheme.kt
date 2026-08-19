@@ -70,11 +70,13 @@ val DarkDshColors = DshColors(
     bgNavHover = Color(0xFF2C2C2E),
     bgSelector = Color(0xFF353638),
     bgOverlay = Color(0x80000000),
+    bgSurface = Color(0xFF1E1E22),      // NEW: card/surface background (light/dark adapted)
     labelPrimary = Color(0xFFF9FAFB),
     labelSecondary = Color(0xFFCFD3D6),
     labelTertiary = Color(0xFFADB2B8),
     labelCaption = Color(0xFF81858C),
     labelDimmed = Color(0xFF43454A),
+    textInk2 = Color(0xFFCFD3D6),      // NEW: secondary text color for hints/labels
     borderL1 = Color(0x0FFFFFFF),
     borderL2 = Color(0x1FFFFFFF),
     borderL3 = Color(0x29FFFFFF),
@@ -93,6 +95,7 @@ val DarkDshColors = DshColors(
     errorBg = Color(0x26F25A5A),
     buttonElevated = Color(0xFF43454A),
     buttonFloating = Color(0xFF2C2C2E),
+    shadowCard = Color(0x1F000000),     // NEW: card shadow color (rgba equivalent)
 )
 
 val LightDshColors = DshColors(
@@ -108,13 +111,15 @@ val LightDshColors = DshColors(
     bgNavActive = Color(0xFFEBEEF2),      // specific-sidebar-nav-item-active: bluish-100
     bgNavHover = Color(0xFFF1F3F5),       // specific-sidebar-nav-item-hover: bluish-75
     bgSelector = Color(0xFFF9FAFB),       // specific-selector: bluish-60
-    bgOverlay = Color(0x80000000),        // 弹窗/抽屉遮罩跨主题一致：50% 半透明黑（dark 一致）；light 原 alias-bg-overlay 偏白导致弹窗背景大白
+    bgOverlay = Color(0x80000000),        // 弹窗/抽屉遮罩跨主题一致：50% 半透明黑（dark 一致；light 原 alias-bg-overlay 偏白导致弹窗背景大白
+    bgSurface = Color(0xFFFFFFFF),        // NEW: card/surface background (light/dark adapted)
     // 文字 — CSS body{} alias tokens
     labelPrimary = Color(0xFF0F1115),     // alias-label-primary: bluish-1000
     labelSecondary = Color(0xFF61666B),   // alias-label-secondary: bluish-700
     labelTertiary = Color(0xFF81858C),    // alias-label-tertiary: bluish-600
     labelCaption = Color(0xFF81858C),     // 浅色主题下偏浅导致对比度 2.0:1 不可读；改与 labelTertiary 同色以保 4.5:1 WCAG AA
     labelDimmed = Color(0xFFE1E5EE),      // alias-label-dimmed: bluish-200（DshComponents disabled 态使用）
+    textInk2 = Color(0xFF61666B),        // NEW: secondary text color for hints/labels
     // 边框 — CSS body{} alias tokens
     borderL1 = Color(0x0A000000),         // alias-border-l1: rgba(0,0,0,.04)
     borderL2 = Color(0x1A000000),         // alias-border-l2: rgba(0,0,0,.1)
@@ -138,6 +143,7 @@ val LightDshColors = DshColors(
     // 按钮 — CSS body{} alias tokens
     buttonElevated = Color(0xFFD1D5DB),   // 浅色主题下不能用纯白（白底白=消失，禁用态看不见）；改用中性浅灰保证轮廓
     buttonFloating = Color(0xFFFFFFFF),   // alias-button-floating-fill: bluish-00
+    shadowCard = Color(0x00000012),       // NEW: card shadow color (light: rgba(0,0,0,.05))
 )
 
 val LocalDshColors = staticCompositionLocalOf { DarkDshColors }

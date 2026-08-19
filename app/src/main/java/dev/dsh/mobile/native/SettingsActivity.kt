@@ -391,8 +391,102 @@ private fun SettingsScreen(
                                                 fontSize = 11.sp,
                                                 lineHeight = 18.sp
                                             )
-                                        }
-                                    }
+}
+}
+}
+
+// ---------- 微调卡片（Fine-tune Card：模型参数、推理设置、自动审配） ----------
+@Composable
+fun FineTuneCard(
+    appSettings: AppSettings,
+    onModelChange: () -> Unit = {},
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val providerById = appSettings.modelProviders?.associate { it.id to it } ?: mapOf()
+    val currentProviderId = appSettings.defaultModelProvider?.id
+    val currentModelId = appSettings.defaultModel?.id
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        // 模型供应商选择
+        if (appSettings.modelProviders?.isNotEmpty() == true) {
+            SettingsSection("模型供应商") {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text("当前供应商", color = Dsh.labelTertiary, fontSize = 12.sp)
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        currentProviderId?.let { it.capitalize() } ?: "未选择",
+                        color = Dsh.labelPrimary,
+                        fontSize = 12.sp,
+                    )
+                    Icon(
+                        ChevronRightOutline14,
+                        tint = Dsh.labelCaption,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+            }
+        }
+
+        // 推理等级选择
+        SettingsSection("推理设置") {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text("推理等级", color = Dsh.labelTertiary, fontSize = 12.sp)
+                Spacer(Modifier.width(4.dp))
+                Text(
+                    appSettings.defaultReasoningEffort?.toString() ?: "默认",
+                    color = Dsh.labelPrimary,
+                    fontSize = 12.sp,
+                )
+                Icon(
+                    ChevronRightOutline14,
+                    tint = Dsh.labelCaption,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+        }
+
+        // 自动审批开关
+        SettingsSection("自动审批") {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("允许一次", color = Dsh.labelTertiary, fontSize = 12.sp)
+                Spacer(Modifier.width(4.dp))
+                Switch(
+                    checked = appSettings.autoApprove ?: false,
+                    onCheckedChange = { isChecked -> {
+                        // 保存 autoApprove 设置到 SharedPreferences
+                        val editor = context.getSharedPreferences("dsh_settings", Context.MODE_PRIVATE).edit()
+                        editor.putBoolean("auto_approve", isChecked)
+                        editor.apply()
+                        // 更新 appSettings 以保持一致
+                        appSettings = appSettings.copy(autoApprove = isChecked)
+                    } },
+                    colors = SwitchDefaults.colors(
+                        defaultColor = Dsh.brand400,
+                        thumbColor = { Dsh.labelPrimary },
+                        trackColor = { Dsh.bgLayer1 },
+                    ),
+                )
+            }
+        }
+    }
+}
+// ---------- End FineTuneCard
                                 }
                             }
                         }
@@ -680,6 +774,9 @@ private fun GeneralSettings(
             onClick = {}
         )
     }
+
+    // --- 微调卡片（Fine-tune Card：模型参数、推理设置、自动审配） ----------
+    FineTuneCard(appSettings = appSettings, onModelChange = { /* TODO: model refresh */ })
 
     // --- 会话管理（归档 / 删除） ---
     HorizontalDivider(color = Dsh.borderL1, modifier = Modifier.padding(vertical = 8.dp))

@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -34,6 +35,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -200,8 +202,298 @@ fun DshBadge(
 }
 
 // ============================================================
-// DshBanner —— 横条提示（断线横幅、审批等待、状态广播）
-// 语义角色：默认无（仅公告）；可选 onAction 时宣读动作
+// DiffTable —— 侧边对比表格（Diff Table，WI-007）
+// 显示两列内容对比：原内容 vs 修订内容，支持行高亮
+// 语义角色：Table；适用于代码差异、 markdown 表格差异展示
+// ============================================================
+@Composable
+fun DiffTable(
+    original: String,
+    revised: String,
+    modifier: Modifier = Modifier,
+    blockSize: Int = 8,
+) {
+    val originalBlocks = parseMarkdown(original)
+    val revisedBlocks = parseMarkdown(revised)
+
+    var scrollState by remember { ScrollState() }
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .verticalScroll(scrollState),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(blockSize * 28.dp)
+                .background(Dsh.bgLayer1)
+                .border(1.dp, Dsh.borderL1, RoundedCornerShape(8.dp)),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // 原内容标题
+            Text(
+                text = "原内容",
+                color = Dsh.labelSecondary,
+                fontSize = 11.sp,
+                fontWeight = FontWeight(600),
+                modifier = Modifier
+                    .fillMaxWidth(0.25f)
+                    .padding(8.dp)
+            )
+            // 修订内容标题
+            Spacer(Modifier.width(4.dp))
+            Text(
+                text = "修订",
+                color = Dsh.labelSecondary,
+                fontSize = 11.sp,
+                fontWeight = FontWeight(600),
+                modifier = Modifier
+                    .fillMaxWidth(0.25f)
+                    .padding(8.dp)
+            )
+        }
+
+        // 内容区：左右两列
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Dsh.bgLayer1)
+                .border(1.dp, Dsh.borderL1, RoundedCornerShape(8.dp)),
+            verticalArrangement = Arrangement.SpaceBetween,
+        ) {
+            // 左侧：原内容
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                originalBlocks.forEach { block ->
+                    renderBlock(block, isOriginal = true)
+                }
+            }
+
+            // 右侧：修订内容
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                revisedBlocks.forEach { block ->
+                    renderBlock(block, isOriginal = false)
+                }
+            }
+        }
+    }
+}
+
+private fun parseMarkdown(text: String): List<MarkdownBlock> {
+    val lines = text.lines()
+    val blocks = mutableListOf<MarkdownBlock>()
+    var currentRows: List<List<String>> = emptyList() // 每行是 cell 列表
+    var inTable = false
+
+    for (line in lines) {
+        if (line.startsWith("|") && line.endsWith("|") && line.split("|").size >= 3) {
+            // 表格行（至少 3 个管道：| cell | cell |）
+            val cells = line
+                .drop(1)
+                .takeIf { it.endsWith("|") }
+                ?.dropLast(1)
+                ?.split("|")
+                ?.map { it.trim() } ?: emptyList()
+            if (cells.size >= 2) {
+                currentRows.add(cells)
+                inTable = true
+            }
+        } else if (inTable && line.isNotEmpty() && !line.startsWith("|")) {
+            // 表格结束：保存表格块
+            if (currentRows.size >= 2) {
+                blocks.add(MarkdownBlock(MarkdownBlockType.TABLE, rows = currentRows))
+            }
+            currentRows = emptyList()
+            inTable = false
+        } else if (inTable && line.isEmpty()) {
+            // 表格间的空行也算结束
+            if (currentRows.size >= 2) {
+                blocks.add(MarkdownBlock(MarkdownBlockType.TABLE, rows = currentRows))
+            }
+            currentRows = emptyList()
+            inTable = false
+        }
+    }
+
+    // 文件末尾未闭合的表格
+    if (inTable && currentRows.size >= 2) {
+        blocks.add(MarkdownBlock(MarkdownBlockType.TABLE, rows = currentRows))
+    }
+
+    // 扫描剩余的非表格行（属于段落而非表格）
+    // 这里保持简单：仅在表格块之间插入段落标记
+    return blocks
+}
+
+private sealed class MarkdownBlock(
+    val type: MarkdownBlockType,
+    val rows: List<List<String>> = emptyList(), // 二维：每行是 cell 列表
+    val content: String = ""
+)
+
+private enum class MarkdownBlockType { PARAGRAPH, HEADING, LIST, CODE, QUOTE, TABLE, HR, IMAGE, MATH, EMPTY }
+
+private fun renderBlock(block: MarkdownBlock, isOriginal: Boolean) {
+    when (block.type) {
+        MarkdownBlockType.TABLE -> {
+            // 计算列宽：平均分配或基于内容
+            val colCount = if (block.rows.isNotEmpty()) block.rows[0].size else 0
+            val useWidth = if (colCount > 0) 1f / colCount else 1f
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(if (isOriginal) Dsh.bgLayer3 else Dsh.bgLayer1)
+                    .border(1.dp, if (isOriginal) Dsh.borderL2 else Dsh.borderL1, RoundedCornerShape(8.dp))
+            ) {
+                block.rows.forEachIndexed { rowIdx, cells ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 4.dp, vertical = 2.dp),
+                        verticalAlignment = if (rowIdx == 0) Alignment.CenterVertically else Alignment.Start
+                    ) {
+                        cells.forEachIndexed { colIdx, cell ->
+                            Box(
+                                modifier = Modifier
+                                    .weight(useWidth)
+                                    .background(
+                                        if (rowIdx == 0) (if (isOriginal) Dsh.bgLayer3 else Dsh.bgLayer1)
+                                            else Color.Transparent
+                                    )
+                                    .border(
+                                        0.5.dp,
+                                        if (rowIdx == 0) (if (isOriginal) Dsh.borderL2 else Dsh.borderL1)
+                                            else Dsh.borderL1,
+                                        RoundedCornerShape(4.dp)
+                                    )
+                                    .padding(horizontal = 6.dp, vertical = 3.dp)
+                            ) {
+                                Text(
+                                    text = cell,
+                                    color = if (rowIdx == 0) Dsh.labelPrimary else Dsh.labelSecondary,
+                                    fontSize = if (rowIdx == 0) 11.sp else 10.sp,
+                                    lineHeight = 16.sp,
+                                    fontWeight = if (rowIdx == 0) FontWeight(500) else FontWeight(400),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                    // 行分隔线（非首行显示）
+                    if (rowIdx < block.rows.size - 1) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(0.5.dp)
+                                .background(if (isOriginal) Dsh.borderL2 else Dsh.borderL1)
+                        )
+                    }
+                }
+            }
+        }
+        MarkdownBlockType.PARAGRAPH -> {
+            Text(
+                text = block.content,
+                color = if (isOriginal) Dsh.labelPrimary else Dsh.labelSecondary,
+                fontSize = 13.sp,
+                lineHeight = 20.sp,
+            )
+        }
+        else -> InlineText(block.content)
+    }
+}
+
+private fun InlineText(text: String) {
+    Text(text = text, color = Dsh.labelPrimary, fontSize = 13.sp, lineHeight = 20.sp)
+}
+// ============================================================
+// End DiffTable
+// ============================================================
+// RecommendationCard — 推荐卡片（Recommendation Card，WI-008）
+// 基于上下文统计提供快捷操作建议：重新规划、继续任务、查看洞察等
+// 语义角色：无；在 running 状态下根据 sessionStats 条件渲染
+// ============================================================
+@Composable
+fun RecommendationCard(
+    sessionStats: MobileSessionStats?,
+    running: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    if (!running || sessionStats == null) return
+
+    val used = sessionStats.contextPressureTokens
+    val window = sessionStats.contextWindow
+    if (window <= 0) return
+    val percent = ((used * 100) / window).toInt()
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(44.dp)
+            .padding(vertical = 4.dp)
+            .background(Dsh.bgLayer3)
+            .border(1.dp, Dsh.borderL2, RoundedCornerShape(8.dp))
+            .semantics {
+                this.contentDescription = "推荐操作：基于当前上下文压力"
+            },
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            // 左侧：上下文压力概览
+            Box(
+                modifier = Modifier
+                    .width(8.dp)
+                    .height(8.dp)
+                    .clip(CircleShape)
+                    .background(
+                        if (percent > 80) Dsh.error
+                        else if (percent > 50) Dsh.warn
+                        else Dsh.success
+                    )
+            )
+
+            // 右侧：推荐文本
+            Text(
+                text = buildAnnotatedString {
+                    if (percent > 80) {
+                        append("⚠️ 上下文压力较高，建议：")
+                        append("\n  •  /clear - 清除上下文")
+                        append("\n  •  /goal - 设定持续目标")
+                    } else if (percent > 50) {
+                        append("💡 上下文压力中等，建议：")
+                        append("\n  •  /plan - 生成执行计划")
+                        append("\n  •  /pause - 暂停当前任务")
+                    } else {
+                        append("✅ 上下文充足，建议：")
+                        append("\n  •  /resume - 继续任务")
+                        append("\n  •  /skills - 查看可用技能")
+                    }
+                },
+                color = Dsh.labelPrimary,
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+    }
+}
+// ============================================================
+// End RecommendationCard
 // ============================================================
 @Composable
 fun DshBanner(
@@ -278,9 +570,8 @@ fun DshBanner(
 enum class DshBannerTone { Info, Warn, Error, Success }
 
 // ============================================================
-// ChatLoadingSkeleton —— 消息流加载骨架屏（WI-005）
-// 三条圆角条形占位：用户气泡（短，右对齐）/ 助手文本（宽，左对齐）/ 代码块（mono，窄）
-// 语义角色：默认无；宣读为"加载中"
+// DshBanner —— 横条提示（断线横幅、审批等待、状态广播）
+// 语义角色：默认无（仅公告）；可选 onAction 时宣读动作
 // ============================================================
 @Composable
 fun ChatLoadingSkeleton(

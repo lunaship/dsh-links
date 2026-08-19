@@ -2100,6 +2100,7 @@ fun WorkspaceScreen(
                 currentModel = modelCatalog?.currentModel,
                 sessionStats = sessionStats,
                 heroMode = heroMode,
+                onModeChange = { heroMode = it },
                 permissionLabel = when (appSettings.permissionPreset) {
                     "read-only" -> "只读"
                     "danger-full-access" -> "完全访问"
@@ -2164,13 +2165,7 @@ fun WorkspaceScreen(
                     }
                 }
             )
-            // StatsLine（DSH：轮次/步骤 | LLM/工具耗时 | 首 token/吞吐 | 缓存/tokens）—— 放在输入框下方，
-            // 与输入卡同属 bottom chrome，不再落入系统手势导航区（WI-006）
-            sessionStats?.let { stats ->
-                if (stats.steps > 0) {
-                    StatsLine(stats)
-                }
-            }
+
             } // bottom chrome 容器结束
         }
     }
@@ -2529,18 +2524,13 @@ private fun HeroShell(
             .padding(top = 64.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // logo（品牌圆标）
-        Box(
-            modifier = Modifier
-                .size(56.dp)
-                .clip(CircleShape)
-                .background(
-                    Brush.linearGradient(listOf(Dsh.brand400, Dsh.brand500))
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            Text("DSH", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight(600), letterSpacing = 0.5.sp)
-        }
+        // logo（DeepSeek 鲸鱼，复刻 webui EmptyHero FishLogo）
+        Icon(
+            FishLogo,
+            contentDescription = null,
+            tint = Dsh.labelPrimary,
+            modifier = Modifier.size(48.dp)
+        )
         Spacer(Modifier.height(14.dp))
 
         // 口号（DSH hero.headline：探索未至之境 26px/500 + 预览版 badge）
@@ -2570,28 +2560,9 @@ private fun HeroShell(
                     .padding(horizontal = 7.dp, vertical = 1.dp)
             )
         }
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "DeepSeek Harness · 移动端",
-            color = Dsh.labelTertiary,
-            fontSize = 12.sp,
-            lineHeight = 18.sp
-        )
         Spacer(Modifier.height(20.dp))
 
-        // 模式选择（对话 / 计划 / 目标：DSH 分段胶囊组）
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
-            modifier = Modifier
-                .clip(RoundedCornerShape(999.dp))
-                .background(Dsh.bgInput)
-                .border(1.dp, Dsh.borderL1, RoundedCornerShape(999.dp))
-                .padding(3.dp)
-        ) {
-            ModeChip(label = "对话", selected = mode == HeroMode.CHAT, onClick = { onModeChange(HeroMode.CHAT) })
-            ModeChip(label = "计划", selected = mode == HeroMode.PLAN, onClick = { onModeChange(HeroMode.PLAN) })
-            ModeChip(label = "目标", selected = mode == HeroMode.GOAL, onClick = { onModeChange(HeroMode.GOAL) })
-        }
+
     }
 
     // 工作区选择弹层（从输入区工作区行触发）
@@ -2984,8 +2955,114 @@ private fun ContextPreview(stats: MobileSessionStats) {
     }
 }
 
-@Composable
-private fun DetailRow(label: String, value: String) {
+private fun RecommendationCard(
+    sessionStats: MobileSessionStats?,
+    running: Boolean,
+    modifier: Modifier = Modifier,
+    onSuggestionClick: (String) -> Unit = {},
+) {
+    if (!running || sessionStats == null) return
+
+    val used = sessionStats.contextPressureTokens
+    val window = sessionStats.contextWindow
+    if (window <= 0) return
+    val percent = ((used * 100) / window).toInt()
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(44.dp)
+            .padding(vertical = 4.dp)
+            .background(Dsh.bgLayer3)
+            .border(1.dp, Dsh.borderL2, RoundedCornerShape(8.dp))
+            .semantics {
+                this.contentDescription = "推荐操作：基于当前上下文压力"
+            },
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            // 左侧：上下文压力概览
+            Box(
+                modifier = Modifier
+                    .width(8.dp)
+                    .height(8.dp)
+                    .clip(CircleShape)
+                    .background(
+                        if (percent > 80) Dsh.error
+                        else if (percent > 50) Dsh.warn
+                        else Dsh.success
+                    )
+            )
+
+            // 右侧：推荐文本 + 可点击建议
+            Text(
+                text = buildAnnotatedString {
+                    if (percent > 80) {
+                        append("⚠️ 上下文压力较高，建议：").apply {
+                            // /clear - 可点击
+                            append("\n  ").apply {
+                                val style = Annotation.SpanStyle()
+                                style.flags = Annotation.SpanStyle.FLAG_SKIP_BY_STATIC_MOTION
+                                style.backgroundColor = Dsh.brand400.copy(alpha = 0.1f)
+                                style.textColor = Dsh.brand400
+                                addAnnotation(Annotation("clear", style), start = text.length, end = text.length + 7)
+                                addTouchHandler(0, 7) { onSuggestionClick("/clear") }
+                            }
+                            append("clear")
+                            append(" - 清除上下文")
+
+                            // /goal - 可点击
+                            append("\n  ").apply {
+                                val style = Annotation.SpanStyle()
+                                style.flags = Annotation.SpanStyle.FLAG_SKIP_BY_STATIC_MOTION
+                                style.backgroundColor = Dsh.brand400.copy(alpha = 0.1f)
+                                style.textColor = Dsh.brand400
+                                addAnnotation(Annotation("goal", style), start = text.length, end = text.length + 6)
+                                addTouchHandler(text.length - 8, text.length - 2) { onSuggestionClick("/goal") }
+                            }
+                            append("goal")
+                            append(" - 设定持续目标")
+                        }
+                    } else if (percent > 50) {
+                        append("💡 上下文压力中等，建议：").apply {
+                            append("\n  •  /plan - 生成执行计划")
+                            append("\n  •  /pause - 暂停当前任务")
+                        }
+                    } else {
+                        append("✅ 上下文充足，建议：").apply {
+                            append("\n  •  /resume - 继续任务")
+                            append("\n  •  /skills - 查看可用技能")
+                        }
+                    }
+                },
+                color = Dsh.labelPrimary,
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+                style = MaterialTheme.typography.body2,
+            )
+        }
+    }
+}
+
+// 内部类：用于 Text 中的 touch handler
+private data class Annotation(
+    val key: String,
+    val spanStyle: Annotation.SpanStyle
+) : Annotation.Key(key)
+
+// 扩展函数：为 Text 添加点击处理
+private fun Text.addTouchHandler(start: Int, end: Int, onClick: () -> Unit) {
+    // 通过重写 onTextClick 或使用Annotation机制
+    // 这里使用 Compose 的 Annotation 机制标记可点击区域
+    // 实际点击响应在外层 Composable 中通过 onSuggestionClick 回调处理
+}
+
+// @Composable
+// private fun DetailRow(label: String, value: String) {
+//
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -4067,7 +4144,7 @@ private fun TrajectoryView(
             )
             return@Column
         }
-        stats?.let { StatsLine(it) }
+
         if (running) {
             Spacer(Modifier.height(8.dp))
             TurnStatusRow(elapsedSec)
@@ -4610,6 +4687,7 @@ private fun InputBar(
     currentModel: String?,
     sessionStats: MobileSessionStats?,
     heroMode: HeroMode,
+    onModeChange: (HeroMode) -> Unit = {},
     permissionLabel: String,
     onOpenModelPicker: () -> Unit,
     onOpenPermissionPicker: () -> Unit,
@@ -4712,7 +4790,20 @@ private fun InputBar(
                 }
             )
 
-            sessionStats?.let { ContextPreview(it) }
+
+
+            RecommendationCard(
+                sessionStats = sessionStats,
+                running = running,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = COMPOSER_SIDE_CLEARANCE, end = COMPOSER_SIDE_CLEARANCE),
+                onSuggestionClick = { command ->
+                    // TODO: 绑定命令执行
+                    // 可选：显示 Toast 或发送 /clear /goal 等指令
+                    //例如：onSendCommand(command) 或 Snackbar
+                }
+            )
 
             // 底部工具行（padding 2px 8px 6px）—— 对标 web UI toolbar 布局
             Row(
@@ -4730,6 +4821,12 @@ private fun InputBar(
                         onClick = onPickImage
                     )
                     Spacer(Modifier.width(8.dp))
+                    // 模式（对话/计划/目标，对齐 webui InputBar modes）
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        ModeChip(label = "对话", selected = heroMode == HeroMode.CHAT, onClick = { onModeChange(HeroMode.CHAT) })
+                        ModeChip(label = "计划", selected = heroMode == HeroMode.PLAN, onClick = { onModeChange(HeroMode.PLAN) })
+                        ModeChip(label = "目标", selected = heroMode == HeroMode.GOAL, onClick = { onModeChange(HeroMode.GOAL) })
+                    }
                 }
 
                 // 访问模式（DSH input.accessMode）
