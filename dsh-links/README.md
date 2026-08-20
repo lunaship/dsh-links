@@ -41,4 +41,4 @@ dsh plugin --profile web add dsh-links
 
 ## License
 
-MIT。移动布局部分源自 [dsh-mobile-hanui](https://github.com/Z-6354/dsh-mobile-hanui)（MIT）。
+[MIT](LICENSE)

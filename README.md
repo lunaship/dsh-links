@@ -105,4 +105,4 @@ cd dsh-links && node --test test/*.mjs
 
 ## License
 
-[MIT](LICENSE)。插件目录内另有一份相同许可证；移动布局部分源自 [dsh-mobile-hanui](https://github.com/Z-6354/dsh-mobile-hanui)（MIT）。
+[MIT](LICENSE)
