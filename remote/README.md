@@ -10,7 +10,7 @@
 ## 前置条件
 
 1. 一个 Cloudflare 账号 + 一个域名（把域名的 DNS 托管到 Cloudflare）。
-2. Mac 上 `dsh web` 已启动，插件 `dsh-deepharness` 已安装（18640 端口监听在 `0.0.0.0`）。
+2. Mac 上 `dsh web` 已启动，插件 `dsh-links` 已安装（18640 端口监听在 `0.0.0.0`）。
 
 ## 步骤
 

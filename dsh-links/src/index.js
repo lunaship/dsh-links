@@ -1,5 +1,5 @@
 /**
- * dsh-deepharness — 服务端面（host face）
+ * dsh-links — 服务端面（host face）
  *
  * 一个插件完成"手机端使用 dsh"：
  *   1. 在主 web 服务上注册 /dsh-link/* 路由，给网页界面提供二维码与配对管理；
@@ -9,7 +9,7 @@
  */
 import { createServer, request as httpRequest } from "node:http"
 import { connect } from "node:net"
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
+import { cpSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { homedir, hostname, networkInterfaces } from "node:os"
 import { createHash, randomBytes } from "node:crypto"
@@ -23,7 +23,7 @@ import {
   randomToken, SESSION_TTL_MS, TICKET_TTL_MS,
 } from "./auth.js"
 
-export const name = "dsh-deepharness"
+export const name = "dsh-links"
 export const inject = ["webServer"]
 
 export const Config = z.object({
@@ -35,7 +35,7 @@ export const Config = z.object({
   autoApprove: z.boolean().default(true),
   /** 配对码有效期（秒） */
   pairingTtlSeconds: z.natural().default(600),
-  /** 状态目录（默认 ~/.dsh/dsh-deepharness） */
+  /** 状态目录（默认 ~/.dsh/dsh-links） */
   stateDir: z.string().default(""),
   /** 请求日志（排查用） */
   debug: z.boolean().default(false),
@@ -55,7 +55,7 @@ const SESSION_COOKIE = "dsh_web_session"
  * RPC ID，缺失会导致连接循环第一代即失败（表现为"看不到会话/建不了会话"）。
  * 通过 tapIndex 注入到每份 index.html 的 <head>，在任何客户端 bundle 之前生效。
  */
-const RANDOM_UUID_POLYFILL = `<script>/* dsh-deepharness: crypto.randomUUID polyfill for non-secure contexts */
+const RANDOM_UUID_POLYFILL = `<script>/* dsh-links: crypto.randomUUID polyfill for non-secure contexts */
 if (typeof crypto !== "undefined" && typeof crypto.randomUUID !== "function") {
   crypto.randomUUID = function () {
     return ([1e7] + -1e3 + -4e3 + -8e3 + -1e11).replace(/[018]/g, function (c) {
@@ -69,7 +69,7 @@ if (typeof crypto !== "undefined" && typeof crypto.randomUUID !== "function") {
  * App 内不需要 PWA「安装到主屏幕」引导；桌面/手机浏览器不受影响。
  * 必须在 dsh-ui-mobile client 启动前（<head> 注入）设置 localStorage。
  */
-const MOBILE_INSTALL_SUPPRESS = `<script>/* dsh-deepharness: suppress dsh-ui-mobile PWA install prompt inside App WebView */
+const MOBILE_INSTALL_SUPPRESS = `<script>/* dsh-links: suppress dsh-ui-mobile PWA install prompt inside App WebView */
 if (/\bDshMobile\b/.test(navigator.userAgent || "")) {
   try {
     localStorage.setItem("dsh-ui-mobile:install-promotion-dismissed", "1")
@@ -85,8 +85,37 @@ function sha256(text) {
   return createHash("sha256").update(String(text)).digest("hex")
 }
 
+const DEFAULT_STATE_DIR = join(homedir(), ".dsh", "dsh-links")
+const LEGACY_STATE_DIRS = [
+  join(homedir(), ".dsh", "dsh-deepharness"),
+  join(homedir(), ".dsh", "dshlinks"),
+]
+
+/** 一次性迁移：旧状态目录 → ~/.dsh/dsh-links，已配对设备免重扫。 */
+function ensureStateDir(config) {
+  const dir = config.stateDir?.trim() || DEFAULT_STATE_DIR
+  if (!config.stateDir?.trim()) {
+    const newState = join(dir, "state.json")
+    if (!existsSync(newState)) {
+      for (const legacyDir of LEGACY_STATE_DIRS) {
+        const legacyState = join(legacyDir, "state.json")
+        if (!existsSync(legacyState)) continue
+        mkdirSync(dir, { recursive: true })
+        try {
+          cpSync(legacyDir, dir, { recursive: true })
+        } catch {
+          writeFileSync(newState, readFileSync(legacyState))
+        }
+        break
+      }
+    }
+  }
+  mkdirSync(dir, { recursive: true })
+  return dir
+}
+
 function statePathOf(config) {
-  return join(config.stateDir || join(homedir(), ".dsh", "dsh-deepharness"), "state.json")
+  return join(ensureStateDir(config), "state.json")
 }
 
 function loadState(file) {
@@ -354,6 +383,79 @@ function postRespond(targetPort, message) {
   })
 }
 
+function mapModelGroups(groups) {
+  return (groups ?? []).map((g) => ({
+    provider: g.id || g.provider || g.name || "未知",
+    providerName: g.name || g.id || g.provider || "未知",
+    models: (g.models ?? []).map((m) => ({
+      id: m.id,
+      name: m.name ?? m.id,
+      contextWindow: m.contextWindow ?? null,
+      maxTokens: m.maxTokens ?? null,
+      reasoningEfforts: (m.reasoning?.efforts ?? [])
+        .map((e) => (typeof e === "string" ? e : e.id))
+        .filter(Boolean),
+      defaultEffort: m.reasoning?.defaultEffort ?? null,
+    })),
+  }))
+}
+
+function uniqueRpcPayloads(payloads) {
+  const seen = new Set()
+  const out = []
+  for (const payload of payloads) {
+    if (!payload) continue
+    const key = JSON.stringify(payload)
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(payload)
+  }
+  return out
+}
+
+async function selectSessionModel(targetPort, sessionId, provider, model, reasoningEffort) {
+  let groups = []
+  try {
+    const catalog = await callLocalRpc(targetPort, "session.models", { sessionId })
+    groups = catalog?.groups ?? []
+  } catch {
+    groups = []
+  }
+  const group =
+    groups.find((g) => g.id === provider) ||
+    groups.find((g) => g.name === provider) ||
+    groups.find((g) => (g.models ?? []).some((m) => m.id === model || m.name === model))
+  const resolvedProvider = group?.id || provider
+  const resolvedModel = (group?.models ?? []).find((m) => m.id === model || m.name === model)?.id || model
+  const modelMeta = (group?.models ?? []).find((m) => m.id === resolvedModel)
+  const allowed = (modelMeta?.reasoning?.efforts ?? [])
+    .map((e) => (typeof e === "string" ? e : e.id))
+    .filter(Boolean)
+  const defaultEffort = modelMeta?.reasoning?.defaultEffort
+  const requested = typeof reasoningEffort === "string" && reasoningEffort.trim() ? reasoningEffort.trim() : null
+  const effort = requested && (allowed.length === 0 || allowed.includes(requested))
+    ? requested
+    : defaultEffort && (allowed.length === 0 || allowed.includes(defaultEffort))
+      ? defaultEffort
+      : null
+  const base = { sessionId, provider: resolvedProvider, model: resolvedModel }
+  const attempts = uniqueRpcPayloads([
+    effort ? { ...base, reasoningEffort: effort } : base,
+    base,
+    group?.id ? { sessionId, provider: group.id, model: resolvedModel } : null,
+    group?.name ? { sessionId, provider: group.name, model: resolvedModel } : null,
+  ])
+  let lastErr
+  for (const payload of attempts) {
+    try {
+      return await callLocalRpc(targetPort, "session.selectModel", payload)
+    } catch (err) {
+      lastErr = err
+    }
+  }
+  throw lastErr ?? new Error("切换模型失败")
+}
+
 function callLocalRpc(targetPort, method, payload) {
   return new Promise((resolve, reject) => {
     const rpcId = "mobile-" + randomBytes(12).toString("hex")
@@ -597,17 +699,7 @@ async function handleMobileApi(req, res, targetPort, state, device, pathname) {
       return json(res, 200, {
         version: 1,
         current: value.current ?? null,
-        groups: (value.groups ?? []).map((g) => ({
-          provider: g.name || g.id || "未知",
-          models: (g.models ?? []).map((m) => ({
-            id: m.id,
-            name: m.name ?? m.id,
-            contextWindow: m.contextWindow ?? null,
-            maxTokens: m.maxTokens ?? null,
-            reasoningEfforts: (m.reasoning?.efforts ?? []).map((e) => e.id),
-            defaultEffort: m.reasoning?.defaultEffort ?? null,
-          })),
-        })),
+        groups: mapModelGroups(value.groups),
         failures: value.failures ?? [],
       })
     }
@@ -616,17 +708,7 @@ async function handleMobileApi(req, res, targetPort, state, device, pathname) {
       const value = await callLocalRpc(targetPort, "llm.models", {})
       return json(res, 200, {
         version: 1,
-        groups: (value.groups ?? []).map((g) => ({
-          provider: g.name || g.id || "未知",
-          models: (g.models ?? []).map((m) => ({
-            id: m.id,
-            name: m.name ?? m.id,
-            contextWindow: m.contextWindow ?? null,
-            maxTokens: m.maxTokens ?? null,
-            reasoningEfforts: (m.reasoning?.efforts ?? []).map((e) => e.id),
-            defaultEffort: m.reasoning?.defaultEffort ?? null,
-          })),
-        })),
+        groups: mapModelGroups(value.groups),
         failures: value.failures ?? [],
       })
     }
@@ -660,9 +742,7 @@ async function handleMobileApi(req, res, targetPort, state, device, pathname) {
       const provider = String(body.provider ?? "").trim()
       const model = String(body.model ?? "").trim()
       if (!provider || !model) return json(res, 400, { error: "缺少 provider 或 model" })
-      const payload = { sessionId, provider, model }
-      if (typeof body.reasoningEffort === "string" && body.reasoningEffort.trim()) payload.reasoningEffort = body.reasoningEffort.trim()
-      const value = await callLocalRpc(targetPort, "session.selectModel", payload)
+      const value = await selectSessionModel(targetPort, sessionId, provider, model, body.reasoningEffort)
       return json(res, 200, { ok: true, selected: value.selected ?? null })
     }
 
@@ -913,7 +993,6 @@ export function apply(ctx, config) {
   const web = ctx.get("webServer")
   const targetPort = web.port
   const authStore = newAuthStore()
-  mkdirSync(config.stateDir || join(homedir(), ".dsh", "dsh-deepharness"), { recursive: true })
   const stateFile = statePathOf(config)
   const state = loadState(stateFile)
   if (!state.deviceId) state.deviceId = `dsh-${randomBytes(8).toString("hex")}`
@@ -928,7 +1007,7 @@ export function apply(ctx, config) {
     }
   }
   saveState(stateFile, state)
-  if (migrated) ctx.logger.info("dsh-deepharness: 已为旧设备补发 deviceId")
+  if (migrated) ctx.logger.info("dsh-links: 已为旧设备补发 deviceId")
 
   // ---------- 主 web 服务上的路由（网页界面「手机连接」面板用） ----------
   const disposers = [
@@ -988,7 +1067,7 @@ export function apply(ctx, config) {
     try {
       const pathname = new URL(req.url ?? "/", "http://x").pathname
       if (pathname === "/dsh-link/health" && req.method === "GET") {
-        return json(res, 200, { ok: true, name: "dsh-deepharness", deviceId: state.deviceId })
+        return json(res, 200, { ok: true, name: "dsh-links", deviceId: state.deviceId })
       }
       if (pathname === "/dsh-link/pair" && req.method === "POST") {
         return handlePair(req, res, config, state, stateFile)
@@ -1027,7 +1106,7 @@ export function apply(ctx, config) {
       }
       const device = authorize(req, state, authStore)
       if (config.debug) {
-        ctx.logger.info(`dsh-deepharness: ${req.method} ${pathname} → ${device ? `device:${device.deviceId}` : "denied"}`)
+        ctx.logger.info(`dsh-links: ${req.method} ${pathname} → ${device ? `device:${device.deviceId}` : "denied"}`)
       }
       if (!device) {
         return json(res, 401, { error: "缺少或无效的连接 token" })
@@ -1067,7 +1146,7 @@ export function apply(ctx, config) {
       }
       forwardHttp(req, res, targetPort)
     } catch (err) {
-      ctx.logger.warn(`dsh-deepharness: proxy request error: ${err?.message ?? err}`)
+      ctx.logger.warn(`dsh-links: proxy request error: ${err?.message ?? err}`)
       if (!res.headersSent) json(res, 500, { error: "proxy error" })
       else res.destroy()
     }
@@ -1081,7 +1160,7 @@ export function apply(ctx, config) {
     }
     touchDevice(state, device, stateFile)
     if (config.debug) {
-      ctx.logger.info(`dsh-deepharness: upgrade ${req.url}`)
+      ctx.logger.info(`dsh-links: upgrade ${req.url}`)
     }
     const upstream = connect(targetPort, "127.0.0.1", () => {
       const lines = [`${req.method} ${req.url} HTTP/${req.httpVersion}`]
@@ -1102,23 +1181,23 @@ export function apply(ctx, config) {
       socket.pipe(upstream)
       upstream.pipe(socket)
       if (config.debug) {
-        upstream.once("data", (d) => ctx.logger.info(`dsh-deepharness: upstream first bytes: ${d.toString().slice(0, 160)}`))
-        socket.once("data", (d) => ctx.logger.info(`dsh-deepharness: client first frame bytes: ${d.toString("hex").slice(0, 120)}`))
-        socket.on("close", () => ctx.logger.info("dsh-deepharness: client socket closed"))
-        upstream.on("close", () => ctx.logger.info("dsh-deepharness: upstream socket closed"))
-        socket.on("end", () => ctx.logger.info("dsh-deepharness: client socket end"))
-        upstream.on("end", () => ctx.logger.info("dsh-deepharness: upstream socket end"))
+        upstream.once("data", (d) => ctx.logger.info(`dsh-links: upstream first bytes: ${d.toString().slice(0, 160)}`))
+        socket.once("data", (d) => ctx.logger.info(`dsh-links: client first frame bytes: ${d.toString("hex").slice(0, 120)}`))
+        socket.on("close", () => ctx.logger.info("dsh-links: client socket closed"))
+        upstream.on("close", () => ctx.logger.info("dsh-links: upstream socket closed"))
+        socket.on("end", () => ctx.logger.info("dsh-links: client socket end"))
+        upstream.on("end", () => ctx.logger.info("dsh-links: upstream socket end"))
       }
     })
     upstream.on("error", (e) => {
-      if (config.debug) ctx.logger.info(`dsh-deepharness: upstream connect error: ${e?.message ?? e}`)
+      if (config.debug) ctx.logger.info(`dsh-links: upstream connect error: ${e?.message ?? e}`)
       socket.destroy()
     })
     socket.on("error", () => upstream.destroy())
   })
 
   proxy.on("error", (err) => {
-    ctx.logger.warn(`dsh-deepharness: proxy error: ${err?.message ?? err}`)
+    ctx.logger.warn(`dsh-links: proxy error: ${err?.message ?? err}`)
   })
 
   // ---------- SSE 后台事件轮询（所有有活跃连接的会话） ----------
@@ -1139,8 +1218,8 @@ export function apply(ctx, config) {
   }, 15_000)
 
   proxy.listen(config.port, "0.0.0.0", () => {
-    ctx.logger.info(`dsh-deepharness: 手机接入代理已启动，端口 ${config.port}（token 校验）`)
-    for (const u of lanUrls(config).urls) ctx.logger.info(`dsh-deepharness: 可访问地址 ${u}`)
+    ctx.logger.info(`dsh-links: 手机接入代理已启动，端口 ${config.port}（token 校验）`)
+    for (const u of lanUrls(config).urls) ctx.logger.info(`dsh-links: 可访问地址 ${u}`)
   })
 
   ctx.effect(
@@ -1159,6 +1238,6 @@ export function apply(ctx, config) {
       proxy.closeAllConnections?.()
       proxy.close()
     },
-    "dsh-deepharness: proxy + routes",
+    "dsh-links: proxy + routes",
   )
 }

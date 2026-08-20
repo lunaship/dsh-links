@@ -1,5 +1,5 @@
 {
-  "name": "dsh-deepharness",
+  "name": "dsh-links",
   "version": "0.1.0",
   "description": "DSH 手机插件：配对 + 设备管理 + 18640 接入代理 + 手机 API（纯后端，无页面布局注入）",
   "type": "module",

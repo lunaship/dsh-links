@@ -466,7 +466,7 @@ private fun SettingsScreen(
                         )
                     }
                     SettingsSection("关于")
-                    SettingsItem(title = "DeepSeek Harness 移动端", description = "版本 0.4.1 · 1:1 复刻 DeepSeek Harness", onClick = {})
+                    SettingsItem(title = "DSH Links", description = "版本 0.5.0 · 手机端 dsh 工作台", onClick = {})
                     SettingsItem(title = "开源许可", description = "MIT License", onClick = {})
                 }
             }
@@ -826,7 +826,7 @@ private fun PluginsSettings(context: Context) {
 
     // 已安装插件只读列表（无配置读写入口）
     listOf(
-        "dsh-deepharness" to "手机远程连接",
+        "dsh-links" to "手机远程连接",
         "dsh-client-ui-theme" to "主题",
         "dsh-client-locale" to "多语言",
         "dshmarket" to "插件市场",

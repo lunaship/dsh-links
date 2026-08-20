@@ -35,7 +35,7 @@ apply(ctx, {
   autoApprove: true,
   pairingTtlSeconds: 600,
   extraUrls: ["http://test-relay.example.com:18641"],
-  stateDir: "/tmp/dsh-deepharness-test",
+  stateDir: "/tmp/dsh-links-test",
   debug: true,
 })
 

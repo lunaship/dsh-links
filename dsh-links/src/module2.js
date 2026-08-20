@@ -1,5 +1,5 @@
 /**
- * dsh-deepharness 客户端面 · 面板模块（作为 createPanelModule 工厂被主模块组合调用）
+ * dsh-links 客户端面 · 面板模块（作为 createPanelModule 工厂被主模块组合调用）
  * 「📱 手机连接」入口：侧栏设置区旁的小手机图标（复用侧栏 iconButton 样式），
  * 点击弹出面板：二维码 + 配对码 + 已配对设备管理。
  *
@@ -249,7 +249,7 @@ const createPanelModule = (require) => {
 
     return jsxs(React.Fragment, {
       children: [
-        jsx('style', { children: STYLE, 'data-plugin': 'dsh-deepharness' }),
+        jsx('style', { children: STYLE, 'data-plugin': 'dsh-links' }),
         open
           ? jsx('div', {
               className: 'dshlink-backdrop',
@@ -370,7 +370,7 @@ const createPanelModule = (require) => {
 
     return jsxs(React.Fragment, {
       children: [
-        jsx('style', { children: STYLE, 'data-plugin': 'dsh-deepharness' }),
+        jsx('style', { children: STYLE, 'data-plugin': 'dsh-links' }),
         jsxs('div', {
           className: 'dshlink-settings',
           children: [
@@ -448,15 +448,15 @@ const createPanelModule = (require) => {
             ctx.slots.register(
               {
                 name: 'settings.section',
-                id: 'dsh-deepharness',
+                id: 'dsh-links',
                 order: 25,
                 label: () => '手机连接',
-                locale: 'dsh-deepharness',
+                locale: 'dsh-links',
               },
               () => jsx(DshLinkSettingsSection, {}),
             ),
         ),
-      'dsh-deepharness: settings.section',
+      'dsh-links: settings.section',
     )
   }
 

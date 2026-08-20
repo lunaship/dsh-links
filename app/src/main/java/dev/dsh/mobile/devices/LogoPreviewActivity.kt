@@ -55,7 +55,7 @@ private fun LogoPreviewScreen() {
         verticalArrangement = Arrangement.spacedBy(24.dp)
     ) {
         Text(
-            "DeepHarness 方案对比",
+            "DSH Links 方案对比",
             fontSize = 22.sp,
             fontWeight = FontWeight.Bold,
             color = Color(0xFF111827)

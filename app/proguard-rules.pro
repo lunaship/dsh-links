@@ -1,4 +1,4 @@
-# DeepHarness release 混淆规则
+# DSH Links release 混淆规则
 # R8 仅在 release 构建生效；debug 不受影响。
 
 # Prism4j（代码语法高亮，纯 Kotlin/Android，grammar 经 Prism4jGrammarLocator 加载）

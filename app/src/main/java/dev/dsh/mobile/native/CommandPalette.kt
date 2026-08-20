@@ -79,7 +79,7 @@ sealed interface PaletteCommand {
 
 /** Local (non-server) actions the palette can dispatch. */
 enum class LocalKind {
-    /** Open the global session-search/history view. */
+    /** Open session search in the sidebar. */
     SEARCH_SESSIONS,
     /** Create a brand-new session. */
     NEW_SESSION,

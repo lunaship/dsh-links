@@ -1,7 +1,7 @@
 /**
  * 历史投影契约测试（WI-001）：reasoning 只属于覆盖其 sequence 范围的页面；
  * 消息 id 以事件 seq 为键，跨页稳定；assistant/message 与同页 text block-end 去重。
- * 运行：node --test dsh-deepharness/test/history.test.mjs
+ * 运行：node --test dsh-links/test/history.test.mjs
  */
 import { test } from "node:test"
 import assert from "node:assert/strict"

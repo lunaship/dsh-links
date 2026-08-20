@@ -1,17 +1,17 @@
-# DeepHarness
+# DSH Links
 
 一个手机 App 管理多个 dsh（DeepSeek Harness）实例：**纯原生 Android（Kotlin + Jetpack Compose）工作台**，配合一个 dsh 服务端插件提供手机 API。会话、消息流、实时推送全部由原生实现，不依赖 Web UI。
 
 ## 目录
 
 ```
-DeepHarness/
-├── app/                    # Android App（Kotlin + Compose，包名 dev.dsh.mobile）
+dsh-links/
+├── app/                    # Android App（Kotlin + Compose，包名 dev.dsh.mobile，品牌 DSH Links）
 │   └── src/main/java/dev/dsh/mobile/
 │       ├── core/           # 共享：HostStore(主机凭据) / TokenCrypto / PairClient / DshTheme / DshNotifier / AppSettingsStore
 │       ├── devices/        # 设备中心：DevicesActivity / ScanActivity / SplashActivity（启动入口）
 │       └── native/         # 原生工作台：WorkspaceActivity / SettingsActivity / MobileApi / SessionStreamClient / DshIcons / ui/ / util/
-├── dsh-deepharness/        # dsh 插件（npm 包，装到每个 dsh 实例）
+├── dsh-links/              # dsh 插件（npm 包 dsh-links，装到每个 dsh 实例）
 │   └── src/
 │       ├── index.js        # 18640 代理 + 配对 + 手机 API
 │       ├── client.js       # 「手机连接」面板（构建生成）
@@ -30,7 +30,7 @@ Splash → DevicesActivity（设备中心：设备列表 / 扫码配对 / 手动
 ```
 
 - **单一原生路线**：所有界面均为 Kotlin + Compose 原生实现，无 WebView。
-- **DSH 更新不破坏客户端**：原生只依赖 `dsh-deepharness` 插件定义的稳定 API 契约（`/dsh-link/mobile/*`），DSH Web UI 如何变更不影响手机端。
+- **DSH 更新不破坏客户端**：原生只依赖 `dsh-links` 插件定义的稳定 API 契约（`/dsh-link/mobile/*`），DSH Web UI 如何变更不影响手机端。
 - 多主机：扫码 / 手动配对，主机切换，局域网 + 远程（Cloudflare Tunnel）并存。
 
 ## 特性
@@ -44,7 +44,7 @@ Splash → DevicesActivity（设备中心：设备列表 / 扫码配对 / 手动
 ## 安装插件到某个 dsh
 
 ```bash
-dsh plugin --profile web add /Volumes/Space/Dev/DeepHarness/dsh-deepharness
+dsh plugin --profile web add /path/to/dsh-links
 # 然后重启 dsh web（插件改动也必须重启才生效）
 ```
 

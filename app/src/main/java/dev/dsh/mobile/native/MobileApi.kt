@@ -81,13 +81,19 @@ data class MobileModelOption(
     val contextWindow: Long?,
     val maxTokens: Long?,
     val reasoningEfforts: List<String> = emptyList(),
+    val defaultEffort: String? = null,
 )
 
-data class MobileModelGroup(val provider: String, val models: List<MobileModelOption>)
+data class MobileModelGroup(
+    val provider: String,
+    val displayName: String = provider,
+    val models: List<MobileModelOption>,
+)
 
 data class MobileModelCatalog(
     val currentProvider: String? = null,
     val currentModel: String? = null,
+    val currentReasoningEffort: String? = null,
     val groups: List<MobileModelGroup> = emptyList(),
 )
 
@@ -189,6 +195,7 @@ class MobileApiClient(private val host: Host) {
             val models = g.optJSONArray("models") ?: org.json.JSONArray()
             MobileModelGroup(
                 provider = g.optString("provider", "未知"),
+                displayName = g.optString("providerName").ifBlank { g.optString("provider", "未知") },
                 models = (0 until models.length()).map { j ->
                     val m = models.getJSONObject(j)
                     MobileModelOption(
@@ -199,6 +206,7 @@ class MobileApiClient(private val host: Host) {
                         reasoningEfforts = (m.optJSONArray("reasoningEfforts") ?: org.json.JSONArray()).let { arr ->
                             (0 until arr.length()).map { arr.getString(it) }
                         },
+                        defaultEffort = m.optString("defaultEffort").takeIf { it.isNotBlank() },
                     )
                 },
             )
@@ -206,6 +214,8 @@ class MobileApiClient(private val host: Host) {
         return MobileModelCatalog(
             currentProvider = current?.optString("provider"),
             currentModel = current?.optString("model"),
+            currentReasoningEffort = current?.optString("reasoningEffort")?.ifBlank { null }
+                ?: current?.optString("effort")?.ifBlank { null },
             groups = groups,
         )
     }
@@ -254,10 +264,11 @@ class MobileApiClient(private val host: Host) {
         request("POST", "/dsh-link/mobile/sessions/" + java.net.URLEncoder.encode(sessionId, "UTF-8") + "/archive", JSONObject())
     }
 
-    /** 选择会话模型。 */
-    fun selectModel(sessionId: String, provider: String, model: String) {
-        request("POST", "/dsh-link/mobile/sessions/" + java.net.URLEncoder.encode(sessionId, "UTF-8") + "/model",
-            JSONObject().put("provider", provider).put("model", model))
+    /** 选择会话模型（可选推理等级，对齐 Web session.selectModel）。 */
+    fun selectModel(sessionId: String, provider: String, model: String, reasoningEffort: String? = null) {
+        val body = JSONObject().put("provider", provider).put("model", model)
+        if (!reasoningEffort.isNullOrBlank()) body.put("reasoningEffort", reasoningEffort)
+        request("POST", "/dsh-link/mobile/sessions/" + java.net.URLEncoder.encode(sessionId, "UTF-8") + "/model", body)
     }
 
     fun bootstrap(): MobileBootstrap {
@@ -461,10 +472,15 @@ class MobileApiClient(private val host: Host) {
             val code = connection.responseCode
             val stream = if (code in 200..299) connection.inputStream else connection.errorStream
             val text = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
-            if (code !in 200..299) throw IllegalStateException("手机 API 返回 HTTP $code: $text")
+            if (code !in 200..299) throw IllegalStateException(parseMobileApiError(code, text))
             return JSONObject(text)
         } finally {
             connection.disconnect()
         }
     }
+}
+
+internal fun parseMobileApiError(code: Int, text: String): String {
+    val fromJson = runCatching { JSONObject(text).optString("error") }.getOrNull()?.takeIf { it.isNotBlank() }
+    return fromJson ?: text.ifBlank { "HTTP $code" }
 }

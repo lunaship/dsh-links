@@ -1,5 +1,5 @@
 /**
- * dsh-deepharness 认证核心（纯逻辑，可 node --test 单测）
+ * dsh-links 认证核心（纯逻辑，可 node --test 单测）
  * ============================================================
  * 凭据分层：
  *   配对码（一次性）→ deviceId + deviceToken（Keystore，不进 WebView）

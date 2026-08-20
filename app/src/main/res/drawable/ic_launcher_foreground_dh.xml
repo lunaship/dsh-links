@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  DeepHarness launcher — 方案 C：DH 字标 + 鲸尾负空间
+  DSH Links launcher — 方案 C：DH 字标 + 鲸尾负空间（品牌已更名为 DSH Links）
   viewport 108×108，主体安全区 72×72（边距 18）。
-  设计意图：D 字母右侧内部嵌入鲸鱼尾鳍剪影（向上翻起），让"DeepHarness"首字母自带品牌图腾。
+  设计意图：D 字母右侧内部嵌入鲸鱼尾鳍剪影（向上翻起），让"DSH Links"首字母自带品牌图腾。
   通过 evenOdd fillType 让 D 的内部空腔显形，鲸尾再覆盖在空腔上。
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"

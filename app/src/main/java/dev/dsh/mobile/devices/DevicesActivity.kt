@@ -321,7 +321,7 @@ fun DevicesScreen(
                         letterSpacing = (-0.25).sp
                     )
                     Text(
-                        "管理你的 DeepSeek Harness",
+                        "管理你的 DSH Links",
                         color = HStudio.textSecondary,
                         fontSize = 12.sp,
                         lineHeight = 18.sp
@@ -751,7 +751,7 @@ private fun EmptyDevicesState(onAdd: () -> Unit) {
         Text("还没有配对任何设备", color = HStudio.textPrimary, fontSize = 14.sp, fontWeight = FontWeight(600))
         Spacer(Modifier.height(6.dp))
         Text(
-            "在电脑端 DeepHarness 点击左下角「📱 手机连接」\n扫描二维码或输入配对码即可接入",
+            "在电脑端 dsh（DeepSeek Harness）打开「📱 手机连接」面板\n扫描二维码或输入配对码即可接入",
             color = HStudio.textMuted,
             fontSize = 11.sp,
             lineHeight = 17.sp,

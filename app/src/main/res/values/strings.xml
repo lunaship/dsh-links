@@ -1,6 +1,7 @@
 <resources>
-    <string name="app_name">deepharness</string>
-    <string name="brand_title">deepharness</string>
+    <string name="app_name">DSH Links</string>
+    <string name="brand_title">DSH Links</string>
+    <string name="brand_tagline">DSH Links — 你的所有 dsh，一个手机工作台</string>
 
     <string name="menu_more">更多</string>
     <string name="subtitle_empty">连接你的 dsh 实例</string>

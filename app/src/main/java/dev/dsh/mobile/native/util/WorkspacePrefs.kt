@@ -69,6 +69,13 @@ class WorkspacePrefs(context: Context) {
             prefs.edit().putString(KEY_SESSION_FILTER, value.name).apply()
         }
 
+    /** 输入区工作区选择：记住上次选中的 cwd，避免始终显示排序第一项。 */
+    var lastSelectedWorkspace: String?
+        get() = prefs.getString(KEY_LAST_WORKSPACE, null)
+        set(value) {
+            prefs.edit().putString(KEY_LAST_WORKSPACE, value).apply()
+        }
+
     companion object {
         const val PREFS_NAME = "dsh_workspace"
 
@@ -81,5 +88,6 @@ class WorkspacePrefs(context: Context) {
         // 新增键：加 `workspace_` 前缀避免与旧键混淆
         const val KEY_FLAT_VIEW = "workspace_flat_view"
         const val KEY_SESSION_FILTER = "workspace_session_filter"
+        const val KEY_LAST_WORKSPACE = "workspace_last_selected_cwd"
     }
 }

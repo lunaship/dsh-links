@@ -1,0 +1,5 @@
+# dsh-links bundle patch: 把插件注册进 profile 的 bundles 列表。
+# 服务端面（src/index.js）+ 客户端面（src/client.js，经 dsh.client 扫描）在同一个包内。
+- insert:
+    - id: dsh-links
+      name: dsh-links

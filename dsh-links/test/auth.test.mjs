@@ -5,7 +5,7 @@
  *   - web-tickets 单次 ticket → web-bootstrap 302 + HttpOnly session
  *   - session cookie 访问页面/资源放行，无 cookie 拒绝
  *   - 吊销设备立即清除 ticket 与 session
- * 运行：node --test dsh-deepharness/test/auth.test.mjs
+ * 运行：node --test dsh-links/test/auth.test.mjs
  */
 import { test } from "node:test"
 import assert from "node:assert/strict"
