@@ -72,6 +72,15 @@ dsh plugin --profile web add /path/to/dsh-links
 - `GET  /dsh-link/mobile/models|llm-models` — 模型目录
 - `GET  /dsh-link/mobile/devices` — 已配对设备列表
 - `POST /dsh-link/mobile/revoke` — 吊销已配对设备
+- `POST /dsh-link/mobile/sessions/:id/permission` — 按会话设置权限预设
+- `GET  /dsh-link/mobile/bootstrap` — 冷启动主机/设备/会话快照
+
+## 已知限制（Beta）
+
+- 消息「喜欢 / 不喜欢」仅本机提示，尚未上报服务端
+- 「重新生成」会重发上一条用户消息（非独立 regenerate RPC）
+- 「导出对话」为历史拉取后的文本分享，非官方 session log 文件
+- 归档与删除均调用服务端 `workspace.archiveSession`
 
 ## 远程访问
 

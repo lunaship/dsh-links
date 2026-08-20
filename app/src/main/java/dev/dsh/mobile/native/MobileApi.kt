@@ -66,6 +66,11 @@ data class MobileBootstrap(
     val sessions: List<MobileSession>,
 )
 
+data class MobileWorkspaceCatalog(
+    val paths: List<String>,
+    val archivedSessionIds: Set<String> = emptySet(),
+)
+
 data class MobileSessionStats(
     val turns: Long = 0,
     val steps: Long = 0,
@@ -273,14 +278,28 @@ class MobileApiClient(private val host: Host) {
         return root.optString("sessionId").takeIf { it.isNotBlank() }
     }
 
-    /** 工作区列表。 */
-    fun getWorkspaces(): List<String> {
+    /** 工作区列表（含服务端已归档会话 id，用于跨设备同步隐藏）。 */
+    fun getWorkspaces(): MobileWorkspaceCatalog {
         val root = request("GET", "/dsh-link/mobile/workspaces")
         val arr = root.optJSONArray("workspaces") ?: org.json.JSONArray()
-        return (0 until arr.length()).map { i ->
+        val paths = (0 until arr.length()).map { i ->
             val w = arr.getJSONObject(i)
             w.optString("path").ifBlank { w.optString("title") }
         }.filter { it.isNotBlank() }
+        val archived = root.optJSONArray("archivedSessionIds") ?: org.json.JSONArray()
+        val archivedIds = (0 until archived.length()).mapNotNull { i ->
+            archived.optString(i).takeIf { it.isNotBlank() }
+        }.toSet()
+        return MobileWorkspaceCatalog(paths = paths, archivedSessionIds = archivedIds)
+    }
+
+    /** 按会话设置权限预设（对标 web 当前会话权限）。 */
+    fun setSessionPermission(sessionId: String, preset: String) {
+        request(
+            "POST",
+            "/dsh-link/mobile/sessions/" + java.net.URLEncoder.encode(sessionId, "UTF-8") + "/permission",
+            JSONObject().put("preset", preset),
+        )
     }
 
     /** 创建工作区（目录路径）。 */

@@ -156,6 +156,9 @@ private fun SettingsScreen(
                     loaded.persist(context)
                     appSettings = loaded
                     namespaceRevisions = view.namespaces.associate { it.ns to it.revision }
+                    if (loaded.theme in setOf("light", "dark", "system")) {
+                        ThemeManager.setThemeMode(context, loaded.theme)
+                    }
                 }
             } catch (e: Exception) {
                 // 离线：回退本地缓存，设置项仍可展示（保存时会提示错误）
@@ -650,11 +653,43 @@ private fun GeneralSettings(
                 "agent-default-model",
                 org.json.JSONObject()
                     .put("provider", provider)
-                    .put("model", modelId),
+                    .put("model", modelId)
+                    .put("reasoningEffort", appSettings.defaultReasoningEffort ?: org.json.JSONObject.NULL),
                 {},
             )
         },
     )
+    val effortOptions = remember(llmGroups, selectedProvider, selectedModel) {
+        llmGroups.find { it.provider == selectedProvider }
+            ?.models?.find { it.id == selectedModel }
+            ?.reasoningEfforts
+            .orEmpty()
+            .map { it to it }
+    }
+    if (effortOptions.isNotEmpty()) {
+        SettingsSelectItem(
+            title = "默认推理强度",
+            description = "部分模型支持；未设置时使用模型默认值",
+            value = appSettings.defaultReasoningEffort ?: "默认",
+            options = listOf("默认" to "") + effortOptions,
+            selectedId = appSettings.defaultReasoningEffort ?: "",
+            saving = savingNs == "agent-default-model",
+            error = null,
+            onSelect = { _, effortId ->
+                val provider = selectedProvider
+                val model = selectedModel
+                if (provider.isNullOrBlank() || model.isNullOrBlank()) return@SettingsSelectItem
+                onSave(
+                    "agent-default-model",
+                    org.json.JSONObject()
+                        .put("provider", provider)
+                        .put("model", model)
+                        .put("reasoningEffort", effortId.ifBlank { org.json.JSONObject.NULL }),
+                    {},
+                )
+            },
+        )
+    }
     HorizontalDivider(color = Dsh.borderL1, modifier = Modifier.padding(vertical = 4.dp))
 
     // --- 权限（permission.defaultPreset：DSH 服务端在新会话创建时应用） ---
@@ -701,6 +736,46 @@ private fun GeneralSettings(
     )
     HorizontalDivider(color = Dsh.borderL1, modifier = Modifier.padding(vertical = 4.dp))
 
+    // --- 外观（本地 ThemeManager + 可选同步 ui-theme） ---
+    SettingsSection("外观")
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        ThemeCard(
+            label = "浅色",
+            icon = Icons.Default.LightMode,
+            selected = ThemeManager.currentThemeMode == "light",
+            modifier = Modifier.weight(1f),
+            onClick = {
+                ThemeManager.setThemeMode(context, "light")
+                onSave("ui-theme", org.json.JSONObject().put("preference", "light"), {})
+            },
+        )
+        ThemeCard(
+            label = "深色",
+            icon = Icons.Default.DarkMode,
+            selected = ThemeManager.currentThemeMode == "dark",
+            modifier = Modifier.weight(1f),
+            onClick = {
+                ThemeManager.setThemeMode(context, "dark")
+                onSave("ui-theme", org.json.JSONObject().put("preference", "dark"), {})
+            },
+        )
+        ThemeCard(
+            label = "跟随系统",
+            icon = Icons.Default.SettingsBrightness,
+            selected = ThemeManager.currentThemeMode == "system",
+            modifier = Modifier.weight(1f),
+            onClick = {
+                ThemeManager.setThemeMode(context, "system")
+                onSave("ui-theme", org.json.JSONObject().put("preference", "system"), {})
+            },
+        )
+    }
+    HorizontalDivider(color = Dsh.borderL1, modifier = Modifier.padding(vertical = 4.dp))
 
     // --- 繁忙时发送行为（ui-conversation.busyEnter） ---
     val busyEnterId = canonicalBusyEnter(appSettings.busyEnter)

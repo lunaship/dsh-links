@@ -33,7 +33,7 @@ object PairClient {
             val respCode = conn.responseCode
             val body = (if (respCode in 200..299) conn.inputStream else conn.errorStream)
                 ?.bufferedReader()?.use { it.readText() } ?: ""
-            if (respCode != 200) throw Exception("HTTP $respCode: ${body.take(120)}")
+            if (respCode != 200) throw Exception(friendlyPairError(respCode, body))
             val o = JSONObject(body)
             return Result(normalized, o.optString("name", deviceName), o.getString("token"), o.optString("deviceId"), pin.orEmpty())
         } catch (e: Exception) {
@@ -57,6 +57,21 @@ object PairClient {
             null
         } finally {
             conn.disconnect()
+        }
+    }
+
+    /** 将配对 HTTP 错误转为用户可读文案。 */
+    fun friendlyPairError(code: Int, body: String): String {
+        val hint = runCatching {
+            JSONObject(body).optString("error").takeIf { it.isNotBlank() }
+        }.getOrNull()
+        return when (code) {
+            401 -> hint ?: "配对码无效或已过期，请在电脑端刷新后重试"
+            409 -> hint ?: "设备名已存在，请换一个名称"
+            415 -> "请求格式不正确，请更新 App 后重试"
+            429 -> hint ?: "尝试过多，请稍后再试"
+            in 500..599 -> hint ?: "电脑端暂时无法配对（$code），请确认 dsh 已启动"
+            else -> hint ?: "配对失败（HTTP $code）"
         }
     }
 }

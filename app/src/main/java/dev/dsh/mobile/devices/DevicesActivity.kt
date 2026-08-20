@@ -281,7 +281,9 @@ fun DevicesScreen(
                 if (cur.host.baseUrl in urls) results[cur.host.baseUrl] ?: cur else cur
             }
             val anyOnline = devices.any { it.state == DeviceState.ONLINE }
-            allOfflineError = if (!anyOnline && devices.isNotEmpty()) "所有设备均离线，请检查电脑端代理是否运行" else null
+            allOfflineError = if (!anyOnline && devices.isNotEmpty()) {
+                "所有设备均离线。请确认电脑端 dsh 已启动，且本机与电脑在同一局域网（或已配置远程隧道）。"
+            } else null
         }
     }
 
@@ -429,7 +431,11 @@ fun DevicesScreen(
                             onOpen = {
                                 onSelectHost(device.host) { ok ->
                                     if (!ok) {
-                                        Toast.makeText(context, "连接失败，请检查设备是否在线", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(
+                                            context,
+                                            "无法连接「${device.host.name}」。请确认电脑在线，且 18640 端口可访问。",
+                                            Toast.LENGTH_LONG,
+                                        ).show()
                                         refreshHealth()
                                     }
                                 }
