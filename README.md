@@ -1,6 +1,8 @@
 # DSH Links
 
-一个手机 App 管理多个 dsh（DeepSeek Harness）实例：**纯原生 Android（Kotlin + Jetpack Compose）工作台**，配合一个 dsh 服务端插件提供手机 API。会话、消息流、实时推送全部由原生实现，不依赖 Web UI。
+**Beta** — 用手机管理多个 dsh（DeepSeek Harness）实例：纯原生 Android（Kotlin + Jetpack Compose）工作台，配合 dsh 服务端插件提供手机 API。会话、消息流、实时推送全部由原生实现，不依赖 Web UI。
+
+> 配对手机可驱动具有工具/代码执行能力的 dsh 主机。使用前请阅读 [`SECURITY.md`](SECURITY.md)。
 
 ## 目录
 
@@ -8,17 +10,19 @@
 dsh-links/
 ├── app/                    # Android App（Kotlin + Compose，包名 dev.dsh.mobile，品牌 DSH Links）
 │   └── src/main/java/dev/dsh/mobile/
-│       ├── core/           # 共享：HostStore(主机凭据) / TokenCrypto / PairClient / DshTheme / DshNotifier / AppSettingsStore
-│       ├── devices/        # 设备中心：DevicesActivity / ScanActivity / SplashActivity（启动入口）
-│       └── native/         # 原生工作台：WorkspaceActivity / SettingsActivity / MobileApi / SessionStreamClient / DshIcons / ui/ / util/
+│       ├── core/           # 共享：HostStore / TokenCrypto / PairClient / DshTheme / DshNotifier / AppSettingsStore
+│       ├── devices/        # 设备中心：DevicesActivity / ScanActivity / SplashActivity
+│       └── native/         # 原生工作台：WorkspaceActivity / SettingsActivity / MobileApi / …
 ├── dsh-links/              # dsh 插件（npm 包 dsh-links，装到每个 dsh 实例）
 │   └── src/
 │       ├── index.js        # 18640 代理 + 配对 + 手机 API
 │       ├── client.js       # 「手机连接」面板（构建生成）
 │       └── module2.js      # 面板模块
-├── branding/               # App logo 素材（单色鲸鱼吉祥物）
+├── branding/               # App logo 素材
 ├── evidence/               # 验收截图 / 证据归档
 ├── remote/                 # 远程访问（Cloudflare Tunnel）配置与文档
+├── LICENSE                 # MIT
+├── SECURITY.md             # 威胁模型与安全约定
 └── README.md
 ```
 
@@ -44,7 +48,7 @@ Splash → DevicesActivity（设备中心：设备列表 / 扫码配对 / 手动
 ## 安装插件到某个 dsh
 
 ```bash
-dsh plugin --profile web add /path/to/dsh-links
+dsh plugin --profile web add /path/to/dsh-links/dsh-links
 # 然后重启 dsh web（插件改动也必须重启才生效）
 ```
 
@@ -57,7 +61,20 @@ dsh plugin --profile web add /path/to/dsh-links
 ./gradlew :app:testDebugUnitTest    # 单元测试（HostStore 去重/序列化、SSE 去重/退避）
 ```
 
+插件（Node）：
+
+```bash
+cd dsh-links && node --test test/*.mjs
+```
+
 > 注意：改 Kotlin 后若怀疑打进旧 dex，用 `./gradlew :app:clean :app:assembleDebug`。
+
+## 安全（摘要）
+
+- 配对 token 是访问主机的凭证；丢失设备请立即在面板吊销。
+- `18640` 为自签 TLS；局域网会固定证书指纹。不要把该端口裸暴露到不可信公网。
+- 远程访问请用 Tunnel + Access 等额外门槛，见 [`remote/README.md`](remote/README.md)。
+- 完整说明：[`SECURITY.md`](SECURITY.md)。
 
 ## 手机 API（插件 18640 代理，token 认证）
 
@@ -73,7 +90,6 @@ dsh plugin --profile web add /path/to/dsh-links
 - `GET  /dsh-link/mobile/devices` — 已配对设备列表
 - `POST /dsh-link/mobile/revoke` — 吊销已配对设备
 - `POST /dsh-link/mobile/sessions/:id/permission` — 按会话设置权限预设
-- `GET  /dsh-link/mobile/bootstrap` — 冷启动主机/设备/会话快照
 
 ## 已知限制（Beta）
 
@@ -86,3 +102,7 @@ dsh plugin --profile web add /path/to/dsh-links
 
 手机离开局域网后：见 [`remote/README.md`](remote/README.md)（Cloudflare Tunnel 免费方案，
 或仿 dsh-mobile 的 Go relay 自建 VPS 隧道）。
+
+## License
+
+[MIT](LICENSE)。插件目录内另有一份相同许可证；移动布局部分源自 [dsh-mobile-hanui](https://github.com/Z-6354/dsh-mobile-hanui)（MIT）。

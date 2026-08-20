@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none">
+  <defs>
+    <linearGradient id="dshLinkGrad1" x1="20" y1="20" x2="80" y2="80" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#8DB6FE"/>
+      <stop offset="50%" stop-color="#679EFE"/>
+      <stop offset="100%" stop-color="#3060ED"/>
+    </linearGradient>
+  </defs>
+  <!-- Left Link Ring (Angled Capsule) -->
+  <rect x="22" y="38" width="36" height="24" rx="12" transform="rotate(-45 35 50)" stroke="url(#dshLinkGrad1)" stroke-width="7" stroke-linecap="round"/>
+  <!-- Right Link Ring (Interlocking Arc) -->
+  <path d="M 43 25 C 49 19, 60 19, 66 25 L 75 34 C 81 40, 81 51, 75 57 L 66 66 C 60 72, 49 72, 43 66" stroke="url(#dshLinkGrad1)" stroke-width="7" stroke-linecap="round"/>
+  <!-- Center Synchronized Pulse -->
+  <circle cx="50" cy="50" r="3.5" fill="#679EFE"/>
+</svg>

@@ -26,11 +26,13 @@ secrets*
 # --- Node 依赖 ---
 node_modules/
 
-# --- IDE / 系统 ---
+# --- IDE / 系统 / 本地草稿 ---
 .idea/
 *.iml
 .vscode/
 .DS_Store
+.zcode/
+.skill-archive/
 
 # --- 日志与临时 ---
 *.log
