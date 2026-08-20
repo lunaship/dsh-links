@@ -80,4 +80,18 @@ class HistoryMergeTest {
         val textChanged = listOf(msg("m1", "assistant", 1), msg("m2", "tool_call", 2).copy(running = true, text = "other"), msg("m3", "assistant", 3))
         assertNotEquals(a.contentSignature(), textChanged.contentSignature())
     }
+
+    @Test
+    fun `mergeHistoryWithLive 保留流式更长文本并去掉已被服务端确认的 pending`() {
+        val fresh = listOf(msg("msg-1", "user", 1).copy(text = "你好"))
+        val live = listOf(
+            msg("msg-2", "assistant", 2).copy(text = "流式", running = true),
+            MobileMessage(id = "local-pending", role = "user", text = "你好", time = 1L, type = "text"),
+        )
+        val merged = mergeHistoryWithLive(fresh + msg("msg-2", "assistant", 2).copy(text = "流"), live)
+        assertTrue(merged.none { it.id == "local-pending" })
+        val assistant = merged.first { it.id == "msg-2" }
+        assertEquals("流式", assistant.text)
+        assertEquals(true, assistant.running)
+    }
 }

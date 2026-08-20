@@ -1,7 +1,7 @@
 package dev.dsh.mobile.native.util
 
 /**
- * 识别 DSH 注入到会话里的 system-reminder / skill catalog，
+ * 识别 DSH 注入到会话里的 system-reminder / runtime context / skill catalog，
  * 对齐 Web「上下文注入 · skill-catalog」折叠行，避免首条消息把整段目录铺开。
  */
 fun isContextInjectionText(text: String): Boolean {
@@ -11,7 +11,13 @@ fun isContextInjectionText(text: String): Boolean {
         text.contains("<available_skills>", ignoreCase = true) ||
         text.contains("&lt;available_skills&gt;", ignoreCase = true) ||
         text.contains("available skill catalog", ignoreCase = true) ||
-        text.contains("available-skills", ignoreCase = true)
+        text.contains("available-skills", ignoreCase = true) ||
+        text.contains("Current runtime context", ignoreCase = true) ||
+        text.contains("Current DSH file policy", ignoreCase = true) ||
+        text.contains("Approval prompts are disabled", ignoreCase = true) ||
+        text.contains("Instructions from:", ignoreCase = true) ||
+        Regex("""\bAGENTS\.md\b""").containsMatchIn(text) ||
+        Regex("""\bCLAUDE\.md\b""").containsMatchIn(text)
 }
 
 /** 注入来源标签，Web 端用「skill-catalog」这种短名。 */
@@ -23,6 +29,15 @@ fun contextInjectionLabels(text: String): List<String> {
         text.contains("available-skills", ignoreCase = true)
     ) {
         labels.add("skill-catalog")
+    }
+    if (text.contains("Current runtime context", ignoreCase = true)) {
+        labels.add("runtime")
+    }
+    if (text.contains("Current DSH file policy", ignoreCase = true)) {
+        labels.add("file-policy")
+    }
+    if (text.contains("Approval prompts are disabled", ignoreCase = true)) {
+        labels.add("approval-policy")
     }
     Regex("""Instructions from:\s*(.+)""").findAll(text).forEach { match ->
         val name = match.groupValues[1].trim()

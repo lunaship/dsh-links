@@ -1,3 +1,5 @@
+import { isContextInjectionText } from "./context-injection.js"
+
 /**
  * 历史页投影（纯函数，WI-001）
  *
@@ -62,7 +64,8 @@ export function projectHistoryPage({ events, reasoningBySeq = new Map(), hasMore
     if (e.type === "user/message") {
       flushReasoning(e.time)
       const text = (e.data?.content ?? []).map((c) => c.text || "").join("")
-      push({ id: `msg-${e.seq}`, seq: e.seq, role: "user", text, time: e.time, type: "text" })
+      const role = isContextInjectionText(text) ? "context_injection" : "user"
+      push({ id: `msg-${e.seq}`, seq: e.seq, role, text, time: e.time, type: "text" })
     } else if (e.type === "assistant/chunk" || e.type === "assistant/message") {
       const chunk = e.data?.chunk
       if (chunk?.type === "block-end" && chunk.block?.text) {

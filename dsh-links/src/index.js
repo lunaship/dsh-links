@@ -1070,6 +1070,7 @@ async function handleMobileApi(req, res, targetPort, state, device, pathname, rt
       const sessionId = decodeURIComponent(promptMatch[1])
       const body = await readJson(req, res, PROMPT_BODY_LIMIT)
       if (!body) return
+      const text = String(body.text ?? "").trim()
       // 图片附件（DSH prompt image 块：base64 data + mediaType）
       const images = Array.isArray(body.images) ? body.images : []
       const content = []

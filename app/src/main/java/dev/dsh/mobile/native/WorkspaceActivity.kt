@@ -58,6 +58,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -91,6 +93,7 @@ import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Density
@@ -330,6 +333,7 @@ fun WorkspaceScreen(
     val workspacePrefs = remember { WorkspacePrefs(context) }
     var flatView by remember { mutableStateOf(workspacePrefs.flatView) }
     var sessionFilter by remember { mutableStateOf(workspacePrefs.sessionFilter) }
+    var pendingSessionCwd by remember { mutableStateOf<String?>(null) }
     var expandedWorkspaces by remember { mutableStateOf(setOf<String>()) }
     var expandedGroups by remember { mutableStateOf(setOf<String>()) } // 组内"显示全部"展开态
     var deleteWorkspaceTarget by remember { mutableStateOf<String?>(null) } // 待删除的工作区路径
@@ -508,8 +512,9 @@ fun WorkspaceScreen(
                     if (currentSessionId != sid) return@withContext
                     // 内容未变化时保持列表引用稳定（避免轮询在滚动中替换数据源导致
                     // LazyColumn 渲染冻结——Compose 已知问题）；签名覆盖中间状态变化
-                    val sameContent = messages.contentSignature() == msgs.contentSignature()
-                    if (!sameContent) messages = msgs
+                    val merged = mergeHistoryWithLive(msgs, messages)
+                    val sameContent = messages.contentSignature() == merged.contentSignature()
+                    if (!sameContent) messages = merged
                     sessionStats = stats
                     hasMoreMessages = result.hasMore
                     if (olderMessages.isEmpty()) {
@@ -744,6 +749,19 @@ fun WorkspaceScreen(
         }
     }
 
+    fun upsertStreamMessage(m: MobileMessage) {
+        val i = messages.indexOfFirst { it.id == m.id }
+        if (i >= 0) {
+            updateStreamMessage(m.id) { cur -> m.copy(entrance = cur.entrance) }
+            followIfNearBottom()
+            return
+        }
+        messages = messages.filterNot { pending ->
+            pending.id == "local-pending" && pending.role == "user" && pending.text == m.text
+        }
+        appendStreamMessage(m)
+    }
+
     fun handleStreamChunk(item: SessionStreamClient.Item.Message) {
         val chunk = item.data.optJSONObject("chunk") ?: return
         val type = chunk.optString("type")
@@ -837,7 +855,17 @@ fun WorkspaceScreen(
                         arr.optJSONObject(i)?.optString("text").orEmpty()
                     }
                 }
-                appendStreamMessage(MobileMessage(id = "msg-${item.seq}", role = "user", text = text, time = item.time, type = "text"))
+                val role = if (isContextInjectionText(text)) "context_injection" else "user"
+                upsertStreamMessage(
+                    MobileMessage(
+                        id = "msg-${item.seq}",
+                        role = role,
+                        text = text,
+                        time = item.time,
+                        type = "text",
+                        seq = item.seq.toLong(),
+                    ),
+                )
             }
             "assistant/chunk" -> handleStreamChunk(item)
             "assistant/message" -> {
@@ -959,9 +987,8 @@ fun WorkspaceScreen(
 
     LaunchedEffect(currentSessionId) {
         currentSessionId?.let { DshNotifier.cancelForSession(context, host, it) }
-        if (currentSessionId != null) {
-            // WI-003：会话切换必须清空上一会话的消息/分页/临时加载状态，
-            // 避免旧列表短暂残留或位置继承
+        streamClient?.stop()
+        if (currentSessionId == null) {
             messages = emptyList()
             olderMessages = emptyList()
             hasMoreMessages = false
@@ -969,20 +996,34 @@ fun WorkspaceScreen(
             stoppedReason = null
             liveRunning = false
             seedMaxSeq = 0L
+            sessionStats = null
             toolCallTimes.clear()
             streamToolCallIds.clear()
             showScrollToBottom = false
-            tailRequestId++ // 新数据提交并完成布局后再定位到尾部
-            refreshMessages()
-            refreshModels()
-            // SSE 实时流：订阅事件，增量更新消息列表；会话切换/离开时停止
-            val client = streamClient ?: return@LaunchedEffect
-            client.start()
-            try {
-                for (item in client.items) applyStreamItem(item)
-            } finally {
-                client.stop()
-            }
+            return@LaunchedEffect
+        }
+        // WI-003：会话切换必须清空上一会话的消息/分页/临时加载状态，
+        // 避免旧列表短暂残留或位置继承
+        messages = emptyList()
+        olderMessages = emptyList()
+        hasMoreMessages = false
+        nextBeforeSeq = null
+        stoppedReason = null
+        liveRunning = false
+        seedMaxSeq = 0L
+        toolCallTimes.clear()
+        streamToolCallIds.clear()
+        showScrollToBottom = false
+        tailRequestId++ // 新数据提交并完成布局后再定位到尾部
+        refreshMessages()
+        refreshModels()
+        // SSE 实时流：订阅事件，增量更新消息列表；会话切换/离开时停止
+        val client = streamClient ?: return@LaunchedEffect
+        client.start()
+        try {
+            for (item in client.items) applyStreamItem(item)
+        } finally {
+            client.stop()
         }
     }
 
@@ -1084,13 +1125,6 @@ fun WorkspaceScreen(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                FishLogo,
-                                contentDescription = null,
-                                tint = Dsh.labelPrimary,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(Modifier.width(8.dp))
                             Text(
                                 "DSH Links",
                                 color = Dsh.labelPrimary,
@@ -1112,28 +1146,23 @@ fun WorkspaceScreen(
                         }
                     }
 
-                    // 新建会话按钮
+                    // 新建会话（首条消息时再 createSession，对标 web）
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
                             .height(36.dp)
                             .clip(RoundedCornerShape(DshRadius.md))
-                            .border(1.dp, Dsh.borderL2, RoundedCornerShape(DshRadius.md))
                             .clickable {
-                                scope.launch(Dispatchers.IO) {
-                                    try {
-                                        val newId = client.createSession(agentPreset = appSettings.agentPreset)
-                                        withContext(Dispatchers.Main) {
-                                            currentSessionId = newId
-                                            refreshSessions()
-                                            drawerState.close()
-                                        }
-                                    } catch (e: Exception) {
-                                        withContext(Dispatchers.Main) {
-                                            Toast.makeText(context, "新建会话失败：${e.message ?: "未知错误"}", Toast.LENGTH_SHORT).show()
-                                        }
-                                    }
+                                scope.launch {
+                                    currentSessionId = null
+                                    pendingSessionCwd = null
+                                    messages = emptyList()
+                                    olderMessages = emptyList()
+                                    sessionStats = null
+                                    stoppedReason = null
+                                    liveRunning = false
+                                    drawerState.close()
                                 }
                             },
                         verticalAlignment = Alignment.CenterVertically
@@ -1141,11 +1170,11 @@ fun WorkspaceScreen(
                         Icon(
                             PlusOutline16,
                             contentDescription = null,
-                            tint = Dsh.labelPrimary,
+                            tint = Dsh.brand400,
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(Modifier.width(8.dp))
-                        Text("新建会话", color = Dsh.labelPrimary, fontSize = 14.sp, fontWeight = FontWeight(500), lineHeight = 20.sp)
+                        Text("新建会话", color = Dsh.brand400, fontSize = 14.sp, fontWeight = FontWeight(500), lineHeight = 20.sp)
                     }
 
                     Spacer(Modifier.height(8.dp))
@@ -1157,7 +1186,6 @@ fun WorkspaceScreen(
                             .height(36.dp)
                             .clip(RoundedCornerShape(DshRadius.md))
                             .background(Dsh.bgInput)
-                            .border(1.dp, Dsh.borderL2, RoundedCornerShape(DshRadius.md))
                             .padding(horizontal = 10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -1290,6 +1318,18 @@ fun WorkspaceScreen(
                         if (searchMatchedIds == null) filterCandidates
                         else filterCandidates.filter { it.sessionId in searchMatchedIds }
                     }
+
+                    Spacer(Modifier.height(4.dp))
+
+                    SessionFilterChips(
+                        selected = sessionFilter,
+                        counts = mapOf(
+                            SessionFilter.ALL to filterCandidates.size,
+                            SessionFilter.RUNNING to filterCandidates.count { classifySession(it) == SessionFilter.RUNNING },
+                            SessionFilter.STOPPED to filterCandidates.count { classifySession(it) == SessionFilter.STOPPED },
+                        ),
+                        onSelect = { sessionFilter = it },
+                    )
 
                     // 会话列表（Rows.module.css：32dp 行 / 8dp 圆角 / 状态点槽 / 时间 / 工作区分组）
                     LazyColumn(
@@ -1992,28 +2032,8 @@ fun WorkspaceScreen(
                             mode = heroMode,
                             onModeChange = { heroMode = it },
                             onStartSession = { cwd ->
-                                scope.launch(Dispatchers.IO) {
-                                    try {
-                                        val newId = if (cwd == null) {
-                                            client.createSession(agentPreset = appSettings.agentPreset)
-                                        } else {
-                                            client.createSession(agentPreset = appSettings.agentPreset, cwd = cwd)
-                                        }
-                                        when (heroMode) {
-                                            HeroMode.PLAN -> client.sendPrompt(newId, "/plan 描述你的任务以生成计划")
-                                            HeroMode.GOAL -> client.sendPrompt(newId, "/goal 输入目标，智能体将持续执行")
-                                            HeroMode.CHAT -> {}
-                                        }
-                                        withContext(Dispatchers.Main) {
-                                            currentSessionId = newId
-                                            refreshSessions()
-                                        }
-                                    } catch (e: Exception) {
-                                        withContext(Dispatchers.Main) {
-                                            Toast.makeText(context, "创建会话失败：${e.message ?: "未知错误"}", Toast.LENGTH_SHORT).show()
-                                        }
-                                    }
-                                }
+                                pendingSessionCwd = cwd
+                                if (cwd != null) workspacePrefs.lastSelectedWorkspace = cwd
                             }
                         )
                     } // 闭合 item（HeroShell）
@@ -2176,32 +2196,11 @@ fun WorkspaceScreen(
             if (messages.isEmpty()) {
                 WorkspaceComposerRow(
                     sessions = sessions,
-                    currentCwd = currentSession?.cwd,
+                    currentCwd = pendingSessionCwd ?: currentSession?.cwd,
                     lastCwd = workspacePrefs.lastSelectedWorkspace,
                     onStartSession = { cwd ->
-                        workspacePrefs.lastSelectedWorkspace = cwd
-                        scope.launch(Dispatchers.IO) {
-                            try {
-                                val newId = if (cwd == null) {
-                                    client.createSession(agentPreset = appSettings.agentPreset)
-                                } else {
-                                    client.createSession(agentPreset = appSettings.agentPreset, cwd = cwd)
-                                }
-                                when (heroMode) {
-                                    HeroMode.PLAN -> client.sendPrompt(newId, "/plan 描述你的任务以生成计划")
-                                    HeroMode.GOAL -> client.sendPrompt(newId, "/goal 输入目标，智能体将持续执行")
-                                    HeroMode.CHAT -> {}
-                                }
-                                withContext(Dispatchers.Main) {
-                                    currentSessionId = newId
-                                    refreshSessions()
-                                }
-                            } catch (e: Exception) {
-                                withContext(Dispatchers.Main) {
-                                    Toast.makeText(context, "创建会话失败：${e.message ?: "未知错误"}", Toast.LENGTH_SHORT).show()
-                                }
-                            }
-                        }
+                        pendingSessionCwd = cwd
+                        if (cwd != null) workspacePrefs.lastSelectedWorkspace = cwd
                     }
                 )
             }
@@ -2262,7 +2261,7 @@ fun WorkspaceScreen(
                 onPickImage = { imagePickerLauncher.launch("image/*") },
                 isListening = isListening,
                 isSending = isSending,
-                canSend = (inputText.isNotBlank() || pendingImages.isNotEmpty()) && currentSessionId != null && !isSending,
+                canSend = (inputText.isNotBlank() || pendingImages.isNotEmpty()) && !isSending,
                 running = running,
                 currentModel = modelChipLabel(modelCatalog),
                 sessionStats = sessionStats,
@@ -2304,28 +2303,49 @@ fun WorkspaceScreen(
                 composerFocusRequester = composerFocusRequester,
                 onSend = {
                     val textToSend = inputText.trim()
-                    val sid = currentSessionId
                     val images = pendingImages
-                    if ((textToSend.isNotBlank() || images.isNotEmpty()) && sid != null && !isSending) {
+                    if ((textToSend.isNotBlank() || images.isNotEmpty()) && !isSending) {
                         isSending = true
                         inputText = ""
                         pendingImages = emptyList()
+                        if (textToSend.isNotBlank()) {
+                            messages = messages.filterNot { it.id == "local-pending" }
+                            appendStreamMessage(
+                                MobileMessage(
+                                    id = "local-pending",
+                                    role = "user",
+                                    text = textToSend,
+                                    time = System.currentTimeMillis(),
+                                    type = "text",
+                                ),
+                            )
+                        }
                         scope.launch(Dispatchers.IO) {
                             try {
-                                client.sendPrompt(sid, textToSend, images = images)
+                                var sid = currentSessionId
+                                if (sid == null) {
+                                    sid = client.createSession(
+                                        agentPreset = appSettings.agentPreset,
+                                        cwd = pendingSessionCwd,
+                                    )
+                                    withContext(Dispatchers.Main) {
+                                        currentSessionId = sid
+                                        refreshSessions()
+                                    }
+                                }
+                                client.sendPrompt(sid!!, textToSend, images = images)
                                 withContext(Dispatchers.Main) {
                                     refreshSessions()
-                                    // SSE 活跃时消息经实时流到达（user/message 事件自动滚底）
                                     if (streamClient?.isConnected != true) {
                                         refreshMessages(autoScroll = true)
                                     }
                                 }
                             } catch (e: Exception) {
                                 withContext(Dispatchers.Main) {
+                                    messages = messages.filterNot { it.id == "local-pending" }
                                     Toast.makeText(context, "发送失败：${e.message ?: "未知错误"}", Toast.LENGTH_SHORT).show()
                                 }
-                            }
-                            finally {
+                            } finally {
                                 withContext(Dispatchers.Main) { isSending = false }
                             }
                         }
@@ -2696,15 +2716,6 @@ private fun HeroShell(
             .padding(top = 64.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // logo（DeepSeek 鲸鱼，复刻 webui EmptyHero FishLogo）
-        Icon(
-            FishLogo,
-            contentDescription = null,
-            tint = Dsh.labelPrimary,
-            modifier = Modifier.size(48.dp)
-        )
-        Spacer(Modifier.height(14.dp))
-
         // 口号（DSH hero.headline：探索未至之境 26px/500 + 预览版 badge）
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -3879,7 +3890,7 @@ private fun ApprovalCard(
 // ---------- 上下文计量（DSH ContextMeter：28px 环形 + 用量面板） ----------
 
 @Composable
-private fun ContextMeterButton(stats: MobileSessionStats) {
+private fun ContextMeterButton(stats: MobileSessionStats, running: Boolean = false) {
     var expanded by remember { mutableStateOf(false) }
     val used = stats.contextPressureTokens
     val window = stats.contextWindow
@@ -3897,7 +3908,7 @@ private fun ContextMeterButton(stats: MobileSessionStats) {
         val interaction = remember { MutableInteractionSource() }
         val pressed by interaction.collectIsPressedAsState()
         val borderL3Color = Dsh.borderL3
-        val fillColor = Dsh.labelTertiary
+        val fillColor = if (running) Dsh.labelCaption.copy(alpha = 0.55f) else Dsh.labelTertiary
         Box(
             modifier = Modifier
                 .size(22.dp)
@@ -5182,11 +5193,6 @@ private fun InputBar(
                 .clip(RoundedCornerShape(DshRadius.lg))
                 .background(Dsh.bgInput)
                 .border(1.dp, composerBorderColor, RoundedCornerShape(DshRadius.lg))
-                .then(
-                    if (composerFocused) Modifier.border(
-                        3.dp, Dsh.brand400.copy(alpha = 0.12f), RoundedCornerShape(DshRadius.lg)
-                    ) else Modifier
-                )
                 .padding(top = 6.dp)
                 .onFocusChanged { composerFocused = it.hasFocus }
         ) {
@@ -5235,6 +5241,8 @@ private fun InputBar(
             BasicTextField(
                 value = inputText,
                 onValueChange = onInputChange,
+                keyboardOptions = KeyboardOptions(imeAction = if (canSend) ImeAction.Send else ImeAction.Default),
+                keyboardActions = KeyboardActions(onSend = { if (canSend) onSend() }),
                 textStyle = TextStyle(
                     color = Dsh.labelPrimary,
                     fontSize = 15.sp,
@@ -5384,9 +5392,9 @@ private fun InputBar(
                     Spacer(Modifier.width(8.dp))
                 }
 
-                // 上下文计量（DSH ContextMeter：环形按钮 + 用量弹层；contextPressure 投影可用时显示）
-                if (!running && sessionStats != null && sessionStats.contextWindow > 0) {
-                    ContextMeterButton(stats = sessionStats)
+                // 上下文计量（执行中也显示，running 时环形为浅色脉冲）
+                if (sessionStats != null && sessionStats.contextWindow > 0) {
+                    ContextMeterButton(stats = sessionStats, running = running)
                     Spacer(Modifier.width(8.dp))
                 }
 
@@ -5419,7 +5427,7 @@ private fun InputBar(
                         .clickable(
                             interactionSource = sendInteraction,
                             indication = null,
-                            enabled = canSend || isSending,
+                            enabled = canSend && !isSending,
                             onClick = {
                                 haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
                                 onSend()
@@ -5595,7 +5603,7 @@ fun MessageItem(
 
     Box {
         when {
-            isContextInjectionText(msg.text) -> ContextInjectionRow(msg.text)
+            msg.role == "context_injection" || isContextInjectionText(msg.text) -> ContextInjectionRow(msg.text)
             msg.role == "user" -> UserBubble(msg.text, longPressModifier)
             msg.role == "reasoning" -> ReasoningRow(msg.text, running)
             msg.role == "approval" -> ApprovalCard(
@@ -5619,7 +5627,11 @@ fun MessageItem(
                     // 渲染为可折叠原始 JSON，避免空白/崩溃，便于排查与按需补洞。
                     RawMessageCard(msg)
                 } else {
-                    AssistantMarkdown(msg.text, longPressModifier)
+                    AssistantMarkdown(
+                        text = msg.text,
+                        longPress = longPressModifier,
+                        streaming = msg.running == true,
+                    )
                 }
             }
         }
@@ -6010,6 +6022,9 @@ private fun StoppedBadge(reason: String) {
 @Composable
 private fun ReasoningRow(text: String, running: Boolean = false) {
     var expanded by remember { mutableStateOf(false) }
+    LaunchedEffect(running) {
+        if (running) expanded = true
+    }
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     Box {
@@ -6135,12 +6150,12 @@ private fun UserBubble(text: String, longPress: Modifier = Modifier) {
 }
 
 @Composable
-private fun AssistantMarkdown(text: String, longPress: Modifier = Modifier) {
+private fun AssistantMarkdown(text: String, longPress: Modifier = Modifier, streaming: Boolean = false) {
     Column(
         modifier = longPress.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        MarkdownContent(decodeHtmlEntities(text))
+        MarkdownContent(decodeHtmlEntities(text), streaming = streaming)
     }
 }
 
@@ -6199,10 +6214,17 @@ private data class MarkdownBlock(
 )
 
 @Composable
-private fun MarkdownContent(text: String) {
+private fun MarkdownContent(text: String, streaming: Boolean = false) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val blocks = remember(text) { splitMarkdownBlocks(text) }
-    blocks.forEach { block ->
+    val cursorAlpha = rememberInfiniteTransition(label = "streamCursor").animateFloat(
+        initialValue = 0.25f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(animation = tween(480), repeatMode = RepeatMode.Reverse),
+        label = "cursorAlpha",
+    ).value
+    blocks.forEachIndexed { index, block ->
+        val isLastBlock = index == blocks.lastIndex
         when (block.type) {
             MarkdownBlockType.CODE -> MarkdownCodeBlock(block.lang, block.content)
             MarkdownBlockType.HEADING -> {
@@ -6308,7 +6330,25 @@ private fun MarkdownContent(text: String) {
             }
             MarkdownBlockType.MATH -> LatexDisplayBlock(block.content)
             MarkdownBlockType.EMPTY -> {}
-            else -> InlineMarkdownText(block.content)
+            else -> {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.Top,
+                ) {
+                    Box(modifier = Modifier.weight(1f)) {
+                        InlineMarkdownText(block.content)
+                    }
+                    if (streaming && isLastBlock) {
+                        Spacer(Modifier.width(2.dp))
+                        Box(
+                            modifier = Modifier
+                                .padding(top = 6.dp)
+                                .size(width = 2.dp, height = 16.dp)
+                                .background(Dsh.brand400.copy(alpha = cursorAlpha))
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -6367,6 +6407,7 @@ private fun MarkdownCodeBlock(lang: String?, content: String) {
         }
         val dark = Dsh.isDark
         val highlighted = remember(content, lang, dark) { highlightCode(content.trimEnd(), lang, dark) }
+        val codeScroll = rememberScrollState()
         Text(
             highlighted,
             color = Dsh.labelPrimary,
@@ -6375,6 +6416,7 @@ private fun MarkdownCodeBlock(lang: String?, content: String) {
             lineHeight = 20.sp,
             modifier = Modifier
                 .fillMaxWidth()
+                .horizontalScroll(codeScroll)
                 .padding(horizontal = 16.dp, vertical = 10.dp)
         )
     }

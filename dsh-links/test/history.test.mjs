@@ -37,6 +37,26 @@ function todoWrite(seq, items) {
   return ev(seq, "todo/write", { todos: items })
 }
 
+test("runtime context user message projects as context_injection", () => {
+  const text = "Current runtime context:\n- Host OS: macOS\n- Current DSH file policy: danger-full-access"
+  const { messages } = projectHistoryPage({
+    events: [userMsg(10, text), blockEnd(11, "text", "ok"), assistantMsg(12, "ok", [11])],
+    reasoningBySeq: new Map(),
+    hasMore: false,
+  })
+  assert.equal(messages[0].role, "context_injection")
+  assert.equal(messages[1].role, "assistant")
+})
+
+test("plain user message stays user role", () => {
+  const { messages } = projectHistoryPage({
+    events: [userMsg(10, "测试")],
+    reasoningBySeq: new Map(),
+    hasMore: false,
+  })
+  assert.equal(messages[0].role, "user")
+})
+
 test("尾页只合并本页 seq 窗口内的 reasoning，页外早期 reasoning 不混入", () => {
   // 页窗口 [100, 103]；文件里 reasoning 块 seq=50（早期）与 seq=101（本页）
   const events = [

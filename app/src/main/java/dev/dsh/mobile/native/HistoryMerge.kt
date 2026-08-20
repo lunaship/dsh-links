@@ -30,3 +30,26 @@ fun List<MobileMessage>.contentSignature(): Int = fold(1) { hash, m ->
     x = x * 31 + (m.durationMs?.toInt() ?: 0)
     hash * 31 + x
 }
+
+private const val LOCAL_PENDING_ID = "local-pending"
+
+/** SSE 在途消息与 history 全量刷新合并：保留更长流式文本与 running 态。 */
+fun mergeHistoryWithLive(fresh: List<MobileMessage>, live: List<MobileMessage>): List<MobileMessage> {
+    if (live.isEmpty()) return fresh
+    val liveById = live.associateBy { it.id }
+    val merged = fresh.map { m ->
+        val cur = liveById[m.id] ?: return@map m
+        val text = if (cur.running == true && cur.text.length > m.text.length) cur.text else m.text
+        m.copy(running = cur.running ?: m.running, text = text)
+    }
+    val freshIds = merged.map { it.id }.toSet()
+    val serverUserTexts = merged
+        .filter { it.role == "user" && it.id != LOCAL_PENDING_ID }
+        .map { it.text }
+        .toSet()
+    val pending = live.filter { msg ->
+        msg.id == LOCAL_PENDING_ID && msg.id !in freshIds && msg.text !in serverUserTexts
+    }
+    return merged + pending
+}
+
