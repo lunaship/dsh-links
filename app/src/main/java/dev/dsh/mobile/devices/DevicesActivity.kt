@@ -870,7 +870,7 @@ private fun HStudioPairingPanel(
                     ) {
                         MethodOption(
                             title = "扫码添加",
-                            description = "扫描 Studio 生成的局域网二维码",
+                            description = "扫描电脑端 DSH Links 二维码",
                             icon = Icons.Default.QrCodeScanner,
                             onClick = onScan
                         )
