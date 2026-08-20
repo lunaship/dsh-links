@@ -7,7 +7,13 @@ import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 
-data class Host(val name: String, val baseUrl: String, val token: String, val deviceId: String = "")
+data class Host(
+    val name: String,
+    val baseUrl: String,
+    val token: String,
+    val deviceId: String = "",
+    val certFingerprint: String = "",
+)
 
 object HostStore {
     private const val PREFS = "dsh_hosts"
@@ -62,7 +68,14 @@ object HostStore {
     internal fun hostsToJson(hosts: List<Host>): String {
         val arr = JSONArray()
         for (h in hosts) {
-            arr.put(JSONObject().put("name", h.name).put("baseUrl", h.baseUrl).put("token", h.token).put("deviceId", h.deviceId))
+            arr.put(
+                JSONObject()
+                    .put("name", h.name)
+                    .put("baseUrl", h.baseUrl)
+                    .put("token", h.token)
+                    .put("deviceId", h.deviceId)
+                    .put("certFingerprint", h.certFingerprint),
+            )
         }
         return arr.toString()
     }
@@ -72,7 +85,15 @@ object HostStore {
             val arr = JSONArray(json)
             (0 until arr.length()).map { i ->
                 val o = arr.getJSONObject(i)
-                Host(o.getString("name"), o.getString("baseUrl"), o.getString("token"), o.optString("deviceId"))
+                val rawUrl = o.getString("baseUrl")
+                val url = if (rawUrl.startsWith("http://")) "https://" + rawUrl.removePrefix("http://") else rawUrl
+                Host(
+                    o.getString("name"),
+                    url,
+                    o.getString("token"),
+                    o.optString("deviceId"),
+                    o.optString("certFingerprint"),
+                )
             }
         } catch (e: Exception) {
             emptyList()

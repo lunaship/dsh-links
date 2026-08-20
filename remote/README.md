@@ -1,6 +1,6 @@
 # 远程访问 DeepSeek Harness（Cloudflare Tunnel）
 
-手机 App 目前通过局域网直连（`http://<局域网IP>:18640`）。离开局域网后需要一条
+手机 App 目前通过局域网直连（`https://<局域网IP>:18640`，自签证书 + 指纹固定）。离开局域网后需要一条
 外网通道。本方案用 **Cloudflare Tunnel**（免费、不需要公网 IP、不需要 VPS），
 把 Mac 上 dsh 的 18640 代理端口暴露成自己的 HTTPS 域名。
 
@@ -71,6 +71,5 @@ cloudflared tunnel run dsh                          # 前台跑（验证）
   Cloudflare 对响应流式传输没有短连接那种 100s 限制，15s 心跳足够保活；
   如果实测发现断流，把 `SessionStreamClient` 的读超时调大（当前 60s）或改走
   WebSocket 通道（DSH 原生 `/api/events.mux` + ws-ticket，与 dsh-mobile 同协议）。
-- **清退「非安全上下文」**：`https` 下 WebView/网络层不再有混合内容问题；
-  但 App 内 `usesCleartextTraffic="true"` 同时放行 http/https，不冲突。
+- 清退「非安全上下文」：局域网与隧道都是 https。
 - 划掉 App / 强制停止后 SSE 随之断开（Android 进程级硬边界），重开后自动重连补发。

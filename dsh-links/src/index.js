@@ -6,7 +6,8 @@
  *   2. 在 0.0.0.0:<port> 起一个带 token 校验的手机 API（只服务 App：health / pair / mobile/*）；
  *   3. 配对采用一次性 6 位配对码（默认 10 分钟有效），扫码即自动批准。
  */
-import { createServer, request as httpRequest } from "node:http"
+import { request as httpRequest } from "node:http"
+import { createServer as createHttpsServer } from "node:https"
 import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { homedir, hostname, networkInterfaces } from "node:os"
@@ -19,6 +20,7 @@ import {
   consumePairingCode, ensurePairingCode, hydratePairing, persistablePairing,
   randomToken, revokeDevice, sha256, verifyPairingCode,
 } from "./auth.js"
+import { loadOrCreateTls } from "./tls.js"
 
 export const name = "dsh-links"
 export const inject = ["webServer"]
@@ -145,7 +147,7 @@ function lanUrls(config) {
   for (const list of Object.values(ifaces)) {
     for (const iface of list ?? []) {
       if (iface && iface.family === "IPv4" && !iface.internal && !iface.address.startsWith("198.18.")) {
-        const fullUrl = `http://${iface.address}:${config.port}`
+        const fullUrl = `https://${iface.address}:${config.port}`
         urls.add(fullUrl)
         urlInfos.push({ url: fullUrl, label: iface.address, category: classifyUrl(fullUrl), isRecommended: false })
       }
@@ -163,7 +165,7 @@ function lanUrls(config) {
   return { urls: [...urls], infos: urlInfos }
 }
 
-function pairInfo(config, state) {
+function pairInfo(config, state, certFingerprint) {
   const lan = lanUrls(config)
   return {
     v: 1,
@@ -174,6 +176,7 @@ function pairInfo(config, state) {
     urls: lan.urls,
     infos: lan.infos,
     pairingCode: ensurePairingCode(state, config.pairingTtlSeconds),
+    certFingerprint,
   }
 }
 
@@ -308,9 +311,9 @@ function touchDevice(state, device, file) {
   }
 }
 
-async function qrPng(res, config, state) {
+async function qrPng(res, config, state, certFingerprint) {
   try {
-    const payload = pairInfo(config, state)
+    const payload = pairInfo(config, state, certFingerprint)
     const buf = await QRCode.toBuffer(JSON.stringify(payload), { type: "png", margin: 2, width: 320 })
     res.writeHead(200, { "content-type": "image/png", "cache-control": "no-store" })
     res.end(buf)
@@ -1060,6 +1063,7 @@ export function apply(ctx, config) {
   if (!state.deviceId) state.deviceId = `dsh-${randomBytes(8).toString("hex")}`
   if (!state.devices) state.devices = []
   if (!state.pairing) state.pairing = {}
+  const tlsHolder = { fingerprint: "" }
   // 旧版设备（无 deviceId）一次性迁移：自动补发，手机无需重新配对（token 不变）
   let migrated = false
   for (const d of state.devices) {
@@ -1071,6 +1075,8 @@ export function apply(ctx, config) {
   saveState(stateFile, state)
   if (migrated) ctx.logger.info("dsh-links: 已为旧设备补发 deviceId")
 
+  const fp = () => tlsHolder.fingerprint
+
   // ---------- 主 web 服务上的路由（网页界面「手机连接」面板用；回环同源围栏） ----------
   const disposers = [
     web.register({
@@ -1078,7 +1084,7 @@ export function apply(ctx, config) {
       path: "/dsh-link/pair-info",
       handler: (req, res) => {
         if (!requireLoopbackSameOrigin(req, res)) return
-        json(res, 200, pairInfo(config, state))
+        json(res, 200, pairInfo(config, state, fp()))
       },
     }),
     web.register({
@@ -1086,7 +1092,7 @@ export function apply(ctx, config) {
       path: "/dsh-link/qr.png",
       handler: (req, res) => {
         if (!requireLoopbackSameOrigin(req, res)) return
-        return qrPng(res, config, state)
+        return qrPng(res, config, state, fp())
       },
     }),
     web.register({
@@ -1129,8 +1135,8 @@ export function apply(ctx, config) {
     })
   })
 
-  // ---------- 手机接入代理（0.0.0.0:<port>）：仅 health / pair / mobile/* ----------
-  const proxy = createServer(async (req, res) => {
+  // ---------- 手机接入代理（0.0.0.0:<port> HTTPS）：仅 health / pair / mobile/* ----------
+  const requestHandler = async (req, res) => {
     try {
       const pathname = new URL(req.url ?? "/", "http://x").pathname
       if (pathname === "/dsh-link/health" && req.method === "GET") {
@@ -1189,39 +1195,45 @@ export function apply(ctx, config) {
       if (!res.headersSent) json(res, 500, { error: "proxy error" })
       else res.destroy()
     }
-  })
+  }
 
-  proxy.on("error", (err) => {
-    ctx.logger.warn(`dsh-links: proxy error: ${err?.message ?? err}`)
-  })
-
-  // ---------- SSE 后台事件轮询（所有有活跃连接的会话） ----------
-  const pollTimer = setInterval(() => {
-    for (const sessionId of sessionStreams.keys()) {
-      if ((sessionStreams.get(sessionId)?.size ?? 0) > 0) {
-        pollSession(sessionId, targetPort)
+  let proxy
+  let pollTimer
+  let keepAliveTimer
+  const ready = loadOrCreateTls(ensureStateDir(config)).then((tls) => {
+    tlsHolder.fingerprint = tls.fingerprint
+    proxy = createHttpsServer({ key: tls.key, cert: tls.cert }, requestHandler)
+    proxy.on("error", (err) => {
+      ctx.logger.warn(`dsh-links: proxy error: ${err?.message ?? err}`)
+    })
+    pollTimer = setInterval(() => {
+      for (const sessionId of sessionStreams.keys()) {
+        if ((sessionStreams.get(sessionId)?.size ?? 0) > 0) {
+          pollSession(sessionId, targetPort)
+        }
       }
-    }
-  }, config.eventPollIntervalMs)
-
-  // 心跳：15s 发一次注释帧，防止中间代理断开 idle 连接（App 读超时 60s，两倍余量）
-  const keepAliveTimer = setInterval(() => {
-    for (const [sessionId, writers] of sessionStreams) {
-      writeSse(writers, ": keepalive\n\n")
-      if (writers.size === 0) dropSession(sessionId)
-    }
-  }, 15_000)
-
-  proxy.listen(config.port, "0.0.0.0", () => {
-    ctx.logger.info(`dsh-links: 手机接入代理已启动，端口 ${config.port}（token 校验）`)
-    for (const u of lanUrls(config).urls) ctx.logger.info(`dsh-links: 可访问地址 ${u}`)
+    }, config.eventPollIntervalMs)
+    keepAliveTimer = setInterval(() => {
+      for (const [sessionId, writers] of sessionStreams) {
+        writeSse(writers, ": keepalive\n\n")
+        if (writers.size === 0) dropSession(sessionId)
+      }
+    }, 15_000)
+    return new Promise((resolve, reject) => {
+      proxy.once("error", reject)
+      proxy.listen(config.port, "0.0.0.0", () => {
+        ctx.logger.info(`dsh-links: 手机接入代理已启动，https 端口 ${config.port}（指纹 ${tls.fingerprint.slice(0, 12)}…）`)
+        for (const u of lanUrls(config).urls) ctx.logger.info(`dsh-links: 可访问地址 ${u}`)
+        resolve(tls)
+      })
+    })
   })
 
   ctx.effect(
     () => () => {
       for (const dispose of disposers) dispose()
-      clearInterval(pollTimer)
-      clearInterval(keepAliveTimer)
+      if (pollTimer) clearInterval(pollTimer)
+      if (keepAliveTimer) clearInterval(keepAliveTimer)
       for (const writers of sessionStreams.values()) {
         for (const w of writers) {
           try { w.end() } catch {}
@@ -1230,9 +1242,11 @@ export function apply(ctx, config) {
       sessionStreams.clear()
       lastEventSeqs.clear()
       sessionFiles.clear()
-      proxy.closeAllConnections?.()
-      proxy.close()
+      try { proxy?.closeAllConnections?.() } catch {}
+      try { proxy?.close() } catch {}
     },
     "dsh-links: proxy + routes",
   )
+
+  return ready
 }

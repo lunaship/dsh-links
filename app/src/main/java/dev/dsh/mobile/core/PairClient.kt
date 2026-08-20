@@ -1,24 +1,26 @@
 package dev.dsh.mobile.core
-import dev.dsh.mobile.core.PairClient
 
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
 object PairClient {
-    data class Result(val baseUrl: String, val name: String, val token: String, val deviceId: String = "")
+    data class Result(
+        val baseUrl: String,
+        val name: String,
+        val token: String,
+        val deviceId: String = "",
+        val certFingerprint: String = "",
+    )
 
-    /** 补全协议头：漏填 http:// 时自动补上。 */
-    private fun normalize(baseUrl: String): String {
-        val trimmed = baseUrl.trim()
-        return if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) trimmed
-        else "http://$trimmed"
-    }
+    fun normalize(baseUrl: String): String = PinnedSsl.normalizeUrl(baseUrl)
 
     /** 用一次性配对码向主机换取连接 token（自动批准）。 */
-    fun pair(baseUrl: String, code: String, deviceName: String): Result {
+    fun pair(baseUrl: String, code: String, deviceName: String, certFingerprint: String? = null): Result {
         val normalized = normalize(baseUrl)
+        val pin = certFingerprint?.takeIf { it.isNotBlank() }
         val conn = URL("${normalized.trimEnd('/')}/dsh-link/pair").openConnection() as HttpURLConnection
+        PinnedSsl.apply(conn, pin)
         try {
             conn.connectTimeout = 6000
             conn.readTimeout = 8000
@@ -33,16 +35,19 @@ object PairClient {
                 ?.bufferedReader()?.use { it.readText() } ?: ""
             if (respCode != 200) throw Exception("HTTP $respCode: ${body.take(120)}")
             val o = JSONObject(body)
-            return Result(normalized, o.optString("name", deviceName), o.getString("token"), o.optString("deviceId"))
+            return Result(normalized, o.optString("name", deviceName), o.getString("token"), o.optString("deviceId"), pin.orEmpty())
+        } catch (e: Exception) {
+            throw PinnedSsl.unwrap(e)
         } finally {
             conn.disconnect()
         }
     }
 
     /** 探测主机在线状态，返回延迟毫秒数；不可达返回 null。 */
-    fun health(baseUrl: String): Long? {
+    fun health(baseUrl: String, certFingerprint: String? = null): Long? {
         val start = System.currentTimeMillis()
         val conn = URL("${normalize(baseUrl).trimEnd('/')}/dsh-link/health").openConnection() as HttpURLConnection
+        PinnedSsl.apply(conn, certFingerprint)
         return try {
             conn.connectTimeout = 2500
             conn.readTimeout = 2500

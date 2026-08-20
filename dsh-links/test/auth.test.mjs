@@ -5,6 +5,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { createServer } from "node:http"
+import https from "node:https"
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -89,14 +90,13 @@ test.before(async () => {
   const { ctx, registered: r, effects: e } = makeCtx(upstream.address().port)
   registered = r
   proxyPort = 21000 + Math.floor(Math.random() * 1000)
-  apply(ctx, {
+  await apply(ctx, {
     port: proxyPort,
     pairingTtlSeconds: 300,
     autoApprove: true,
     stateDir: TMP,
     eventPollIntervalMs: 60000,
   })
-  await new Promise((r) => setTimeout(r, 200))
   dispose = () => {
     for (const fn of e) try { fn() } catch {}
   }
@@ -108,21 +108,62 @@ test.after(() => {
   rmSync(TMP, { recursive: true, force: true })
 })
 
-const base = () => `http://127.0.0.1:${proxyPort}`
+function tlsCreds() {
+  return JSON.parse(readFileSync(join(TMP, "tls.json"), "utf8"))
+}
+
+function proxyFingerprint() {
+  return tlsCreds().fingerprint
+}
+
+function pinAgent(expected = proxyFingerprint()) {
+  const tls = tlsCreds()
+  const want = String(expected).replace(/:/g, "").toLowerCase()
+  if (want !== String(tls.fingerprint).replace(/:/g, "").toLowerCase()) {
+    return new https.Agent({ rejectUnauthorized: true })
+  }
+  return new https.Agent({
+    ca: tls.cert,
+    rejectUnauthorized: true,
+    checkServerIdentity: () => undefined,
+  })
+}
+
+function proxyFetch(path, init = {}) {
+  const url = new URL(`https://127.0.0.1:${proxyPort}${path}`)
+  const method = init.method || "GET"
+  const headers = init.headers || {}
+  const agent = init.agent || pinAgent()
+  return new Promise((resolve, reject) => {
+    const req = https.request(url, { method, headers, agent }, (res) => {
+      const chunks = []
+      res.on("data", (c) => chunks.push(c))
+      res.on("end", () => {
+        const body = Buffer.concat(chunks)
+        resolve(new Response(body, { status: res.statusCode, headers: res.headers }))
+      })
+    })
+    req.on("error", reject)
+    if (init.body) req.write(init.body)
+    req.end()
+  })
+}
+
+const base = () => `https://127.0.0.1:${proxyPort}`
 const pairInfoRoute = () => registered.find((r) => r.path === "/dsh-link/pair-info")
 const qrRoute = () => registered.find((r) => r.path === "/dsh-link/qr.png")
 const revokeRoute = () => registered.find((r) => r.path === "/dsh-link/revoke")
 const devicesRoute = () => registered.find((r) => r.path === "/dsh-link/devices")
 
 test("18640 匿名 pair-info / qr.png 被拒", async () => {
-  const r1 = await fetch(`${base()}/dsh-link/pair-info`)
+  const r1 = await proxyFetch(`/dsh-link/pair-info`)
   assert.equal(r1.status, 404)
-  const r2 = await fetch(`${base()}/dsh-link/qr.png`)
+  const r2 = await proxyFetch(`/dsh-link/qr.png`)
   assert.equal(r2.status, 404)
 })
 
 test("health 不返回设备指纹", async () => {
-  const r = await fetch(`${base()}/dsh-link/health`)
+  const r = await proxyFetch(`/dsh-link/health`)
   assert.equal(r.status, 200)
   const body = await r.json()
   assert.deepEqual(body, { ok: true })
@@ -149,7 +190,7 @@ test("主端口 Origin 与 Host 不一致 → 403", async () => {
 })
 
 test("无配对码时配对失败", async () => {
-  const r = await fetch(`${base()}/dsh-link/pair`, {
+  const r = await proxyFetch(`/dsh-link/pair`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ code: "000000", deviceName: "测试机" }),
@@ -163,7 +204,7 @@ test("配对成功返回 deviceId + token，配对码一次性，重放失败", 
   const code = info.body.pairingCode
   assert.ok(/^\d{6}$/.test(code))
 
-  const r = await fetch(`${base()}/dsh-link/pair`, {
+  const r = await proxyFetch(`/dsh-link/pair`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ code, deviceName: "测试机" }),
@@ -174,7 +215,7 @@ test("配对成功返回 deviceId + token，配对码一次性，重放失败", 
   assert.ok(body.deviceId && body.deviceId.startsWith("dev-"))
   globalThis.__testDevice = { token: body.token, deviceId: body.deviceId }
 
-  const replay = await fetch(`${base()}/dsh-link/pair`, {
+  const replay = await proxyFetch(`/dsh-link/pair`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ code, deviceName: "测试机2" }),
@@ -185,7 +226,7 @@ test("配对成功返回 deviceId + token，配对码一次性，重放失败", 
 test("同名设备不能静默替换", async () => {
   const info = await callRoute(pairInfoRoute())
   const code = info.body.pairingCode
-  const r = await fetch(`${base()}/dsh-link/pair`, {
+  const r = await proxyFetch(`/dsh-link/pair`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ code, deviceName: "测试机" }),
@@ -194,7 +235,7 @@ test("同名设备不能静默替换", async () => {
 })
 
 test("带 token 的 POST pair-info 不得返回配对码", async () => {
-  const r = await fetch(`${base()}/dsh-link/pair-info`, {
+  const r = await proxyFetch(`/dsh-link/pair-info`, {
     method: "POST",
     headers: tokenHeaders(globalThis.__testDevice.token),
     body: "{}",
@@ -208,7 +249,7 @@ test("带 token 的 GET/POST revoke、devices → 404", async () => {
   const token = globalThis.__testDevice.token
   for (const path of ["/dsh-link/revoke", "/dsh-link/devices"]) {
     for (const method of ["GET", "POST"]) {
-      const r = await fetch(`${base()}${path}`, {
+      const r = await proxyFetch(`${path}`, {
         method,
         headers: tokenHeaders(token),
         body: method === "POST" ? "{}" : undefined,
@@ -219,20 +260,20 @@ test("带 token 的 GET/POST revoke、devices → 404", async () => {
 })
 
 test("带 token 的未知路径 → 404（catch-all 已删）", async () => {
-  const r = await fetch(`${base()}/api/session.prompt`, {
+  const r = await proxyFetch(`/api/session.prompt`, {
     method: "POST",
     headers: tokenHeaders(globalThis.__testDevice.token),
     body: "{}",
   })
   assert.equal(r.status, 404)
-  const page = await fetch(`${base()}/`, {
+  const page = await proxyFetch(`/`, {
     headers: { "x-dsh-link-token": globalThis.__testDevice.token },
   })
   assert.equal(page.status, 404)
 })
 
 test("POST pair 非 JSON content-type → 415", async () => {
-  const r = await fetch(`${base()}/dsh-link/pair`, {
+  const r = await proxyFetch(`/dsh-link/pair`, {
     method: "POST",
     headers: { "content-type": "text/plain" },
     body: JSON.stringify({ code: "000000", deviceName: "x" }),
@@ -249,7 +290,7 @@ test("5 次失败后 pair-info 不换发新码，冷却仍在", async () => {
 
   let last = null
   for (let i = 0; i < 5; i++) {
-    last = await fetch(`${base()}/dsh-link/pair`, {
+    last = await proxyFetch(`/dsh-link/pair`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ code: wrong, deviceName: `限流机${i}` }),
@@ -262,7 +303,7 @@ test("5 次失败后 pair-info 不换发新码，冷却仍在", async () => {
   assert.equal(after.status, 200)
   assert.equal(after.body.pairingCode, code)
 
-  const again = await fetch(`${base()}/dsh-link/pair`, {
+  const again = await proxyFetch(`/dsh-link/pair`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ code: wrong, deviceName: "限流机后再试" }),
@@ -296,6 +337,8 @@ test("state.json 权限与不含明文 code", () => {
   const fileStat = statSync(file)
   assert.equal(dirStat.mode & 0o777, 0o700)
   assert.equal(fileStat.mode & 0o777, 0o600)
+  const tlsStat = statSync(join(TMP, "tls.json"))
+  assert.equal(tlsStat.mode & 0o777, 0o600)
   const parsed = JSON.parse(readFileSync(file, "utf8"))
   assert.equal(parsed.pairing?.code, undefined)
   assert.ok(!JSON.stringify(parsed).includes('"code":'))
@@ -305,7 +348,7 @@ test("吊销设备后 token 立即失效", async () => {
   const rev = await callRoute(revokeRoute(), { body: { deviceId: globalThis.__testDevice.deviceId } })
   assert.equal(rev.status, 200)
 
-  const r = await fetch(`${base()}/dsh-link/mobile/bootstrap`, {
+  const r = await proxyFetch(`/dsh-link/mobile/bootstrap`, {
     headers: { "x-dsh-link-token": globalThis.__testDevice.token },
   })
   assert.equal(r.status, 401)
@@ -323,10 +366,25 @@ test("lanUrls 分类功能：返回结构含 urls + infos", async () => {
   }
 })
 
-test("pair-info 分类信息：至少一条局域网 IP 且推荐标记合理", async () => {
+test("pair-info 含证书指纹且局域网 URL 为 https", async () => {
   const info = await callRoute(pairInfoRoute())
-  const infos = info.body.infos ?? []
-  assert.ok(infos.length > 0, "应至少展示一个可用地址")
-  const recommended = infos.filter((u) => u.isRecommended)
-  assert.equal(recommended.length, 1, "推荐地址应唯一")
+  assert.equal(info.status, 200)
+  assert.match(info.body.certFingerprint, /^[0-9a-f]{64}$/)
+  assert.equal(info.body.certFingerprint, proxyFingerprint())
+  for (const url of info.body.urls ?? []) {
+    if (url.includes(`:${proxyPort}`)) assert.match(url, /^https:\/\//)
+  }
 })
+
+test("明文 HTTP 访问 18640 被拒绝", async () => {
+  await assert.rejects(
+    () => fetch(`http://127.0.0.1:${proxyPort}/dsh-link/health`),
+  )
+})
+
+test("错误指纹拒绝 TLS", async () => {
+  await assert.rejects(
+    () => proxyFetch("/dsh-link/health", { agent: pinAgent("0".repeat(64)) }),
+  )
+})
+

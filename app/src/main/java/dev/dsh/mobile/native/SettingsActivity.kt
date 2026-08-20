@@ -2,6 +2,7 @@ package dev.dsh.mobile.native
 import dev.dsh.mobile.core.persist
 import dev.dsh.mobile.core.Dsh
 import dev.dsh.mobile.core.Host
+import dev.dsh.mobile.core.PinnedSsl
 import dev.dsh.mobile.core.ThemeManager
 import dev.dsh.mobile.native.MobileSession
 import dev.dsh.mobile.native.AppSettings
@@ -192,10 +193,10 @@ private fun SettingsScreen(
             withContext(Dispatchers.IO) {
                 try {
                     val conn = java.net.URL(host.baseUrl.trimEnd('/') + "/dsh-link/mobile/llm-models").openConnection() as java.net.HttpURLConnection
+                    PinnedSsl.apply(conn, host.certFingerprint)
                     conn.connectTimeout = 8000
                     conn.readTimeout = 10000
                     conn.setRequestProperty("x-dsh-link-token", host.token)
-                    conn.setRequestProperty("Cookie", "dsh_link_token=" + host.token)
                     val root = org.json.JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
                     val arr = root.optJSONArray("groups") ?: org.json.JSONArray()
                     val groups = (0 until arr.length()).map { i ->

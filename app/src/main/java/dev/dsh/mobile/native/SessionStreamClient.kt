@@ -1,5 +1,6 @@
 package dev.dsh.mobile.native
 import dev.dsh.mobile.core.Host
+import dev.dsh.mobile.core.PinnedSsl
 
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -88,8 +89,7 @@ class SessionStreamClient(
                 requestMethod = "GET"; connectTimeout = 8_000; readTimeout = 60_000; useCaches = false
                 setRequestProperty("Accept", "text/event-stream")
                 setRequestProperty("x-dsh-link-token", host.token)
-                setRequestProperty("Cookie", "dsh_link_token=" + host.token)
-            }
+            }.also { PinnedSsl.apply(it, host.certFingerprint) }
         } catch (e: Exception) { return ConnectResult(false, classifyFailure(e)) }
         return try {
             val code = connection.responseCode

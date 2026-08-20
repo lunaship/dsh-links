@@ -1,5 +1,6 @@
 package dev.dsh.mobile.native
 import dev.dsh.mobile.core.Host
+import dev.dsh.mobile.core.PinnedSsl
 import dev.dsh.mobile.native.MobileSession
 import dev.dsh.mobile.native.MobileMessage
 import dev.dsh.mobile.native.AppSettings
@@ -461,12 +462,12 @@ class MobileApiClient(private val host: Host) {
             useCaches = false
             setRequestProperty("Accept", "application/json")
             setRequestProperty("x-dsh-link-token", host.token)
-            setRequestProperty("Cookie", "dsh_link_token=" + host.token)
             if (body != null) {
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json")
             }
         }
+        PinnedSsl.apply(connection, host.certFingerprint)
         try {
             if (body != null) connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
             val code = connection.responseCode

@@ -9,6 +9,7 @@ import dev.dsh.mobile.core.DeviceName
 import dev.dsh.mobile.core.DshTheme
 import dev.dsh.mobile.core.HostStore
 import dev.dsh.mobile.core.PairClient
+import dev.dsh.mobile.core.PinnedSsl
 
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
@@ -83,7 +84,7 @@ class DevicesActivity : ComponentActivity() {
                     onSelectHost = { host, onDone ->
                         // 连接中 → 健康检查通过后进入工作台（保留本页，返回时可回设备列表）
                         Thread {
-                            val ok = PairClient.health(host.baseUrl) != null
+                            val ok = PairClient.health(host.baseUrl, host.certFingerprint) != null
                             runOnUiThread {
                                 onDone(ok)
                                 if (ok) {
@@ -98,18 +99,19 @@ class DevicesActivity : ComponentActivity() {
                     onScanClick = {
                         startActivity(Intent(this, ScanActivity::class.java))
                     },
-                    onManualPair = { name, url, code, onSuccess, onError ->
+                    onManualPair = { name, url, code, fingerprint, onSuccess, onError ->
                         Thread {
                             try {
-                                val r = PairClient.pair(url, code, DeviceName.of(this))
-                                val newHost = Host(name.ifBlank { r.name }, r.baseUrl, r.token, r.deviceId)
+                                val r = PairClient.pair(url, code, DeviceName.of(this), fingerprint)
+                                val newHost = Host(name.ifBlank { r.name }, r.baseUrl, r.token, r.deviceId, r.certFingerprint)
                                 HostStore.upsert(this, newHost)
                                 runOnUiThread {
                                     onSuccess(newHost)
                                     Toast.makeText(this, "设备连接成功", Toast.LENGTH_SHORT).show()
                                 }
                             } catch (e: Exception) {
-                                runOnUiThread { onError(e.message ?: "连接失败，请检查地址或配对码") }
+                                val unwrapped = PinnedSsl.unwrap(e)
+                                runOnUiThread { onError(unwrapped.message ?: "连接失败，请检查地址或配对码") }
                             }
                         }.start()
                     }
@@ -228,7 +230,7 @@ private data class DeviceUi(
 fun DevicesScreen(
     onSelectHost: (Host, (Boolean) -> Unit) -> Unit,
     onScanClick: () -> Unit,
-    onManualPair: (name: String, url: String, code: String, onSuccess: (Host) -> Unit, onError: (String) -> Unit) -> Unit,
+    onManualPair: (name: String, url: String, code: String, fingerprint: String?, onSuccess: (Host) -> Unit, onError: (String) -> Unit) -> Unit,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var devices by remember { mutableStateOf(emptyList<DeviceUi>()) }
@@ -247,7 +249,7 @@ fun DevicesScreen(
             val results = mutableMapOf<String, DeviceUi>()
             withContext(Dispatchers.IO) {
                 list.forEach { d ->
-                    val ms = PairClient.health(d.host.baseUrl)
+                    val ms = PairClient.health(d.host.baseUrl, d.host.certFingerprint)
                     results[d.host.baseUrl] = d.copy(
                         state = if (ms != null) DeviceState.ONLINE else DeviceState.OFFLINE,
                         latencyMs = ms
@@ -780,7 +782,7 @@ private fun EmptyDevicesState(onAdd: () -> Unit) {
 private fun HStudioPairingPanel(
     onDismiss: () -> Unit,
     onScan: () -> Unit,
-    onManualPair: (name: String, url: String, code: String, onSuccess: (Host) -> Unit, onError: (String) -> Unit) -> Unit,
+    onManualPair: (name: String, url: String, code: String, fingerprint: String?, onSuccess: (Host) -> Unit, onError: (String) -> Unit) -> Unit,
 ) {
     var mode by remember { mutableStateOf<PairingMode>(PairingMode.CHOOSE) }
 
@@ -859,8 +861,8 @@ private fun HStudioPairingPanel(
 
                 PairingMode.MANUAL -> {
                     ManualPairForm(
-                        onPair = { name, url, code, onSuccess, onError ->
-                            onManualPair(name, url, code, { host ->
+                        onPair = { name, url, code, fingerprint, onSuccess, onError ->
+                            onManualPair(name, url, code, fingerprint, { host ->
                                 onSuccess(host)
                                 onDismiss()
                             }, onError)
@@ -916,7 +918,7 @@ private fun MethodOption(
 
 @Composable
 private fun ManualPairForm(
-    onPair: (name: String, url: String, code: String, onSuccess: (Host) -> Unit, onError: (String) -> Unit) -> Unit,
+    onPair: (name: String, url: String, code: String, fingerprint: String?, onSuccess: (Host) -> Unit, onError: (String) -> Unit) -> Unit,
     onBack: () -> Unit,
 ) {
     var name by remember { mutableStateOf("") }
@@ -924,6 +926,73 @@ private fun ManualPairForm(
     var code by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(false) }
+    var tofuFingerprint by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+
+    fun submit(fingerprint: String?) {
+        loading = true
+        error = null
+        onPair(name.trim(), url.trim(), code.trim(), fingerprint, { _ ->
+            loading = false
+        }) { msg ->
+            loading = false
+            error = msg
+        }
+    }
+
+    if (tofuFingerprint != null) {
+        Dialog(
+            onDismissRequest = { if (!loading) tofuFingerprint = null },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(HStudio.overlay)
+                    .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {
+                        if (!loading) tofuFingerprint = null
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    modifier = Modifier
+                        .widthIn(max = 360.dp)
+                        .fillMaxWidth(0.9f)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(HStudio.bgCard)
+                        .border(1.dp, HStudio.border, RoundedCornerShape(14.dp))
+                        .padding(18.dp)
+                ) {
+                    Text("核对主机证书", color = HStudio.textPrimary, fontSize = 15.sp, fontWeight = FontWeight(650))
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "请对照电脑端「手机连接」面板上的 TLS 指纹。不一致则可能正在被拦截，不要继续。",
+                        color = HStudio.textMuted,
+                        fontSize = 11.sp,
+                        lineHeight = 17.sp,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        PinnedSsl.formatFingerprint(tofuFingerprint!!),
+                        color = HStudio.textPrimary,
+                        fontSize = 12.sp,
+                        fontFamily = FontFamily.Monospace,
+                        lineHeight = 18.sp,
+                    )
+                    Spacer(Modifier.height(16.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        ConfirmButton("取消", false, onClick = { tofuFingerprint = null })
+                        Spacer(Modifier.width(8.dp))
+                        ConfirmButton("指纹一致，连接", true, onClick = {
+                            val fp = tofuFingerprint
+                            tofuFingerprint = null
+                            submit(fp)
+                        })
+                    }
+                }
+            }
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -939,7 +1008,7 @@ private fun ManualPairForm(
         )
         PairingField(
             label = "设备连接",
-            placeholder = "http://192.168.1.10:18640",
+            placeholder = "192.168.1.10:18640",
             value = url,
             onValueChange = { url = it },
             monospace = true,
@@ -956,7 +1025,6 @@ private fun ManualPairForm(
             Text(error!!, color = HStudio.error, fontSize = 10.sp, lineHeight = 14.sp)
         }
 
-        // 提交按钮
         val angle = rememberMotionSpin(750, label = "spinAngle")
         Box(
             modifier = Modifier
@@ -975,11 +1043,19 @@ private fun ManualPairForm(
                         }
                         loading = true
                         error = null
-                        onPair(name.trim(), cleanUrl, cleanCode, { _ ->
-                            loading = false
-                        }) { msg ->
-                            loading = false
-                            error = msg
+                        if (!PinnedSsl.shouldPin(cleanUrl)) {
+                            submit(null)
+                            return@clickable
+                        }
+                        scope.launch {
+                            try {
+                                val fp = withContext(Dispatchers.IO) { PinnedSsl.peekFingerprint(cleanUrl) }
+                                loading = false
+                                tofuFingerprint = fp
+                            } catch (e: Exception) {
+                                loading = false
+                                error = PinnedSsl.unwrap(e).message ?: "无法读取主机证书"
+                            }
                         }
                     }
                 ),
@@ -996,7 +1072,6 @@ private fun ManualPairForm(
                 Text("连接设备", color = HStudio.onAccent, fontSize = 13.sp, fontWeight = FontWeight(600))
             }
         }
-        // 返回选择方式
         Box(
             modifier = Modifier
                 .align(Alignment.CenterHorizontally)

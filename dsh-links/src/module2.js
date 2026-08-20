@@ -13,6 +13,20 @@ const createPanelModule = (require) => {
   const React = require('react')
   const { jsx, jsxs } = require('react/jsx-runtime')
 
+  function formatFingerprint(fp) {
+    const hex = String(fp || '').replace(/[^0-9a-f]/gi, '').toLowerCase()
+    if (hex.length !== 64) return fp || ''
+    return hex.match(/.{1,4}/g).join(' ')
+  }
+
+  function FingerprintBlock(info) {
+    if (!info?.certFingerprint) return null
+    return jsxs(React.Fragment, { children: [
+      jsx('div', { className: 'dshlink-sub', children: 'TLS 指纹（手动添加时请与手机核对）' }),
+      jsx('div', { className: 'dshlink-fp', children: formatFingerprint(info.certFingerprint) }),
+    ] })
+  }
+
   const STYLE = `
     /* ====== 面板样式 ====== */
     .dshlink-backdrop {
@@ -58,6 +72,13 @@ const createPanelModule = (require) => {
     .dshlink-qr {
       display: block; width: 220px; height: 220px;
       margin: 12px auto; border-radius: 10px;
+    }
+    .dshlink-fp {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px; letter-spacing: 0.04em;
+      word-break: break-all;
+      background: var(--dsw-alias-bg-layer-1, #f0f0f0);
+      border-radius: 8px; padding: 8px 10px; margin: 8px 0;
     }
     .dshlink-urls {
       font-size: 11px; color: var(--dshlink-secondary); white-space: pre-line;
@@ -268,6 +289,7 @@ const createPanelModule = (require) => {
                             children: [
                               jsx('div', { className: 'dshlink-sub', children: '用 dsh 手机 App 扫码，即可从手机访问本机' }),
                               jsx('div', { className: 'dshlink-code', children: info.pairingCode }),
+                              FingerprintBlock(info),
                               jsx('div', { className: 'dshlink-sub', children: '配对码 10 分钟内有效，扫码自动批准' }),
                               jsx('img', { className: 'dshlink-qr', src: '/dsh-link/qr.png', alt: '配对二维码' }),
 (info.infos ?? info.urls?.map((u) => ({ url: u, label: u, category: "other", isRecommended: false })) ?? []).length
@@ -393,6 +415,7 @@ const createPanelModule = (require) => {
                       jsxs('div', { className: 'dshlink-card', children: [
                         jsx('img', { className: 'dshlink-qr', src: '/dsh-link/qr.png', alt: '配对二维码' }),
                         jsx('div', { className: 'dshlink-code', children: info.pairingCode }),
+                        FingerprintBlock(info),
                         jsx('p', { className: 'dshlink-hint', children: '配对码 10 分钟内有效，扫码自动批准' }),
                       ]}),
                       (info.infos ?? info.urls?.map((u) => ({ url: u, label: u, category: "other", isRecommended: false })) ?? []).length

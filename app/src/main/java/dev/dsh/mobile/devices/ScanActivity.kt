@@ -5,6 +5,7 @@ import dev.dsh.mobile.core.Host
 import dev.dsh.mobile.core.DeviceName
 import dev.dsh.mobile.core.HostStore
 import dev.dsh.mobile.core.PairClient
+import dev.dsh.mobile.core.PinnedSsl
 
 import android.Manifest
 import android.content.pm.PackageManager
@@ -82,21 +83,28 @@ class ScanActivity : AppCompatActivity() {
                 scanFailed("二维码内容不完整")
                 return
             }
+            val qrFp = payload.optString("certFingerprint").trim()
             executor.execute {
                 var lastError = "所有地址都无法连接"
                 for (u in urls) {
                     try {
-                        val r = PairClient.pair(u, code, DeviceName.of(this))
+                        val pin = qrFp.takeIf { it.isNotBlank() && PinnedSsl.shouldPin(u) }
+                        val r = try {
+                            PairClient.pair(u, code, DeviceName.of(this), pin)
+                        } catch (e: PinnedSsl.CertChangedException) {
+                            if (PinnedSsl.shouldPin(u)) throw e
+                            PairClient.pair(u, code, DeviceName.of(this), null)
+                        }
                         runOnUiThread {
-                            HostStore.upsert(this, Host(fallbackName, r.baseUrl, r.token, r.deviceId))
+                            HostStore.upsert(this, Host(fallbackName, r.baseUrl, r.token, r.deviceId, r.certFingerprint))
                             Toast.makeText(this, "已连接 $fallbackName", Toast.LENGTH_SHORT).show()
                             startActivity(android.content.Intent(this@ScanActivity, WorkspaceActivity::class.java).putExtra("hostBaseUrl", r.baseUrl))
                             finish()
                         }
                         return@execute
                     } catch (e: Exception) {
-                        // 记录具体哪个地址、什么原因失败，便于排查网络问题
-                        lastError = "$u: ${e.message ?: e.javaClass.simpleName}"
+                        val unwrapped = PinnedSsl.unwrap(e)
+                        lastError = "$u: ${unwrapped.message ?: unwrapped.javaClass.simpleName}"
                     }
                 }
                 val msg = lastError

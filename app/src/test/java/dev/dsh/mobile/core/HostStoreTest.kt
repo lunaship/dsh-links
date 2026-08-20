@@ -9,7 +9,7 @@ class HostStoreTest {
     @Test
     fun `json 序列化往返一致`() {
         val hosts = listOf(
-            Host("书房", "http://10.0.0.2:18640", "tok-1", "dev-abc"),
+            Host("书房", "https://10.0.0.2:18640", "tok-1", "dev-abc", "aabbcc"),
             Host("办公室", "https://dsh.example.com", "tok-2"),
         )
         val json = HostStore.hostsToJson(hosts)
@@ -23,6 +23,8 @@ class HostStoreTest {
         val parsed = HostStore.hostsFromJson(legacy)
         assertEquals("", parsed[0].deviceId)
         assertEquals("老设备", parsed[0].name)
+        assertEquals("https://1:18640", parsed[0].baseUrl)
+        assertEquals("", parsed[0].certFingerprint)
     }
 
     @Test
