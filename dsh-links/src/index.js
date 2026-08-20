@@ -425,40 +425,6 @@ async function readSessionReasoning(targetPort, sessionId) {
   }
 }
 
-/** 向 DSH 主进程投递审批响应（与 Web 端 POST /api/respond 同协议）。 */
-function postRespond(targetPort, message) {
-  return new Promise((resolve, reject) => {
-    const body = Buffer.from(JSON.stringify(message))
-    const request = httpRequest(
-      {
-        host: "127.0.0.1",
-        port: targetPort,
-        method: "POST",
-        path: "/api/respond",
-        headers: {
-          host: "127.0.0.1:" + targetPort,
-          origin: "http://127.0.0.1:" + targetPort,
-          "content-type": "application/json",
-          "content-length": String(body.length),
-        },
-      },
-      (response) => {
-        const chunks = []
-        response.on("data", (chunk) => chunks.push(chunk))
-        response.on("end", () => {
-          try {
-            resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")))
-          } catch (error) {
-            reject(error)
-          }
-        })
-      },
-    )
-    request.on("error", reject)
-    request.end(body)
-  })
-}
-
 function mapModelGroups(groups) {
   return (groups ?? []).map((g) => ({
     provider: g.id || g.provider || g.name || "未知",
@@ -946,21 +912,12 @@ async function handleMobileApi(req, res, targetPort, state, device, pathname) {
       if (!approvalId || !["allowed-once", "rejected"].includes(outcome)) {
         return json(res, 400, { error: "缺少 approvalId 或 outcome 无效" })
       }
-      // 插件已接管 approval/request waterfall：直接 resolve 挂起的审批
-      const resolver = pendingApprovals.get(approvalId)
-      if (resolver) {
-        pendingApprovals.delete(approvalId)
-        resolver(outcome)
-        return json(res, 200, { ok: true, accepted: true, handledBy: "plugin" })
+      const pending = pendingApprovals.get(approvalId)
+      if (!pending) {
+        return json(res, 409, { ok: false, accepted: false, error: "审批已结束或不存在" })
       }
-      // 兜底：走 /api/respond（Web 端会话在线的场景）
-      const message = {
-        type: "client-response",
-        rpcId: approvalId,
-        result: { ok: true, value: { sessionId, approvalId, outcome } },
-      }
-      const receipt = await postRespond(targetPort, message)
-      return json(res, 200, { ok: true, accepted: Boolean(receipt?.accepted), reason: receipt?.reason ?? null })
+      pending.settle(outcome)
+      return json(res, 200, { ok: true, accepted: true, handledBy: "plugin" })
     }
 
     const historyMatch = pathname.match(/^\/dsh-link\/mobile\/sessions\/([^/]+)\/history$/)
@@ -1051,8 +1008,28 @@ async function handleMobileApi(req, res, targetPort, state, device, pathname) {
 
 const PANEL_ONLY_PATHS = new Set(["/dsh-link/pair-info", "/dsh-link/qr.png", "/dsh-link/revoke", "/dsh-link/devices"])
 
-// 审批接管：挂起 approval/request waterfall，由移动端 HTTP 接口 resolve
-const pendingApprovals = new Map() // approvalId → resolve(outcome)
+const APPROVAL_OUTCOMES = new Set(["allowed-once", "rejected", "cancelled", "unavailable"])
+const APPROVAL_TIMEOUT_MS = 5 * 60 * 1000
+
+// approvalId → { settle(outcome) }；依赖 dsh 内部 waterfall「approval/request」两参签名，升级时复查
+const pendingApprovals = new Map()
+
+function findApprovalId(req) {
+  const events = req?.agent?.session?.events
+  if (Array.isArray(events)) {
+    const decided = new Set()
+    for (let i = events.length - 1; i >= 0; i--) {
+      const event = events[i]
+      if (event?.type === "approval/decided") decided.add(event.data?.id)
+      else if (event?.type === "approval/asked") {
+        if (decided.has(event.data?.id)) continue
+        if ((req.callId ?? null) !== (event.data?.callId ?? null)) continue
+        return event.data.id
+      }
+    }
+  }
+  return req?.id ?? req?.approvalId ?? req?.payload?.id ?? null
+}
 
 export function apply(ctx, config) {
   const web = ctx.get("webServer")
@@ -1125,13 +1102,31 @@ export function apply(ctx, config) {
     }),
   ]
 
-  // 接管 approval/request waterfall：返回挂起 Promise，等移动端响应
-  ctx.on("waterfall", (target, name, payload, next) => {
-    if (name !== "approval/request") return next()
-    const id = payload?.payload?.id ?? payload?.id
+  /**
+   * 接管 approval/request waterfall（dsh 内部 API：事件名是「approval/request」，
+   * 签名是 (req, next)，不是元事件 "waterfall"）。无手机 SSE 时必须 next()，
+   * 否则会把桌面审批一并挂死。
+   */
+  ctx.on("approval/request", (req, next) => {
+    if (req?.signal?.aborted === true) return Promise.resolve("cancelled")
+    const sessionId = req?.agent?.session?.id
+    const writers = sessionId ? sessionStreams.get(sessionId) : null
+    if (!writers || writers.size === 0) return next()
+    const id = findApprovalId(req)
     if (!id) return next()
     return new Promise((resolve) => {
-      pendingApprovals.set(id, resolve)
+      const settle = (outcome) => {
+        const rec = pendingApprovals.get(id)
+        if (!rec) return
+        pendingApprovals.delete(id)
+        if (rec.timer) clearTimeout(rec.timer)
+        try { req.signal?.removeEventListener("abort", rec.onAbort) } catch {}
+        resolve(APPROVAL_OUTCOMES.has(outcome) ? outcome : "unavailable")
+      }
+      const onAbort = () => settle("cancelled")
+      const timer = setTimeout(() => settle("unavailable"), APPROVAL_TIMEOUT_MS)
+      pendingApprovals.set(id, { settle, timer, onAbort })
+      req.signal?.addEventListener("abort", onAbort, { once: true })
     })
   })
 
@@ -1166,7 +1161,7 @@ export function apply(ctx, config) {
           const PRESET_SPECS = {
             "read-only": { sandbox: "read-only", approval: "ask" },
             "workspace-write": { sandbox: "workspace-write", approval: "ask" },
-            "danger-full-access": { sandbox: "danger-full-access", approval: "never" },
+            "danger-full-access": { sandbox: "danger-full-access", approval: "never" }, // dsh: never=需审批的操作自动拒绝；是否符合「Full access」需真机核对
           }
           const spec = PRESET_SPECS[preset]
           if (!spec) return json(res, 400, { error: "preset 无效" })
@@ -1242,6 +1237,10 @@ export function apply(ctx, config) {
       sessionStreams.clear()
       lastEventSeqs.clear()
       sessionFiles.clear()
+      for (const rec of pendingApprovals.values()) {
+        try { rec.settle("cancelled") } catch {}
+      }
+      pendingApprovals.clear()
       try { proxy?.closeAllConnections?.() } catch {}
       try { proxy?.close() } catch {}
     },

@@ -1944,17 +1944,20 @@ fun WorkspaceScreen(
                                         } else {
                                             client.createSession(agentPreset = appSettings.agentPreset, cwd = cwd)
                                         }
+                                        when (heroMode) {
+                                            HeroMode.PLAN -> client.sendPrompt(newId, "/plan 描述你的任务以生成计划")
+                                            HeroMode.GOAL -> client.sendPrompt(newId, "/goal 输入目标，智能体将持续执行")
+                                            HeroMode.CHAT -> {}
+                                        }
                                         withContext(Dispatchers.Main) {
                                             currentSessionId = newId
                                             refreshSessions()
-                                            // 模式生效：按所选模式发送引导命令（DSH plan/goal 模式）
-                                            when (heroMode) {
-                                                HeroMode.PLAN -> client.sendPrompt(newId, "/plan 描述你的任务以生成计划")
-                                                HeroMode.GOAL -> client.sendPrompt(newId, "/goal 输入目标，智能体将持续执行")
-                                                HeroMode.CHAT -> {}
-                                            }
                                         }
-                                    } catch (e: Exception) {}
+                                    } catch (e: Exception) {
+                                        withContext(Dispatchers.Main) {
+                                            Toast.makeText(context, "创建会话失败：${e.message ?: "未知错误"}", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
                                 }
                             }
                         )
@@ -2122,16 +2125,20 @@ fun WorkspaceScreen(
                                 } else {
                                     client.createSession(agentPreset = appSettings.agentPreset, cwd = cwd)
                                 }
+                                when (heroMode) {
+                                    HeroMode.PLAN -> client.sendPrompt(newId, "/plan 描述你的任务以生成计划")
+                                    HeroMode.GOAL -> client.sendPrompt(newId, "/goal 输入目标，智能体将持续执行")
+                                    HeroMode.CHAT -> {}
+                                }
                                 withContext(Dispatchers.Main) {
                                     currentSessionId = newId
                                     refreshSessions()
-                                    when (heroMode) {
-                                        HeroMode.PLAN -> client.sendPrompt(newId, "/plan 描述你的任务以生成计划")
-                                        HeroMode.GOAL -> client.sendPrompt(newId, "/goal 输入目标，智能体将持续执行")
-                                        HeroMode.CHAT -> {}
-                                    }
                                 }
-                            } catch (e: Exception) {}
+                            } catch (e: Exception) {
+                                withContext(Dispatchers.Main) {
+                                    Toast.makeText(context, "创建会话失败：${e.message ?: "未知错误"}", Toast.LENGTH_SHORT).show()
+                                }
+                            }
                         }
                     }
                 )
