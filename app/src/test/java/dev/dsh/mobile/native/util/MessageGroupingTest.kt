@@ -92,12 +92,14 @@ class MessageGroupingTest {
     }
 
     @Test
-    fun `groupKey 包含 size，用于 LazyColumn 稳定 key`() {
+    fun `groupKey 只用首项 id，组变长时保持稳定`() {
         val msgs = listOf(
             msg("tc-1", "tool_call", 1),
             msg("tr-1", "tool_result", 2),
         )
         val group = groupMessages(msgs).first() as MessageGroup.ToolGroup
-        assertEquals("tc-1-group-2", group.groupKey)
+        assertEquals("tc-1-group", group.groupKey)
+        val grown = groupMessages(msgs + msg("tc-2", "tool_call", 3)).first() as MessageGroup.ToolGroup
+        assertEquals("tc-1-group", grown.groupKey)
     }
 }

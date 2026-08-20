@@ -7,6 +7,7 @@ import dev.dsh.mobile.core.Dsh
 import dev.dsh.mobile.core.Host
 import dev.dsh.mobile.core.DeviceName
 import dev.dsh.mobile.core.DshTheme
+import dev.dsh.mobile.core.HostLoadResult
 import dev.dsh.mobile.core.HostStore
 import dev.dsh.mobile.core.PairClient
 import dev.dsh.mobile.core.PinnedSsl
@@ -60,9 +61,12 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.lifecycle.lifecycleScope
 import java.net.URI
 
 /**
@@ -82,38 +86,44 @@ class DevicesActivity : ComponentActivity() {
             DshTheme {
                 DevicesScreen(
                     onSelectHost = { host, onDone ->
-                        // 连接中 → 健康检查通过后进入工作台（保留本页，返回时可回设备列表）
-                        Thread {
-                            val ok = PairClient.health(host.baseUrl, host.certFingerprint) != null
-                            runOnUiThread {
-                                onDone(ok)
-                                if (ok) {
-                                    HostStore.upsert(this, host)
-                                    // 设备中心 → 原生工作台
-                                    startActivity(Intent(this, WorkspaceActivity::class.java)
-                                        .putExtra("hostBaseUrl", host.baseUrl))
-                                }
+                        lifecycleScope.launch {
+                            val ok = withContext(Dispatchers.IO) {
+                                PairClient.health(host.baseUrl, host.certFingerprint) != null
                             }
-                        }.start()
+                            if (isDestroyed) return@launch
+                            onDone(ok)
+                            if (ok) {
+                                if (!HostStore.upsert(this@DevicesActivity, host)) {
+                                    Toast.makeText(this@DevicesActivity, "凭据无法保存，请重新配对", Toast.LENGTH_LONG).show()
+                                    return@launch
+                                }
+                                startActivity(Intent(this@DevicesActivity, WorkspaceActivity::class.java)
+                                    .putExtra("hostBaseUrl", host.baseUrl))
+                            }
+                        }
                     },
                     onScanClick = {
                         startActivity(Intent(this, ScanActivity::class.java))
                     },
                     onManualPair = { name, url, code, fingerprint, onSuccess, onError ->
-                        Thread {
+                        lifecycleScope.launch {
                             try {
-                                val r = PairClient.pair(url, code, DeviceName.of(this), fingerprint)
-                                val newHost = Host(name.ifBlank { r.name }, r.baseUrl, r.token, r.deviceId, r.certFingerprint)
-                                HostStore.upsert(this, newHost)
-                                runOnUiThread {
-                                    onSuccess(newHost)
-                                    Toast.makeText(this, "设备连接成功", Toast.LENGTH_SHORT).show()
+                                val r = withContext(Dispatchers.IO) {
+                                    PairClient.pair(url, code, DeviceName.of(this@DevicesActivity), fingerprint)
                                 }
+                                if (isDestroyed) return@launch
+                                val newHost = Host(name.ifBlank { r.name }, r.baseUrl, r.token, r.deviceId, r.certFingerprint)
+                                if (!HostStore.upsert(this@DevicesActivity, newHost)) {
+                                    onError("凭据无法保存，请重新配对")
+                                    return@launch
+                                }
+                                onSuccess(newHost)
+                                Toast.makeText(this@DevicesActivity, "设备连接成功", Toast.LENGTH_SHORT).show()
                             } catch (e: Exception) {
                                 val unwrapped = PinnedSsl.unwrap(e)
-                                runOnUiThread { onError(unwrapped.message ?: "连接失败，请检查地址或配对码") }
+                                if (!isDestroyed) onError(unwrapped.message ?: "连接失败，请检查地址或配对码")
                             }
-                        }.start()
+                        }
                     }
                 )
             }
@@ -240,34 +250,50 @@ fun DevicesScreen(
     var allOfflineError by remember { mutableStateOf<String?>(null) }
 
     val scope = rememberCoroutineScope()
+    var healthJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
 
     fun refreshHealth() {
-        val list = devices
-        if (list.isEmpty()) return
-        devices = list.map { it.copy(state = DeviceState.CHECKING) }
-        scope.launch {
-            val results = mutableMapOf<String, DeviceUi>()
-            withContext(Dispatchers.IO) {
-                list.forEach { d ->
-                    val ms = PairClient.health(d.host.baseUrl, d.host.certFingerprint)
-                    results[d.host.baseUrl] = d.copy(
-                        state = if (ms != null) DeviceState.ONLINE else DeviceState.OFFLINE,
-                        latencyMs = ms
-                    )
-                }
+        healthJob?.cancel()
+        if (devices.isEmpty()) return
+        val urls = devices.map { it.host.baseUrl }.toSet()
+        devices = devices.map { it.copy(state = DeviceState.CHECKING) }
+        healthJob = scope.launch {
+            val snapshot = devices
+            val results = withContext(Dispatchers.IO) {
+                snapshot.map { d ->
+                    async {
+                        val ms = PairClient.health(d.host.baseUrl, d.host.certFingerprint)
+                        d.host.baseUrl to d.copy(
+                            state = if (ms != null) DeviceState.ONLINE else DeviceState.OFFLINE,
+                            latencyMs = ms,
+                        )
+                    }
+                }.awaitAll().toMap()
             }
-            withContext(Dispatchers.Main) {
-                devices = list.map { results[it.host.baseUrl] ?: it }
-                val anyOnline = devices.any { it.state == DeviceState.ONLINE }
-                allOfflineError = if (!anyOnline && devices.isNotEmpty()) "所有设备均离线，请检查电脑端代理是否运行" else null
+            devices = devices.map { cur ->
+                if (cur.host.baseUrl in urls) results[cur.host.baseUrl] ?: cur else cur
             }
+            val anyOnline = devices.any { it.state == DeviceState.ONLINE }
+            allOfflineError = if (!anyOnline && devices.isNotEmpty()) "所有设备均离线，请检查电脑端代理是否运行" else null
         }
     }
 
     fun reload() {
-        devices = HostStore.load(context).map { DeviceUi(it) }
-        allOfflineError = null
-        refreshHealth()
+        when (val loaded = HostStore.loadResult(context)) {
+            is HostLoadResult.Ok -> {
+                devices = loaded.hosts.map { DeviceUi(it) }
+                allOfflineError = null
+                refreshHealth()
+            }
+            HostLoadResult.Empty -> {
+                devices = emptyList()
+                allOfflineError = null
+            }
+            HostLoadResult.Undecryptable -> {
+                devices = emptyList()
+                allOfflineError = "凭据无法读取，请重新配对"
+            }
+        }
     }
 
     // 每次回到前台重读设备列表并刷新健康状态
@@ -280,16 +306,14 @@ fun DevicesScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    // 首次加载
-    LaunchedEffect(Unit) {
-        reload()
-    }
+    LaunchedEffect(Unit) { reload() }
 
-    // 30 秒轮询（HStudio 同款）
-    LaunchedEffect(Unit) {
+    LaunchedEffect(lifecycleOwner) {
         while (true) {
             delay(30_000)
-            refreshHealth()
+            if (lifecycleOwner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
+                refreshHealth()
+            }
         }
     }
 

@@ -15,52 +15,79 @@ data class Host(
     val certFingerprint: String = "",
 )
 
+sealed class HostLoadResult {
+    data class Ok(val hosts: List<Host>) : HostLoadResult()
+    data object Empty : HostLoadResult()
+    data object Undecryptable : HostLoadResult()
+}
+
 object HostStore {
     private const val PREFS = "dsh_hosts"
     private const val KEY = "hosts"
+    private const val LOCK = "hosts_locked"
 
-    fun load(ctx: Context): List<Host> {
-        val raw = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null) ?: return emptyList()
-        val hosts = if (TokenCrypto.isEncrypted(raw)) {
-            val plain = TokenCrypto.decrypt(ctx, raw) ?: return emptyList()
-            hostsFromJson(plain)
+    fun loadResult(ctx: Context): HostLoadResult {
+        val prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val raw = prefs.getString(KEY, null) ?: return HostLoadResult.Empty
+        return if (TokenCrypto.isEncrypted(raw)) {
+            val plain = TokenCrypto.decrypt(ctx, raw)
+            if (plain == null) {
+                prefs.edit().putBoolean(LOCK, true).apply()
+                HostLoadResult.Undecryptable
+            } else {
+                prefs.edit().putBoolean(LOCK, false).apply()
+                HostLoadResult.Ok(hostsFromJson(plain))
+            }
         } else {
-            // 旧版明文数据：读取后立即迁移为加密存储并清掉明文
             val legacy = hostsFromJson(raw)
             if (legacy.isNotEmpty()) {
                 save(ctx, legacy)
             } else {
-                ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(KEY).apply()
+                prefs.edit().remove(KEY).apply()
             }
-            legacy
+            if (legacy.isEmpty()) HostLoadResult.Empty else HostLoadResult.Ok(legacy)
         }
-        return hosts
     }
 
-    fun save(ctx: Context, hosts: List<Host>) {
-        val encrypted = TokenCrypto.encrypt(ctx, hostsToJson(hosts))
-        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, encrypted).apply()
+    fun load(ctx: Context): List<Host> = when (val r = loadResult(ctx)) {
+        is HostLoadResult.Ok -> r.hosts
+        HostLoadResult.Empty, HostLoadResult.Undecryptable -> emptyList()
     }
 
-    /** 加入/更新主机：同一名称或同一地址只保留一条，最新记录置顶。 */
-    fun upsert(ctx: Context, host: Host) {
-        save(ctx, dedupeHosts(load(ctx), host))
+    fun save(ctx: Context, hosts: List<Host>): Boolean {
+        val prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        if (prefs.getBoolean(LOCK, false)) return false
+        return try {
+            val encrypted = TokenCrypto.encrypt(ctx, hostsToJson(hosts))
+            prefs.edit().putString(KEY, encrypted).apply()
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    fun upsert(ctx: Context, host: Host): Boolean {
+        val prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        if (prefs.getBoolean(LOCK, false)) {
+            prefs.edit().putBoolean(LOCK, false).apply()
+            return save(ctx, listOf(host))
+        }
+        return save(ctx, dedupeHosts(load(ctx), host))
     }
 
     /** 按地址移除（手动配对覆盖旧记录时用）。 */
-    fun removeByUrl(ctx: Context, baseUrl: String) {
-        save(ctx, load(ctx).filter { it.baseUrl != baseUrl })
+    fun removeByUrl(ctx: Context, baseUrl: String): Boolean {
+        return save(ctx, load(ctx).filter { it.baseUrl != baseUrl })
     }
 
-    /** 重命名设备（本地别名）。 */
-    fun rename(ctx: Context, baseUrl: String, newName: String) {
-        save(ctx, load(ctx).map {
+    fun rename(ctx: Context, baseUrl: String, newName: String): Boolean {
+        return save(ctx, load(ctx).map {
             if (it.baseUrl == baseUrl) it.copy(name = newName) else it
         })
     }
 
-    fun remove(ctx: Context, name: String) {
-        save(ctx, load(ctx).filter { it.name != name })
+    fun remove(ctx: Context, name: String): Boolean {
+        return save(ctx, load(ctx).filter { it.name != name })
     }
 
     // ---- 纯函数（单元测试直测，无 Android 依赖） ----

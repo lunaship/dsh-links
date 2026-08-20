@@ -96,7 +96,11 @@ class ScanActivity : AppCompatActivity() {
                             PairClient.pair(u, code, DeviceName.of(this), null)
                         }
                         runOnUiThread {
-                            HostStore.upsert(this, Host(fallbackName, r.baseUrl, r.token, r.deviceId, r.certFingerprint))
+                            if (isFinishing) return@runOnUiThread
+                            if (!HostStore.upsert(this, Host(fallbackName, r.baseUrl, r.token, r.deviceId, r.certFingerprint))) {
+                                scanFailed("凭据无法保存，请重新配对")
+                                return@runOnUiThread
+                            }
                             Toast.makeText(this, "已连接 $fallbackName", Toast.LENGTH_SHORT).show()
                             startActivity(android.content.Intent(this@ScanActivity, WorkspaceActivity::class.java).putExtra("hostBaseUrl", r.baseUrl))
                             finish()
@@ -131,5 +135,10 @@ class ScanActivity : AppCompatActivity() {
     override fun onPause() {
         if (this::barcodeView.isInitialized) barcodeView.pause()
         super.onPause()
+    }
+
+    override fun onDestroy() {
+        executor.shutdownNow()
+        super.onDestroy()
     }
 }

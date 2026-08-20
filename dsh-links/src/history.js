@@ -67,11 +67,12 @@ export function projectHistoryPage({ events, reasoningBySeq = new Map(), hasMore
       const chunk = e.data?.chunk
       if (chunk?.type === "block-end" && chunk.block?.text) {
         if (chunk.block.type === "reasoning") {
-          // 投影剥掉思考文本时（父会话），从文件补全；文件也没有则跳过
-          pendingReasoning = {
-            seq: e.seq,
-            time: e.time,
-            text: chunk.block.text || reasoningBySeq.get(e.seq)?.text || "",
+          // 连续 reasoning block-end 追加文本，保留首块 seq/time（与文件侧分组一致）
+          const piece = chunk.block.text || reasoningBySeq.get(e.seq)?.text || ""
+          if (pendingReasoning) {
+            if (piece) pendingReasoning.text = pendingReasoning.text ? pendingReasoning.text + "\n" + piece : piece
+          } else {
+            pendingReasoning = { seq: e.seq, time: e.time, text: piece }
           }
         } else {
           flushReasoning(e.time)

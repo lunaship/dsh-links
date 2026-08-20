@@ -11,6 +11,7 @@
 
     <application
         android:name=".core.DshApplication"
+        android:allowBackup="false"
         android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -33,6 +34,7 @@
         <activity
             android:name=".native.WorkspaceActivity"
             android:exported="false"
+            android:launchMode="singleTask"
             android:screenOrientation="portrait"
             android:windowSoftInputMode="adjustResize" />
 
@@ -51,12 +53,6 @@
         <activity
             android:name=".devices.ScanActivity"
             android:exported="false"
-            android:screenOrientation="portrait" />
-
-        <!-- 临时：logo 方案 A/C 预览（仅 dev 用，发布前移除） -->
-        <activity
-            android:name=".devices.LogoPreviewActivity"
-            android:exported="true"
             android:screenOrientation="portrait" />
     </application>
 </manifest>

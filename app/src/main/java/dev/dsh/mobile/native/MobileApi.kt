@@ -302,7 +302,7 @@ class MobileApiClient(private val host: Host) {
             val obj = rawList.getJSONObject(i)
             val todosArr = obj.optJSONArray("todos") ?: org.json.JSONArray()
             MobileMessage(
-                id = obj.optString("id", "msg-$i"),
+                id = obj.optString("id").ifBlank { "msg-${beforeSeq ?: "tail"}-$i" },
                 role = obj.optString("role", "assistant"),
                 text = obj.optString("text", ""),
                 toolName = obj.optString("name").takeIf { it.isNotBlank() },
@@ -355,13 +355,14 @@ class MobileApiClient(private val host: Host) {
         return res.getString("sessionId")
     }
 
-    fun searchSessions(query: String): List<MobileSearchResult> {
+    fun searchSessions(query: String): Pair<List<MobileSearchResult>, Boolean> {
         val root = request("GET", "/dsh-link/mobile/sessions/search?q=" + java.net.URLEncoder.encode(query, "UTF-8"))
         val items = root.optJSONArray("items") ?: org.json.JSONArray()
-        return (0 until items.length()).map { index ->
+        val list = (0 until items.length()).map { index ->
             val item = items.getJSONObject(index)
             MobileSearchResult(item.getString("sessionId"), item.optString("snippet"))
         }
+        return list to root.optBoolean("degraded", false)
     }
 
     fun cancelSession(sessionId: String) {
@@ -430,6 +431,27 @@ class MobileApiClient(private val host: Host) {
                 name = p.optString("name", p.optString("id")),
                 description = p.optString("description", ""),
                 isDefault = p.optBoolean("isDefault", false),
+            )
+        }
+    }
+
+    fun getLlmModels(): List<MobileModelGroup> {
+        val root = request("GET", "/dsh-link/mobile/llm-models")
+        val arr = root.optJSONArray("groups") ?: org.json.JSONArray()
+        return (0 until arr.length()).map { i ->
+            val g = arr.getJSONObject(i)
+            val models = g.optJSONArray("models") ?: org.json.JSONArray()
+            MobileModelGroup(
+                provider = g.optString("provider", "未知"),
+                models = (0 until models.length()).map { j ->
+                    val m = models.getJSONObject(j)
+                    MobileModelOption(
+                        id = m.optString("id", ""),
+                        name = m.optString("name").takeIf { it.isNotBlank() },
+                        contextWindow = if (m.has("contextWindow") && !m.isNull("contextWindow")) m.optLong("contextWindow") else null,
+                        maxTokens = if (m.has("maxTokens") && !m.isNull("maxTokens")) m.optLong("maxTokens") else null,
+                    )
+                },
             )
         }
     }

@@ -78,7 +78,11 @@ class SettingsActivity : ComponentActivity() {
         )
         setContent {
             DshTheme {
-                val host = remember { HostStore.load(this).firstOrNull() }
+                val hostUrl = intent.getStringExtra("hostBaseUrl")
+                val host = remember {
+                    val all = HostStore.load(this)
+                    all.firstOrNull { it.baseUrl == hostUrl } ?: all.firstOrNull()
+                }
                 SettingsScreen(
                     host = host,
                     onBack = { finish() },
@@ -188,35 +192,17 @@ private fun SettingsScreen(
     }
 
     // 模型目录（llm.models）
-    LaunchedEffect(tab) {
+    LaunchedEffect(tab, host) {
         if (tab == SettingsTab.MODELS && host != null) {
             withContext(Dispatchers.IO) {
                 try {
-                    val conn = java.net.URL(host.baseUrl.trimEnd('/') + "/dsh-link/mobile/llm-models").openConnection() as java.net.HttpURLConnection
-                    PinnedSsl.apply(conn, host.certFingerprint)
-                    conn.connectTimeout = 8000
-                    conn.readTimeout = 10000
-                    conn.setRequestProperty("x-dsh-link-token", host.token)
-                    val root = org.json.JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
-                    val arr = root.optJSONArray("groups") ?: org.json.JSONArray()
-                    val groups = (0 until arr.length()).map { i ->
-                        val g = arr.getJSONObject(i)
-                        val models = g.optJSONArray("models") ?: org.json.JSONArray()
-                        MobileModelGroup(
-                            provider = g.optString("provider", "未知"),
-                            models = (0 until models.length()).map { j ->
-                                val m = models.getJSONObject(j)
-                                MobileModelOption(
-                                    id = m.optString("id", ""),
-                                    name = m.optString("name").takeIf { it.isNotBlank() },
-                                    contextWindow = if (m.has("contextWindow") && !m.isNull("contextWindow")) m.optLong("contextWindow") else null,
-                                    maxTokens = if (m.has("maxTokens") && !m.isNull("maxTokens")) m.optLong("maxTokens") else null,
-                                )
-                            },
-                        )
-                    }
+                    val groups = MobileApiClient(host).getLlmModels()
                     withContext(Dispatchers.Main) { llmGroups = groups }
-                } catch (e: Exception) {}
+                } catch (e: Exception) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(context, "加载模型列表失败：${e.message ?: "未知错误"}", Toast.LENGTH_SHORT).show()
+                    }
+                }
             }
         }
     }

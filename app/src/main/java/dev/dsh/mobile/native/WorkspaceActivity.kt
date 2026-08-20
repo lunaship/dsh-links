@@ -140,11 +140,14 @@ private val NON_MESSAGE_ITEM_KEYS = setOf("load-older", "turn-status", "stopped-
 class WorkspaceActivity : ComponentActivity() {
 
     private var speechRecognizer: SpeechRecognizer? = null
+    private var voiceIdle: (() -> Unit)? = null
+    private val incomingIntent = mutableStateOf<Intent?>(null)
     private val requestAudioPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         if (!isGranted) {
             Toast.makeText(this, "需要录音权限才能进行语音输入", Toast.LENGTH_SHORT).show()
+            voiceIdle?.invoke()
         }
     }
 
@@ -154,15 +157,16 @@ class WorkspaceActivity : ComponentActivity() {
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
         )
+        incomingIntent.value = intent
         initSpeechRecognizer()
 
         setContent {
             DshTheme {
-                val hosts = remember { HostStore.load(this) }
-                // 通知点击直达：hostBaseUrl + sessionId 定位主机与会话
-                val targetUrl = intent.getStringExtra("hostBaseUrl")
-                val targetSession = intent.getStringExtra("sessionId")
-                var currentHost by remember { mutableStateOf(
+                val liveIntent = incomingIntent.value ?: intent
+                val hosts = remember(liveIntent) { HostStore.load(this) }
+                val targetUrl = liveIntent.getStringExtra("hostBaseUrl")
+                val targetSession = liveIntent.getStringExtra("sessionId")
+                var currentHost by remember(targetUrl) { mutableStateOf(
                     hosts.firstOrNull { it.baseUrl == targetUrl } ?: hosts.firstOrNull()
                 ) }
 
@@ -184,10 +188,13 @@ class WorkspaceActivity : ComponentActivity() {
                             )
                         },
                         onOpenSettings = {
-                            startActivity(Intent(this, SettingsActivity::class.java))
+                            startActivity(
+                                Intent(this, SettingsActivity::class.java)
+                                    .putExtra("hostBaseUrl", currentHost!!.baseUrl)
+                            )
                         },
-                        onStartVoiceInput = { onResult ->
-                            startVoiceListening(onResult)
+                        onStartVoiceInput = { onResult, onIdle ->
+                            startVoiceListening(onResult, onIdle)
                         },
                         onStopVoiceInput = {
                             speechRecognizer?.stopListening()
@@ -204,8 +211,16 @@ class WorkspaceActivity : ComponentActivity() {
         }
     }
 
-    private fun startVoiceListening(onResult: (String) -> Unit) {
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        incomingIntent.value = intent
+    }
+
+    private fun startVoiceListening(onResult: (String) -> Unit, onIdle: () -> Unit) {
+        voiceIdle = onIdle
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            onIdle()
             requestAudioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
             return
         }
@@ -221,11 +236,13 @@ class WorkspaceActivity : ComponentActivity() {
             override fun onBeginningOfSpeech() {}
             override fun onRmsChanged(rmsdB: Float) {}
             override fun onBufferReceived(buffer: ByteArray?) {}
-            override fun onEndOfSpeech() {}
+            override fun onEndOfSpeech() { onIdle() }
             override fun onError(error: Int) {
+                onIdle()
                 Toast.makeText(this@WorkspaceActivity, "语音识别未听清，请重试", Toast.LENGTH_SHORT).show()
             }
             override fun onResults(results: Bundle?) {
+                onIdle()
                 val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 if (!matches.isNullOrEmpty()) {
                     onResult(matches[0])
@@ -252,7 +269,7 @@ fun WorkspaceScreen(
     initialSessionId: String? = null,
     onSwitchHost: () -> Unit,
     onOpenSettings: () -> Unit,
-    onStartVoiceInput: ((String) -> Unit) -> Unit,
+    onStartVoiceInput: ((String) -> Unit, () -> Unit) -> Unit,
     onStopVoiceInput: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
@@ -353,6 +370,7 @@ fun WorkspaceScreen(
     // 异步搜索任务句柄（最近一次 in-flight 搜索）：用于取消与丢弃过期响应
     var searchJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var searchSeq by remember { mutableStateOf(0) } // 单调递增；过期响应按 seq 丢弃
+    var sessionsJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var pendingImages by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) } // (mediaType, base64)
     val imagePickerLauncher = rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.GetContent()
@@ -367,8 +385,16 @@ fun WorkspaceScreen(
                         withContext(Dispatchers.Main) {
                             pendingImages = pendingImages + (mediaType to b64)
                         }
+                    } else {
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(context, "图片超过 8MB，已跳过", Toast.LENGTH_SHORT).show()
+                        }
                     }
-                } catch (e: Exception) {}
+                } catch (e: Exception) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(context, "无法读取图片：${e.message ?: "未知错误"}", Toast.LENGTH_SHORT).show()
+                    }
+                }
             }
         }
     }
@@ -403,16 +429,27 @@ fun WorkspaceScreen(
     val streamToolCallIds = remember(currentSessionId) { mutableMapOf<String, String>() }
 
     fun refreshSessions(selectLatest: Boolean = false) {
-        scope.launch(Dispatchers.IO) {
+        sessionsJob?.cancel()
+        sessionsJob = scope.launch(Dispatchers.IO) {
             try {
                 val list = client.getSessions()
                 withContext(Dispatchers.Main) {
                     sessions = list
                     if (currentSessionId == null || !list.any { it.sessionId == currentSessionId }) {
-                        currentSessionId = list.firstOrNull()?.sessionId
+                        currentSessionId = if (selectLatest) {
+                            list.maxByOrNull { it.updatedAt }?.sessionId ?: list.firstOrNull()?.sessionId
+                        } else {
+                            list.firstOrNull()?.sessionId
+                        }
                     }
                 }
-            } catch (e: Exception) {}
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, "刷新会话失败：${e.message ?: "未知错误"}", Toast.LENGTH_SHORT).show()
+                }
+            }
         }
     }
 
@@ -475,7 +512,9 @@ fun WorkspaceScreen(
                     if (!sameContent) messages = msgs
                     sessionStats = stats
                     hasMoreMessages = result.hasMore
-                    nextBeforeSeq = result.nextBeforeSeq
+                    if (olderMessages.isEmpty()) {
+                        nextBeforeSeq = result.nextBeforeSeq
+                    }
                     stoppedReason = result.stoppedReason
                     // 登记本页最新事件 seq，作为 SSE 增量去重基线（缺 maxSeq 也必须 seed）
                     val seed = historySeedSeq(result.maxSeq, msgs.map { it.seq })
@@ -572,12 +611,13 @@ fun WorkspaceScreen(
             try {
                 kotlinx.coroutines.delay(250) // debounce：250ms 内多次输入只发最后一次
                 if (seq != searchSeq) return@launch
-                val results = client.searchSessions(query)
+                val (results, degraded) = client.searchSessions(query)
                 if (seq != searchSeq) return@launch // 过期响应丢弃
                 withContext(Dispatchers.Main) {
                     searchResults = results
                     searchState = if (results.isEmpty()) SearchUiState.Empty
                     else SearchUiState.Results(query, results.size)
+                    if (degraded) Toast.makeText(context, "全文检索不可用，已按标题匹配", Toast.LENGTH_SHORT).show()
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
@@ -639,8 +679,14 @@ fun WorkspaceScreen(
     DisposableEffect(lifecycleOwner, currentSessionId, streamClient) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             when (event) {
-                androidx.lifecycle.Lifecycle.Event.ON_START -> isForeground = true
-                androidx.lifecycle.Lifecycle.Event.ON_STOP -> isForeground = false
+                androidx.lifecycle.Lifecycle.Event.ON_START -> {
+                    isForeground = true
+                    streamClient?.start()
+                }
+                androidx.lifecycle.Lifecycle.Event.ON_STOP -> {
+                    isForeground = false
+                    streamClient?.stop()
+                }
                 androidx.lifecycle.Lifecycle.Event.ON_RESUME -> {
                     // 回前台：SSE 断线时立即补全消息，并刷新会话列表（移动网络切换场景）
                     if (streamClient?.isConnected != true) refreshMessages(autoScroll = true)
@@ -676,11 +722,13 @@ fun WorkspaceScreen(
                     currentSessionId = newId
                     refreshSessions()
                 }
-            } catch (e: Exception) {}
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, "新建会话失败：${e.message ?: "未知错误"}", Toast.LENGTH_SHORT).show()
+                }
+            }
         }
     }
-
-    // ===== SSE 事件 → 增量构建消息列表（与 history 端点的消息映射保持一致） =====
 
     fun appendStreamMessage(m: MobileMessage) {
         // 仅 SSE 流式新增的消息带入场动画；历史/全量刷新（messages = msgs 整体替换）不带，
@@ -910,7 +958,7 @@ fun WorkspaceScreen(
     }
 
     LaunchedEffect(currentSessionId) {
-        currentSessionId?.let { DshNotifier.cancelForSession(context, it) }
+        currentSessionId?.let { DshNotifier.cancelForSession(context, host, it) }
         if (currentSessionId != null) {
             // WI-003：会话切换必须清空上一会话的消息/分页/临时加载状态，
             // 避免旧列表短暂残留或位置继承
@@ -972,8 +1020,9 @@ fun WorkspaceScreen(
         while (true) {
             delay(2000)
             if (currentSessionId != null && isForeground) {
-                refreshSessions()
-                if (streamClient?.isConnected != true || streamClient?.isSeeded != true) {
+                val streamReady = streamClient?.isConnected == true && streamClient?.isSeeded == true
+                if (!streamReady) {
+                    refreshSessions()
                     refreshMessages(autoScroll = false)
                 }
             }
@@ -1001,9 +1050,13 @@ fun WorkspaceScreen(
     var turnStartTime by remember { mutableStateOf(0L) }
     LaunchedEffect(running) {
         if (running) turnStartTime = System.currentTimeMillis()
+        if (!running) {
+            elapsedSec = 0L
+            return@LaunchedEffect
+        }
         while (true) {
             delay(1000)
-            elapsedSec = if (running) (System.currentTimeMillis() - turnStartTime) / 1000 else 0L
+            elapsedSec = (System.currentTimeMillis() - turnStartTime) / 1000
         }
     }
 
@@ -1076,10 +1129,13 @@ fun WorkspaceScreen(
                                             refreshSessions()
                                             drawerState.close()
                                         }
-                                    } catch (e: Exception) {}
+                                    } catch (e: Exception) {
+                                        withContext(Dispatchers.Main) {
+                                            Toast.makeText(context, "新建会话失败：${e.message ?: "未知错误"}", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
                                 }
-                            }
-                            .padding(horizontal = 12.dp),
+                            },
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
@@ -1896,7 +1952,7 @@ fun WorkspaceScreen(
 
             // ===== 消息流（max-width 748 居中） =====
             // 稳定列表引用（内容不变时避免 LazyColumn 滚动状态失效）
-            val allMessages = remember(olderMessages, messages) { olderMessages + messages }
+            val allMessages = remember(olderMessages, messages) { mergeHistoryPages(olderMessages, messages) }
             // 按相邻 tool_call/tool_result 聚合：连续 ≥2 条折叠为聚合 header，单条仍走 MessageItem
             // 必须在 LazyColumn 外（LazyListScope 不是 @Composable context）
             val messageGroups = remember(allMessages) { groupMessages(allMessages) }
@@ -2000,8 +2056,15 @@ fun WorkspaceScreen(
                                         val sid = currentSessionId ?: return@MessageItem
                                         scope.launch(Dispatchers.IO) {
                                             try {
-                                                client.answerApproval(sid, approvalId, outcome)
-                                            } catch (e: Exception) {}
+                                                val accepted = client.answerApproval(sid, approvalId, outcome)
+                                                if (!accepted) withContext(Dispatchers.Main) {
+                                                    Toast.makeText(context, "审批未被接受", Toast.LENGTH_SHORT).show()
+                                                }
+                                            } catch (e: Exception) {
+                                                withContext(Dispatchers.Main) {
+                                                    Toast.makeText(context, "审批失败：${e.message ?: "未知错误"}", Toast.LENGTH_SHORT).show()
+                                                }
+                                            }
                                         }
                                     },
                                     onCopy = {
@@ -2199,7 +2262,7 @@ fun WorkspaceScreen(
                 onPickImage = { imagePickerLauncher.launch("image/*") },
                 isListening = isListening,
                 isSending = isSending,
-                canSend = inputText.isNotBlank() && currentSessionId != null && !isSending,
+                canSend = (inputText.isNotBlank() || pendingImages.isNotEmpty()) && currentSessionId != null && !isSending,
                 running = running,
                 currentModel = modelChipLabel(modelCatalog),
                 sessionStats = sessionStats,
@@ -2221,12 +2284,12 @@ fun WorkspaceScreen(
                         isListening = false
                     } else {
                         isListening = true
-                        onStartVoiceInput { recognizedText ->
+                        onStartVoiceInput({ recognizedText ->
                             isListening = false
                             if (recognizedText.isNotBlank()) {
                                 inputText = if (inputText.isBlank()) recognizedText else "$inputText $recognizedText"
                             }
-                        }
+                        }, { isListening = false })
                     }
                 },
                 onStop = {
@@ -5136,10 +5199,11 @@ private fun InputBar(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     pendingImages.forEachIndexed { index, (_, data) ->
+                        val preview = remember(data) { android.util.Base64.decode(data, android.util.Base64.DEFAULT) }
                         Box {
                             coil.compose.AsyncImage(
                                 model = coil.request.ImageRequest.Builder(androidx.compose.ui.platform.LocalContext.current)
-                                    .data(android.util.Base64.decode(data, android.util.Base64.DEFAULT))
+                                    .data(preview)
                                     .build(),
                                 contentDescription = "待发送图片",
                                 contentScale = androidx.compose.ui.layout.ContentScale.Crop,
@@ -6137,7 +6201,7 @@ private data class MarkdownBlock(
 @Composable
 private fun MarkdownContent(text: String) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    val blocks = splitMarkdownBlocks(text)
+    val blocks = remember(text) { splitMarkdownBlocks(text) }
     blocks.forEach { block ->
         when (block.type) {
             MarkdownBlockType.CODE -> MarkdownCodeBlock(block.lang, block.content)
@@ -6226,9 +6290,12 @@ private fun MarkdownContent(text: String) {
                         .clip(RoundedCornerShape(DshRadius.lg))
                         .background(Dsh.bgLayer1)
                         .clickable {
-                            // 点击用系统浏览器打开原图
-                            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(block.content))
-                            context.startActivity(intent)
+                            val uri = android.net.Uri.parse(block.content)
+                            val scheme = uri.scheme?.lowercase()
+                            if (scheme != "http" && scheme != "https") return@clickable
+                            runCatching {
+                                context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, uri))
+                            }
                         }
                 ) {
                     coil.compose.AsyncImage(
@@ -6298,8 +6365,10 @@ private fun MarkdownCodeBlock(lang: String?, content: String) {
                 Text("复制", color = Dsh.labelTertiary, fontSize = 11.sp, lineHeight = 16.sp)
             }
         }
+        val dark = Dsh.isDark
+        val highlighted = remember(content, lang, dark) { highlightCode(content.trimEnd(), lang, dark) }
         Text(
-            highlightCode(content.trimEnd(), lang, Dsh.isDark),
+            highlighted,
             color = Dsh.labelPrimary,
             fontFamily = FontFamily.Monospace,
             fontSize = 13.sp,
@@ -6310,6 +6379,8 @@ private fun MarkdownCodeBlock(lang: String?, content: String) {
         )
     }
 }
+
+private val TABLE_SEP_CELL = Regex("^:?-{2,}:?$")
 
 private fun splitMarkdownBlocks(text: String): List<MarkdownBlock> {
     val blocks = mutableListOf<MarkdownBlock>()
@@ -6403,7 +6474,7 @@ private fun splitMarkdownBlocks(text: String): List<MarkdownBlock> {
                 while (i < lines.size && lines[i].trimStart().startsWith("|") && lines[i].contains("|")) {
                     val cells = lines[i].trim().trim('|').split("|").map { it.trim() }
                     // 跳过分隔行（|---|）
-                    if (!cells.all { it.matches(Regex("^:?-{2,}:?$")) }) {
+                    if (!cells.all { it.matches(TABLE_SEP_CELL) }) {
                         rows.add(cells)
                     }
                     i++

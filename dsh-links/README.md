@@ -28,17 +28,16 @@ dsh plugin --profile web add dsh-links
 
 ## 接口约定（手机 App 使用）
 
-- `GET  /dsh-link/pair-info` → `{deviceId, name, urls, pairingCode}`
-- `GET  /dsh-link/qr.png` → 二维码 PNG（内容为上方 JSON 的字符串形式）
-- `POST /dsh-link/pair` body `{code, deviceName}` → `{token, deviceId, name, urls}`
-- 后续所有请求带 `Cookie: dsh_link_token=<token>` 或头 `x-dsh-link-token`
-- 网页界面内（同源）：`GET /dsh-link/devices`、`POST /dsh-link/revoke {name}`
+- `GET  /dsh-link/pair-info`、`GET /dsh-link/qr.png`、`GET /dsh-link/devices`、`POST /dsh-link/revoke`：仅本机主 web 端口（回环同源），18640 上为 404
+- `POST /dsh-link/pair` body `{code, deviceName}` → `{token, deviceId, name, urls}`（18640 HTTPS）
+- 后续所有请求带头 `x-dsh-link-token`
+- 手机 API 仅 `/dsh-link/health`、`/dsh-link/pair`、`/dsh-link/mobile/*`
 
 ## 安全说明
 
-- 代理端口对所有网络可达者开放，但除配对与健康检查外的所有请求必须携带有效 token
+- 18640 使用自签 TLS；局域网配对会固定证书指纹。请勿把该端口暴露给不受信任的网络
 - 配对码一次性且有时效；可随时在面板里吊销已配对设备
-- dsh 具有代码执行能力，**请勿**把代理端口暴露给不受信任的网络
+- dsh 具有代码执行能力；吊销设备会断开其已建立的 SSE 连接
 
 ## License
 

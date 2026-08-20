@@ -46,7 +46,7 @@ object DshNotifier {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
             .build()
-        NotificationManagerCompat.from(context).notify(notificationId(sessionId), notification)
+        NotificationManagerCompat.from(context).notify(notificationId(host, sessionId, 1), notification)
     }
 
     /** 任务完成。 */
@@ -57,7 +57,7 @@ object DshNotifier {
             .setContentText("会话「$title」已完成")
             .setAutoCancel(true)
             .build()
-        NotificationManagerCompat.from(context).notify(notificationId(sessionId), notification)
+        NotificationManagerCompat.from(context).notify(notificationId(host, sessionId, 2), notification)
     }
 
     /** 会话停止（非正常结束，如 interrupted/error/maxTokens）。 */
@@ -68,12 +68,13 @@ object DshNotifier {
             .setContentText("会话「$title」已停止（$reason）")
             .setAutoCancel(true)
             .build()
-        NotificationManagerCompat.from(context).notify(notificationId(sessionId), notification)
+        NotificationManagerCompat.from(context).notify(notificationId(host, sessionId, 3), notification)
     }
 
     /** 打开会话时清掉该会话的残留通知。 */
-    fun cancelForSession(context: Context, sessionId: String) {
-        NotificationManagerCompat.from(context).cancel(notificationId(sessionId))
+    fun cancelForSession(context: Context, host: Host, sessionId: String) {
+        val nm = NotificationManagerCompat.from(context)
+        for (kind in 1..3) nm.cancel(notificationId(host, sessionId, kind))
     }
 
     private fun base(context: Context, host: Host, sessionId: String): NotificationCompat.Builder {
@@ -84,7 +85,7 @@ object DshNotifier {
         }
         val pending = PendingIntent.getActivity(
             context,
-            notificationId(sessionId),
+            notificationId(host, sessionId, 0),
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
@@ -104,5 +105,6 @@ object DshNotifier {
         return NotificationManagerCompat.from(context).areNotificationsEnabled()
     }
 
-    private fun notificationId(sessionId: String): Int = sessionId.hashCode() and 0x7fffffff
+    private fun notificationId(host: Host, sessionId: String, kind: Int): Int =
+        (host.baseUrl.hashCode() * 31 + sessionId.hashCode() + kind * 10_007) and 0x7fffffff
 }

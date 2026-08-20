@@ -9,6 +9,7 @@
 import { request as httpRequest } from "node:http"
 import { createServer as createHttpsServer } from "node:https"
 import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs"
+import { readFile as readFileAsync } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { homedir, hostname, networkInterfaces } from "node:os"
 import { randomBytes } from "node:crypto"
@@ -279,23 +280,54 @@ function filterSettingsPatch(ns, patch) {
   return { ok: true }
 }
 
+class HttpBodyError extends Error {
+  constructor(status, message) {
+    super(message)
+    this.status = status
+  }
+}
+
+const PROMPT_BODY_LIMIT = 16 * 1024 * 1024
+
 function readBody(req, limit = 64 * 1024) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const chunks = []
     let size = 0
+    let done = false
+    const fail = (err) => {
+      if (done) return
+      done = true
+      reject(err)
+    }
     req.on("data", (c) => {
       size += c.length
-      if (size <= limit) chunks.push(c)
+      if (size > limit) {
+        req.destroy()
+        fail(new HttpBodyError(413, "payload too large"))
+        return
+      }
+      chunks.push(c)
     })
     req.on("end", () => {
+      if (done) return
+      if (size === 0) return fail(new HttpBodyError(400, "empty body"))
       try {
-        resolve(JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}"))
+        resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")))
       } catch {
-        resolve({})
+        fail(new HttpBodyError(400, "invalid json"))
       }
     })
-    req.on("error", () => resolve({}))
+    req.on("error", () => fail(new HttpBodyError(400, "invalid json")))
   })
+}
+
+async function readJson(req, res, limit) {
+  try {
+    return await readBody(req, limit)
+  } catch (err) {
+    json(res, err.status ?? 400, { error: err.message || "invalid body" })
+    return null
+  }
 }
 
 function authorize(req, state) {
@@ -326,7 +358,8 @@ async function qrPng(res, config, state, certFingerprint) {
 
 async function handlePair(req, res, config, state, stateFile) {
   if (!requireJsonWrite(req, res)) return
-  const body = await readBody(req)
+  const body = await readJson(req, res)
+  if (!body) return
   const code = String(body.code ?? "").trim()
   const deviceName = (String(body.deviceName ?? "手机").trim().slice(0, 32) || "手机")
   const ver = verifyPairingCode(state, code)
@@ -356,18 +389,7 @@ async function handlePair(req, res, config, state, stateFile) {
 
 /** 拼接多帧 zstd 解压（DSH 存储按帧追加写入）。 */
 function zstdDecompressAll(buf) {
-  const MAGIC = 0xfd2fb528
-  const positions = []
-  for (let i = 0; i + 4 <= buf.length; i++) {
-    if (buf.readUInt32LE(i) === MAGIC) positions.push(i)
-  }
-  if (positions.length === 0) return zstdDecompressSync(buf)
-  const parts = []
-  for (let i = 0; i < positions.length; i++) {
-    const end = i + 1 < positions.length ? positions[i + 1] : buf.length
-    parts.push(zstdDecompressSync(buf.subarray(positions[i], end)))
-  }
-  return Buffer.concat(parts)
+  return zstdDecompressSync(buf)
 }
 
 /**
@@ -376,7 +398,14 @@ function zstdDecompressAll(buf) {
  * 返回 Map<seq, { seq, time, text }>；连续 reasoning block-end 合并为一个
  * 块（与投影的事件侧分组规则一致），id 以首个 block-end 的 seq 为键。
  */
-async function readSessionReasoning(targetPort, sessionId) {
+function pageNeedsReasoningFile(events) {
+  return (events ?? []).some((item) => {
+    const c = item?.event?.data?.chunk
+    return c?.type === "block-end" && c.block?.type === "reasoning" && !String(c.block?.text ?? "")
+  })
+}
+
+async function readSessionReasoning(targetPort, sessionId, rt) {
   try {
     const list = await callLocalRpc(targetPort, "session.list", {})
     const row = (list.items ?? []).find((s) => s.sessionId === sessionId)
@@ -385,7 +414,12 @@ async function readSessionReasoning(targetPort, sessionId) {
     const enc = "--" + cwd.split("/").filter(Boolean).join("-") + "--"
     const p = join(homedir(), ".dsh", "sessions", enc, sessionId, "session.jsonl.zstd")
     if (!existsSync(p)) return new Map()
-    const text = zstdDecompressAll(readFileSync(p)).toString("utf8")
+    let st
+    try { st = statSync(p) } catch { return new Map() }
+    if (st.size > 32 * 1024 * 1024) return new Map()
+    const hit = rt?.reasoningCache?.get(p)
+    if (hit && hit.mtime === st.mtimeMs && hit.size === st.size) return hit.map
+    const text = zstdDecompressAll(await readFileAsync(p)).toString("utf8")
     const reasoning = new Map()
     let pending = null // { seq, time, text }
     const flush = (time) => {
@@ -420,6 +454,7 @@ async function readSessionReasoning(targetPort, sessionId) {
       }
     }
     flush(0)
+    rt?.reasoningCache?.set(p, { mtime: st.mtimeMs, size: st.size, map: reasoning })
     return reasoning
   } catch (err) {
     return new Map()
@@ -546,38 +581,80 @@ function callLocalRpc(targetPort, method, payload) {
 // ---------- SSE 实时推送（/dsh-link/mobile/sessions/:id/stream） ----------
 // 数据流：DSH 产生事件 → 写入 JSONL → 插件轮询 session.history RPC（增量 seq）→
 // SSE emit → App 订阅 → Compose state 更新。轮询间隔可配，空闲会话用文件大小跳过 RPC。
-const sessionStreams = new Map() // sessionId → Set<{ res, lastSeq }>
-const sessionFiles = new Map() // sessionId → { path, lastSize }
-const inflightPolls = new Set()
+const MAX_SSE_GLOBAL = 64
+const MAX_SSE_PER_DEVICE = 8
 
-/** 定位会话存储文件（session.list → cwd → ~/.dsh/sessions/<cwd编码>/<id>/session.jsonl.zstd）。 */
-async function sessionFilePath(targetPort, sessionId) {
-  const cached = sessionFiles.get(sessionId)
-  if (cached) return cached.path
+function createRuntime() {
+  return {
+    sessionStreams: new Map(),
+    sessionFiles: new Map(),
+    inflightPolls: new Set(),
+    pendingApprovals: new Map(),
+    reasoningCache: new Map(),
+  }
+}
+
+function sseCounts(rt) {
+  let global = 0
+  const perDevice = new Map()
+  for (const writers of rt.sessionStreams.values()) {
+    for (const conn of writers) {
+      global++
+      perDevice.set(conn.deviceId, (perDevice.get(conn.deviceId) ?? 0) + 1)
+    }
+  }
+  return { global, perDevice }
+}
+
+function closeSseForDevice(rt, deviceId) {
+  for (const [sessionId, writers] of rt.sessionStreams) {
+    for (const conn of [...writers]) {
+      if (conn.deviceId !== deviceId) continue
+      writers.delete(conn)
+      try { conn.res.destroy() } catch {}
+    }
+    if (writers.size === 0) dropSession(rt, sessionId)
+  }
+}
+
+async function sessionFilePath(targetPort, sessionId, rt) {
+  const cached = rt.sessionFiles.get(sessionId)
+  if (cached?.missingUntil && Date.now() < cached.missingUntil) return null
+  if (cached?.path) return cached.path
   try {
     const list = await callLocalRpc(targetPort, "session.list", {})
     const row = (list.items ?? []).find((s) => s.sessionId === sessionId)
     const cwd = row?.cwd
-    if (!cwd) return null
+    if (!cwd) {
+      rt.sessionFiles.set(sessionId, { missingUntil: Date.now() + 10_000 })
+      return null
+    }
     const enc = "--" + cwd.split("/").filter(Boolean).join("-") + "--"
     const p = join(homedir(), ".dsh", "sessions", enc, sessionId, "session.jsonl.zstd")
-    if (!existsSync(p)) return null
-    sessionFiles.set(sessionId, { path: p, lastSize: undefined })
+    if (!existsSync(p)) {
+      rt.sessionFiles.set(sessionId, { missingUntil: Date.now() + 10_000 })
+      return null
+    }
+    rt.sessionFiles.set(sessionId, { path: p, lastSize: undefined, lastMtime: undefined })
     return p
   } catch {
     return null
   }
 }
 
-function dropSession(sessionId) {
-  sessionStreams.delete(sessionId)
-  sessionFiles.delete(sessionId)
+function dropSession(rt, sessionId) {
+  rt.sessionStreams.delete(sessionId)
+  rt.sessionFiles.delete(sessionId)
 }
 
 function writeSse(writers, frame) {
   for (const conn of [...writers]) {
     try {
-      conn.res.write(frame)
+      const ok = conn.res.write(frame)
+      if (ok === false) {
+        writers.delete(conn)
+        try { conn.res.destroy() } catch {}
+      }
     } catch {
       writers.delete(conn)
       try { conn.res.destroy() } catch {}
@@ -585,22 +662,21 @@ function writeSse(writers, frame) {
   }
 }
 
-/** 轮询一个会话：每条连接自己的游标，分页直到追上。 */
-async function pollSession(sessionId, targetPort) {
-  const writers = sessionStreams.get(sessionId)
-  if (!writers || writers.size === 0 || inflightPolls.has(sessionId)) return
-  inflightPolls.add(sessionId)
+async function pollSession(sessionId, targetPort, rt) {
+  const writers = rt.sessionStreams.get(sessionId)
+  if (!writers || writers.size === 0 || rt.inflightPolls.has(sessionId)) return
+  rt.inflightPolls.add(sessionId)
   try {
-    const filePath = await sessionFilePath(targetPort, sessionId)
+    const filePath = await sessionFilePath(targetPort, sessionId, rt)
     if (!filePath) return
-    let size = 0
+    let st
     try {
-      size = statSync(filePath).size
+      st = statSync(filePath)
     } catch {
       return
     }
-    const info = sessionFiles.get(sessionId)
-    if (info && info.lastSize === size) return
+    const info = rt.sessionFiles.get(sessionId)
+    if (info && info.lastSize === st.size && info.lastMtime === st.mtimeMs) return
     const minCursor = Math.min(...[...writers].map((c) => c.lastSeq))
     const { events, projections } = await loadEventsAfter(minCursor, (payload) =>
       callLocalRpc(targetPort, "session.history", { sessionId, ...payload }),
@@ -609,8 +685,13 @@ async function pollSession(sessionId, targetPort) {
       const forConn = events.filter((e) => e.seq > conn.lastSeq)
       for (const e of forConn) {
         try {
-          conn.res.write(sseMessageFrame(e))
+          const ok = conn.res.write(sseMessageFrame(e))
           conn.lastSeq = e.seq
+          if (ok === false) {
+            writers.delete(conn)
+            try { conn.res.destroy() } catch {}
+            break
+          }
         } catch {
           writers.delete(conn)
           try { conn.res.destroy() } catch {}
@@ -621,16 +702,30 @@ async function pollSession(sessionId, targetPort) {
         try { conn.res.write(`event: stats\ndata: ${JSON.stringify(projections)}\n\n`) } catch {}
       }
     }
-    if (info) info.lastSize = size
+    if (info) {
+      info.lastSize = st.size
+      info.lastMtime = st.mtimeMs
+    }
   } catch {
     // RPC 失败/会话消失：静默跳过，下个周期重试
   } finally {
-    inflightPolls.delete(sessionId)
+    rt.inflightPolls.delete(sessionId)
   }
 }
 
-/** SSE 路由：ready（含断点游标）→ 补发历史（最多 reconnectHistoryLimit 条消息）→ 实时增量。 */
-function handleStreamRoute(sessionId, res, targetPort, config, req) {
+async function handleStreamRoute(sessionId, res, targetPort, config, req, rt, device) {
+  try {
+    const list = await callLocalRpc(targetPort, "session.list", {})
+    if (!(list.items ?? []).some((s) => s.sessionId === sessionId)) {
+      return json(res, 404, { error: "session not found" })
+    }
+  } catch {
+    return json(res, 502, { error: "session lookup failed" })
+  }
+  const counts = sseCounts(rt)
+  if (counts.global >= MAX_SSE_GLOBAL || (counts.perDevice.get(device.deviceId) ?? 0) >= MAX_SSE_PER_DEVICE) {
+    return json(res, 429, { error: "too many streams" })
+  }
   res.writeHead(200, {
     "content-type": "text/event-stream; charset=utf-8",
     "cache-control": "no-store, no-cache, must-revalidate",
@@ -638,13 +733,13 @@ function handleStreamRoute(sessionId, res, targetPort, config, req) {
     "x-accel-buffering": "no",
   })
   res.flushHeaders?.()
-  let writers = sessionStreams.get(sessionId)
+  let writers = rt.sessionStreams.get(sessionId)
   if (!writers) {
     writers = new Set()
-    sessionStreams.set(sessionId, writers)
+    rt.sessionStreams.set(sessionId, writers)
   }
   const afterRaw = Number(new URL(req?.url ?? "/", "http://x").searchParams.get("afterSeq") ?? 0)
-  const conn = { res, lastSeq: Number.isFinite(afterRaw) && afterRaw > 0 ? afterRaw : 0 }
+  const conn = { res, lastSeq: Number.isFinite(afterRaw) && afterRaw > 0 ? afterRaw : 0, deviceId: device.deviceId }
   writers.add(conn)
   res.write(`event: ready\ndata: ${JSON.stringify({ resumeSeq: conn.lastSeq })}\n\n`)
   ;(async () => {
@@ -670,9 +765,9 @@ function handleStreamRoute(sessionId, res, targetPort, config, req) {
     } catch {}
   })()
   res.on("close", () => {
-    const set = sessionStreams.get(sessionId)
+    const set = rt.sessionStreams.get(sessionId)
     set?.delete(conn)
-    if (set && set.size === 0) dropSession(sessionId)
+    if (set && set.size === 0) dropSession(rt, sessionId)
   })
 }
 
@@ -693,7 +788,7 @@ function mobileSessionSummary(item) {
   }
 }
 
-async function handleMobileApi(req, res, targetPort, state, device, pathname) {
+async function handleMobileApi(req, res, targetPort, state, device, pathname, rt) {
   try {
     if (req.method !== "GET" && req.method !== "HEAD") {
       if (!requireJsonWrite(req, res)) return
@@ -734,7 +829,8 @@ async function handleMobileApi(req, res, targetPort, state, device, pathname) {
     }
 
     if (req.method === "POST" && pathname === "/dsh-link/mobile/sessions") {
-      const body = await readBody(req)
+      const body = await readJson(req, res)
+  if (!body) return
       const payload = {}
       if (typeof body.cwd === "string" && body.cwd.trim()) payload.cwd = body.cwd.trim()
       if (typeof body.workspaceId === "string" && body.workspaceId.trim()) payload.workspaceId = body.workspaceId.trim()
@@ -775,21 +871,15 @@ async function handleMobileApi(req, res, targetPort, state, device, pathname) {
           currency: value.currency ?? "USD",
         })
       } catch (err) {
-        // 降级：返回模拟余额（实际使用时替换为真实 RPC 或 PC 端代理）
-        return json(res, 200, {
-          version: 1,
-          balance: 5.2,
-          used: 2.3,
-          remainder: 2.9,
-          currency: "USD",
-        })
+        return json(res, 502, { error: "balance unavailable" })
       }
     }
 
     const modelMatch = pathname.match(/^\/dsh-link\/mobile\/sessions\/([^/]+)\/model$/)
     if (req.method === "POST" && modelMatch) {
       const sessionId = decodeURIComponent(modelMatch[1])
-      const body = await readBody(req)
+      const body = await readJson(req, res)
+  if (!body) return
       const provider = String(body.provider ?? "").trim()
       const model = String(body.model ?? "").trim()
       if (!provider || !model) return json(res, 400, { error: "缺少 provider 或 model" })
@@ -803,7 +893,8 @@ async function handleMobileApi(req, res, targetPort, state, device, pathname) {
     }
 
     if (req.method === "POST" && pathname === "/dsh-link/mobile/workspaces") {
-      const body = await readBody(req)
+      const body = await readJson(req, res)
+  if (!body) return
       const path = String(body.path ?? "").trim()
       if (!path) return json(res, 400, { error: "缺少工作区路径" })
       const value = await callLocalRpc(targetPort, "workspace.create", { path })
@@ -812,7 +903,8 @@ async function handleMobileApi(req, res, targetPort, state, device, pathname) {
 
     // 删除工作区（取消注册；会话日志不删除，DSH workspace.delete 语义）
     if (req.method === "POST" && pathname === "/dsh-link/mobile/workspaces/delete") {
-      const body = await readBody(req)
+      const body = await readJson(req, res)
+  if (!body) return
       const path = String(body.path ?? "").trim()
       if (!path) return json(res, 400, { error: "缺少工作区路径" })
       const list = await callLocalRpc(targetPort, "workspace.list", {})
@@ -841,7 +933,8 @@ async function handleMobileApi(req, res, targetPort, state, device, pathname) {
     }
 
     if (req.method === "POST" && pathname === "/dsh-link/mobile/settings/update") {
-      const body = await readBody(req)
+      const body = await readJson(req, res)
+  if (!body) return
       const ns = String(body.ns ?? "").trim()
       if (!ns) return json(res, 400, { error: "缺少命名空间" })
       const patch = body.patch
@@ -881,7 +974,8 @@ async function handleMobileApi(req, res, targetPort, state, device, pathname) {
     const renameMatch = pathname.match(/^\/dsh-link\/mobile\/sessions\/([^/]+)\/rename$/)
     if (req.method === "POST" && renameMatch) {
       const sessionId = decodeURIComponent(renameMatch[1])
-      const body = await readBody(req)
+      const body = await readJson(req, res)
+  if (!body) return
       const title = String(body.title ?? "").trim()
       if (!title) return json(res, 400, { error: "缺少会话名称" })
       const value = await callLocalRpc(targetPort, "session.rename", { sessionId, title })
@@ -906,13 +1000,14 @@ async function handleMobileApi(req, res, targetPort, state, device, pathname) {
     const approvalMatch = pathname.match(/^\/dsh-link\/mobile\/sessions\/([^/]+)\/approval$/)
     if (req.method === "POST" && approvalMatch) {
       const sessionId = decodeURIComponent(approvalMatch[1])
-      const body = await readBody(req)
+      const body = await readJson(req, res)
+  if (!body) return
       const approvalId = String(body.approvalId ?? "").trim()
       const outcome = String(body.outcome ?? "").trim()
       if (!approvalId || !["allowed-once", "rejected"].includes(outcome)) {
         return json(res, 400, { error: "缺少 approvalId 或 outcome 无效" })
       }
-      const pending = pendingApprovals.get(approvalId)
+      const pending = rt.pendingApprovals.get(approvalId)
       if (!pending) {
         return json(res, 409, { ok: false, accepted: false, error: "审批已结束或不存在" })
       }
@@ -946,7 +1041,9 @@ async function handleMobileApi(req, res, targetPort, state, device, pathname) {
       }
       // 投影为稳定消息列表（WI-001）：reasoning 只合并到覆盖其 seq 窗口的页面，
       // 消息 id 以事件 seq 为键（跨页稳定），assistant/message 与同页 block-end 共享 id。
-      const reasoningBySeq = await readSessionReasoning(targetPort, sessionId)
+      const reasoningBySeq = pageNeedsReasoningFile(rawEvents)
+        ? await readSessionReasoning(targetPort, sessionId, rt)
+        : new Map()
       const projected = projectHistoryPage({
         events: rawEvents,
         reasoningBySeq,
@@ -971,8 +1068,8 @@ async function handleMobileApi(req, res, targetPort, state, device, pathname) {
     const promptMatch = pathname.match(/^\/dsh-link\/mobile\/sessions\/([^/]+)\/prompt$/)
     if (req.method === "POST" && promptMatch) {
       const sessionId = decodeURIComponent(promptMatch[1])
-      const body = await readBody(req)
-      const text = String(body.text ?? "").trim()
+      const body = await readJson(req, res, PROMPT_BODY_LIMIT)
+      if (!body) return
       // 图片附件（DSH prompt image 块：base64 data + mediaType）
       const images = Array.isArray(body.images) ? body.images : []
       const content = []
@@ -1011,9 +1108,6 @@ const PANEL_ONLY_PATHS = new Set(["/dsh-link/pair-info", "/dsh-link/qr.png", "/d
 const APPROVAL_OUTCOMES = new Set(["allowed-once", "rejected", "cancelled", "unavailable"])
 const APPROVAL_TIMEOUT_MS = 5 * 60 * 1000
 
-// approvalId → { settle(outcome) }；依赖 dsh 内部 waterfall「approval/request」两参签名，升级时复查
-const pendingApprovals = new Map()
-
 function findApprovalId(req) {
   const events = req?.agent?.session?.events
   if (Array.isArray(events)) {
@@ -1032,6 +1126,7 @@ function findApprovalId(req) {
 }
 
 export function apply(ctx, config) {
+  const rt = createRuntime()
   const web = ctx.get("webServer")
   const targetPort = web.port
   const stateFile = statePathOf(config)
@@ -1078,7 +1173,8 @@ export function apply(ctx, config) {
       handler: async (req, res) => {
         if (!requireLoopbackSameOrigin(req, res)) return
         if (!requireJsonWrite(req, res)) return
-        const body = await readBody(req)
+        const body = await readJson(req, res)
+  if (!body) return
         const targetName = String(body.name ?? "").trim()
         const targetId = String(body.deviceId ?? "").trim()
         if (!targetName && !targetId) return json(res, 400, { error: "缺少设备名或 deviceId" })
@@ -1086,6 +1182,7 @@ export function apply(ctx, config) {
         if (!target) return json(res, 404, { error: "设备不存在" })
         state.devices = (state.devices ?? []).filter((d) => d.deviceId !== target.deviceId)
         revokeDevice(null, target.deviceId)
+        closeSseForDevice(rt, target.deviceId)
         saveState(stateFile, state)
         json(res, 200, { ok: true, removed: 1, deviceId: target.deviceId })
       },
@@ -1110,22 +1207,22 @@ export function apply(ctx, config) {
   ctx.on("approval/request", (req, next) => {
     if (req?.signal?.aborted === true) return Promise.resolve("cancelled")
     const sessionId = req?.agent?.session?.id
-    const writers = sessionId ? sessionStreams.get(sessionId) : null
+    const writers = sessionId ? rt.sessionStreams.get(sessionId) : null
     if (!writers || writers.size === 0) return next()
     const id = findApprovalId(req)
     if (!id) return next()
     return new Promise((resolve) => {
       const settle = (outcome) => {
-        const rec = pendingApprovals.get(id)
+        const rec = rt.pendingApprovals.get(id)
         if (!rec) return
-        pendingApprovals.delete(id)
+        rt.pendingApprovals.delete(id)
         if (rec.timer) clearTimeout(rec.timer)
         try { req.signal?.removeEventListener("abort", rec.onAbort) } catch {}
         resolve(APPROVAL_OUTCOMES.has(outcome) ? outcome : "unavailable")
       }
       const onAbort = () => settle("cancelled")
       const timer = setTimeout(() => settle("unavailable"), APPROVAL_TIMEOUT_MS)
-      pendingApprovals.set(id, { settle, timer, onAbort })
+      rt.pendingApprovals.set(id, { settle, timer, onAbort })
       req.signal?.addEventListener("abort", onAbort, { once: true })
     })
   })
@@ -1156,7 +1253,8 @@ export function apply(ctx, config) {
         if (req.method === "POST" && permissionMatch) {
           if (!requireJsonWrite(req, res)) return
           const sessionId = decodeURIComponent(permissionMatch[1])
-          const body = await readBody(req)
+          const body = await readJson(req, res)
+  if (!body) return
           const preset = String(body.preset ?? "").trim()
           const PRESET_SPECS = {
             "read-only": { sandbox: "read-only", approval: "ask" },
@@ -1180,9 +1278,9 @@ export function apply(ctx, config) {
         }
         const streamMatch = pathname.match(/^\/dsh-link\/mobile\/sessions\/([^/]+)\/stream$/)
         if (req.method === "GET" && streamMatch) {
-          return handleStreamRoute(decodeURIComponent(streamMatch[1]), res, targetPort, config, req)
+          return handleStreamRoute(decodeURIComponent(streamMatch[1]), res, targetPort, config, req, rt, device)
         }
-        return handleMobileApi(req, res, targetPort, state, device, pathname)
+        return handleMobileApi(req, res, targetPort, state, device, pathname, rt)
       }
       return json(res, 404, { error: "not found" })
     } catch (err) {
@@ -1202,16 +1300,16 @@ export function apply(ctx, config) {
       ctx.logger.warn(`dsh-links: proxy error: ${err?.message ?? err}`)
     })
     pollTimer = setInterval(() => {
-      for (const sessionId of sessionStreams.keys()) {
-        if ((sessionStreams.get(sessionId)?.size ?? 0) > 0) {
-          pollSession(sessionId, targetPort)
+      for (const sessionId of rt.sessionStreams.keys()) {
+        if ((rt.sessionStreams.get(sessionId)?.size ?? 0) > 0) {
+          pollSession(sessionId, targetPort, rt)
         }
       }
     }, config.eventPollIntervalMs)
     keepAliveTimer = setInterval(() => {
-      for (const [sessionId, writers] of sessionStreams) {
+      for (const [sessionId, writers] of rt.sessionStreams) {
         writeSse(writers, ": keepalive\n\n")
-        if (writers.size === 0) dropSession(sessionId)
+        if (writers.size === 0) dropSession(rt, sessionId)
       }
     }, 15_000)
     return new Promise((resolve, reject) => {
@@ -1229,17 +1327,18 @@ export function apply(ctx, config) {
       for (const dispose of disposers) dispose()
       if (pollTimer) clearInterval(pollTimer)
       if (keepAliveTimer) clearInterval(keepAliveTimer)
-      for (const writers of sessionStreams.values()) {
+      for (const writers of rt.sessionStreams.values()) {
         for (const conn of writers) {
           try { conn.res.end() } catch {}
         }
       }
-      sessionStreams.clear()
-      sessionFiles.clear()
-      for (const rec of pendingApprovals.values()) {
+      rt.sessionStreams.clear()
+      rt.sessionFiles.clear()
+      rt.reasoningCache.clear()
+      for (const rec of rt.pendingApprovals.values()) {
         try { rec.settle("cancelled") } catch {}
       }
-      pendingApprovals.clear()
+      rt.pendingApprovals.clear()
       try { proxy?.closeAllConnections?.() } catch {}
       try { proxy?.close() } catch {}
     },

@@ -54,6 +54,8 @@ class SessionStreamClient(
         lastSeqAtomic.updateAndGet { cur -> maxOf(cur, seq) }
     }
 
+    private var connection: HttpURLConnection? = null
+
     fun start() {
         if (job?.isActive == true) return
         job = scope.launch(Dispatchers.IO) { connectLoop() }
@@ -70,6 +72,8 @@ class SessionStreamClient(
     fun stop() {
         job?.cancel()
         job = null
+        try { connection?.disconnect() } catch (_: Exception) {}
+        connection = null
         if (connectionState == ConnectionState.CONNECTED) connectionState = ConnectionState.RETRYING
     }
 
@@ -89,7 +93,7 @@ class SessionStreamClient(
     }
 
     private suspend fun connectOnce(): ConnectResult {
-        val connection = try {
+        val conn = try {
             val path = "/dsh-link/mobile/sessions/" + URLEncoder.encode(sessionId, "UTF-8") + "/stream?afterSeq=" + lastSeq
             (URL(host.baseUrl.trimEnd('/') + path).openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"; connectTimeout = 8_000; readTimeout = 60_000; useCaches = false
@@ -97,14 +101,16 @@ class SessionStreamClient(
                 setRequestProperty("x-dsh-link-token", host.token)
             }.also { PinnedSsl.apply(it, host.certFingerprint) }
         } catch (e: Exception) { return ConnectResult(false, classifyFailure(e)) }
+        connection = conn
         return try {
-            val code = connection.responseCode
+            val code = conn.responseCode
             if (code != 200) return ConnectResult(false, classifyHttpFailure(code))
-            connection.inputStream.bufferedReader(Charsets.UTF_8).use { readSSE(it) }
+            conn.inputStream.bufferedReader(Charsets.UTF_8).use { readSSE(it) }
             ConnectResult(true, null)
         } catch (e: Exception) { ConnectResult(false, classifyFailure(e)) }
         finally {
-            connection.disconnect()
+            try { conn.disconnect() } catch (_: Exception) {}
+            if (connection === conn) connection = null
             connectionState = ConnectionState.RETRYING
             _items.trySend(Item.Disconnected)
         }

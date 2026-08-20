@@ -71,6 +71,20 @@ test("assistant/message 文本块与同页 text block-end 共享 id（按 source
   assert.deepEqual(texts, ["msg-201:第一段", "msg-203:第二段"])
 })
 
+test("连续 reasoning 块追加而非覆盖，id 用首块 seq", () => {
+  const events = [
+    blockEnd(10, "reasoning", "第一段思考"),
+    blockEnd(11, "reasoning", "第二段思考"),
+    blockEnd(12, "text", "回答"),
+  ]
+  const { messages } = projectHistoryPage({ events, reasoningBySeq: new Map(), hasMore: false })
+  const reasons = messages.filter((m) => m.role === "reasoning")
+  assert.equal(reasons.length, 1)
+  assert.equal(reasons[0].id, "reason-10")
+  assert.equal(reasons[0].seq, 10)
+  assert.equal(reasons[0].text, "第一段思考\n第二段思考")
+})
+
 test("投影已带文本的 reasoning（子会话未剥除）不再从文件重复合并", () => {
   const events = [
     blockEnd(301, "reasoning", "事件自带思考"),

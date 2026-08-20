@@ -23,7 +23,7 @@ interface MessageGroup {
     }
 
     data class ToolGroup(val items: List<MobileMessage>) : MessageGroup {
-        override val groupKey: String get() = items.first().id + "-group-" + items.size
+        override val groupKey: String get() = items.first().id + "-group"
     }
 }
 
