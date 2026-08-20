@@ -1,24 +1,19 @@
 /**
- * 认证与 Web 会话集成测试（Gate 2）：
- *   - 18640 匿名配对信息/二维码被拒
- *   - 配对码一次性 + 同名设备不静默替换
- *   - web-tickets 单次 ticket → web-bootstrap 302 + HttpOnly session
- *   - session cookie 访问页面/资源放行，无 cookie 拒绝
- *   - 吊销设备立即清除 ticket 与 session
- * 运行：node --test dsh-links/test/auth.test.mjs
+ * 认证与 18640 路由集成测试（第 1 批：fail-closed + 回环围栏 + 配对码）
+ * 运行：node --test --test-timeout=30000 test/*.mjs
  */
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { createServer } from "node:http"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Readable } from "node:stream"
 import { apply } from "../src/index.js"
+import { newPairingCode, pairingEntropy } from "../src/auth.js"
 
 const TMP = mkdtempSync(join(tmpdir(), "dsh-auth-test-"))
 
-/** 假 DSH 上游（3080 替身）。 */
 function startUpstream() {
   return new Promise((resolve) => {
     const srv = createServer((req, res) => {
@@ -29,7 +24,6 @@ function startUpstream() {
   })
 }
 
-/** mock ctx：webServer 收集注册路由；effect 收集清理函数。 */
 function makeCtx(upstreamPort) {
   const registered = []
   const effects = []
@@ -46,40 +40,54 @@ function makeCtx(upstreamPort) {
       return null
     },
     on() {},
-    effect(fn) { effects.push(fn) },
+    // cordis 语义：立即执行 setup，收集它返回的 disposer。
+    effect(fn) { effects.push(fn()) },
   }
   return { ctx, registered, effects }
 }
 
-/** 直接调用 3080 注册路由的 handler（mock req/res）。 */
-function callRoute(route, bodyObj) {
-  let status = 0, headers = {}, out = ""
+function loopbackHost() {
+  return `127.0.0.1:${upstream.address().port}`
+}
+
+function callRoute(route, { body, headers = {}, method } = {}) {
+  let status = 0, outHeaders = {}, out = ""
   const res = {
-    writeHead(c, h) { status = c; headers = h || {} },
-    end(b) { out = b || "" },
+    writeHead(c, h) { status = c; outHeaders = h || {} },
+    end(b) { out = b == null ? "" : Buffer.isBuffer(b) ? b.toString("utf8") : String(b) },
   }
+  const host = headers.host ?? headers.Host ?? loopbackHost()
   let req
-  if (bodyObj !== undefined) {
-    req = Readable.from([Buffer.from(JSON.stringify(bodyObj))])
-    req.headers = {}
+  if (body !== undefined) {
+    const payload = typeof body === "string" ? body : JSON.stringify(body)
+    req = Readable.from([Buffer.from(payload)])
+    req.method = method || "POST"
+    req.headers = { host, "content-type": "application/json", ...headers }
   } else {
-    req = { headers: {} }
+    req = { method: method || "GET", headers: { host, ...headers } }
   }
-  const result = route.handler(req, res)
-  return Promise.resolve(result).then(() => ({ status, headers, body: parseJson(out) }))
+  return Promise.resolve(route.handler(req, res)).then(() => ({
+    status,
+    headers: outHeaders,
+    body: parseJson(out),
+    raw: out,
+  }))
 }
 
 function parseJson(s) {
   try { return JSON.parse(s) } catch { return null }
 }
 
-let proxyPort, upstream, dispose, registered, effects
+function tokenHeaders(token) {
+  return { "x-dsh-link-token": token, "content-type": "application/json" }
+}
+
+let proxyPort, upstream, dispose, registered
 
 test.before(async () => {
   upstream = await startUpstream()
   const { ctx, registered: r, effects: e } = makeCtx(upstream.address().port)
   registered = r
-  effects = e
   proxyPort = 21000 + Math.floor(Math.random() * 1000)
   apply(ctx, {
     port: proxyPort,
@@ -88,7 +96,6 @@ test.before(async () => {
     stateDir: TMP,
     eventPollIntervalMs: 60000,
   })
-  // 等 proxy 就绪
   await new Promise((r) => setTimeout(r, 200))
   dispose = () => {
     for (const fn of e) try { fn() } catch {}
@@ -103,13 +110,42 @@ test.after(() => {
 
 const base = () => `http://127.0.0.1:${proxyPort}`
 const pairInfoRoute = () => registered.find((r) => r.path === "/dsh-link/pair-info")
+const qrRoute = () => registered.find((r) => r.path === "/dsh-link/qr.png")
 const revokeRoute = () => registered.find((r) => r.path === "/dsh-link/revoke")
+const devicesRoute = () => registered.find((r) => r.path === "/dsh-link/devices")
 
 test("18640 匿名 pair-info / qr.png 被拒", async () => {
   const r1 = await fetch(`${base()}/dsh-link/pair-info`)
-  assert.equal(r1.status, 401)
+  assert.equal(r1.status, 404)
   const r2 = await fetch(`${base()}/dsh-link/qr.png`)
-  assert.equal(r2.status, 401)
+  assert.equal(r2.status, 404)
+})
+
+test("health 不返回设备指纹", async () => {
+  const r = await fetch(`${base()}/dsh-link/health`)
+  assert.equal(r.status, 200)
+  const body = await r.json()
+  assert.deepEqual(body, { ok: true })
+})
+
+test("主端口 Host 非回环 → 403", async () => {
+  for (const route of [pairInfoRoute(), qrRoute(), revokeRoute(), devicesRoute()]) {
+    const r = await callRoute(route, { headers: { host: "evil.com:3080" }, body: route === revokeRoute() ? { name: "x" } : undefined })
+    assert.equal(r.status, 403, route.path)
+    assert.equal(r.body?.pairingCode, undefined)
+  }
+})
+
+test("主端口 sec-fetch-site: cross-site → 403", async () => {
+  const r = await callRoute(pairInfoRoute(), { headers: { "sec-fetch-site": "cross-site" } })
+  assert.equal(r.status, 403)
+})
+
+test("主端口 Origin 与 Host 不一致 → 403", async () => {
+  const r = await callRoute(pairInfoRoute(), {
+    headers: { origin: "http://evil.com", host: loopbackHost() },
+  })
+  assert.equal(r.status, 403)
 })
 
 test("无配对码时配对失败", async () => {
@@ -122,7 +158,6 @@ test("无配对码时配对失败", async () => {
 })
 
 test("配对成功返回 deviceId + token，配对码一次性，重放失败", async () => {
-  // 从 3080 面板取配对码
   const info = await callRoute(pairInfoRoute())
   assert.equal(info.status, 200)
   const code = info.body.pairingCode
@@ -139,7 +174,6 @@ test("配对成功返回 deviceId + token，配对码一次性，重放失败", 
   assert.ok(body.deviceId && body.deviceId.startsWith("dev-"))
   globalThis.__testDevice = { token: body.token, deviceId: body.deviceId }
 
-  // 重放同码 → 一次性拒绝
   const replay = await fetch(`${base()}/dsh-link/pair`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -159,88 +193,130 @@ test("同名设备不能静默替换", async () => {
   assert.equal(r.status, 409)
 })
 
-test("web-tickets：无凭据 401；有效 token 返回单次 ticket", async () => {
-  const anon = await fetch(`${base()}/dsh-link/mobile/web-tickets`, { method: "POST" })
-  assert.equal(anon.status, 401)
-
-  const ok = await fetch(`${base()}/dsh-link/mobile/web-tickets`, {
+test("带 token 的 POST pair-info 不得返回配对码", async () => {
+  const r = await fetch(`${base()}/dsh-link/pair-info`, {
     method: "POST",
+    headers: tokenHeaders(globalThis.__testDevice.token),
+    body: "{}",
+  })
+  assert.ok(r.status === 404 || r.status === 401)
+  const body = await r.json().catch(() => ({}))
+  assert.equal(body.pairingCode, undefined)
+})
+
+test("带 token 的 GET/POST revoke、devices → 404", async () => {
+  const token = globalThis.__testDevice.token
+  for (const path of ["/dsh-link/revoke", "/dsh-link/devices"]) {
+    for (const method of ["GET", "POST"]) {
+      const r = await fetch(`${base()}${path}`, {
+        method,
+        headers: tokenHeaders(token),
+        body: method === "POST" ? "{}" : undefined,
+      })
+      assert.equal(r.status, 404, `${method} ${path}`)
+    }
+  }
+})
+
+test("带 token 的未知路径 → 404（catch-all 已删）", async () => {
+  const r = await fetch(`${base()}/api/session.prompt`, {
+    method: "POST",
+    headers: tokenHeaders(globalThis.__testDevice.token),
+    body: "{}",
+  })
+  assert.equal(r.status, 404)
+  const page = await fetch(`${base()}/`, {
     headers: { "x-dsh-link-token": globalThis.__testDevice.token },
   })
-  assert.equal(ok.status, 200)
-  const body = await ok.json()
-  assert.ok(body.ticket && body.expiresAt > Date.now())
-  assert.equal(body.bootstrapPath, "/dsh-link/web-bootstrap")
-  globalThis.__testTicket = body.ticket
+  assert.equal(page.status, 404)
 })
 
-test("web-bootstrap：有效 ticket → 302 + HttpOnly session cookie；二次消费失败", async () => {
-  const r = await fetch(`${base()}/dsh-link/web-bootstrap?ticket=${globalThis.__testTicket}`, { redirect: "manual" })
-  assert.equal(r.status, 302)
-  assert.equal(r.headers.get("location"), "/")
-  const setCookie = r.headers.get("set-cookie") || ""
-  assert.match(setCookie, /dsh_web_session=/)
-  assert.match(setCookie, /HttpOnly/)
-  assert.match(setCookie, /SameSite=Strict/)
-  assert.match(setCookie, /Max-Age=1800/)
-  globalThis.__testSession = setCookie.split(";")[0]
-
-  // 二次消费同 ticket → 401
-  const replay = await fetch(`${base()}/dsh-link/web-bootstrap?ticket=${globalThis.__testTicket}`, { redirect: "manual" })
-  assert.equal(replay.status, 401)
-
-  // 无 ticket → 401
-  const none = await fetch(`${base()}/dsh-link/web-bootstrap`, { redirect: "manual" })
-  assert.equal(none.status, 401)
-})
-
-test("带 session cookie 访问页面放行；无 cookie 拒绝", async () => {
-  const authed = await fetch(`${base()}/`, { headers: { cookie: globalThis.__testSession } })
-  assert.equal(authed.status, 200)
-  assert.equal(await authed.text(), "upstream-ok")
-
-  const anon = await fetch(`${base()}/`)
-  assert.equal(anon.status, 401)
-})
-
-test("吊销设备后 session 与 ticket 立即失效", async () => {
-  const rev = await callRoute(revokeRoute(), { deviceId: globalThis.__testDevice.deviceId })
-  assert.equal(rev.status, 200)
-
-  // 旧 session → 401
-  const old = await fetch(`${base()}/`, { headers: { cookie: globalThis.__testSession } })
-  assert.equal(old.status, 401)
-
-  // 旧 token → 401（设备已删除）
-  const tickets = await fetch(`${base()}/dsh-link/mobile/web-tickets`, {
+test("POST pair 非 JSON content-type → 415", async () => {
+  const r = await fetch(`${base()}/dsh-link/pair`, {
     method: "POST",
-    headers: { "x-dsh-link-token": globalThis.__testDevice.token },
+    headers: { "content-type": "text/plain" },
+    body: JSON.stringify({ code: "000000", deviceName: "x" }),
   })
-  assert.equal(tickets.status, 401)
+  assert.equal(r.status, 415)
 })
 
-test("5 次失败配对触发冷却（限流）", async () => {
+test("5 次失败后 pair-info 不换发新码，冷却仍在", async () => {
+  const before = await callRoute(pairInfoRoute())
+  assert.equal(before.status, 200)
+  const code = before.body.pairingCode
+  assert.ok(/^\d{6}$/.test(code))
+  const wrong = code === "000000" ? "111111" : "000000"
+
   let last = null
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 5; i++) {
     last = await fetch(`${base()}/dsh-link/pair`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ code: "000000", deviceName: `限流机${i}` }),
+      body: JSON.stringify({ code: wrong, deviceName: `限流机${i}` }),
     })
+    assert.equal(last.status, 401)
   }
-  assert.equal(last.status, 401)
-  const body = await last.json()
-  assert.match(body.error, /频繁/)
+  assert.equal((await last.json()).error, "配对码无效")
+
+  const after = await callRoute(pairInfoRoute())
+  assert.equal(after.status, 200)
+  assert.equal(after.body.pairingCode, code)
+
+  const again = await fetch(`${base()}/dsh-link/pair`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code: wrong, deviceName: "限流机后再试" }),
+  })
+  assert.equal(again.status, 401)
+  assert.match((await again.json()).error, /频繁/)
+})
+
+test("配对码使用 crypto.randomInt", () => {
+  let called = 0
+  const orig = pairingEntropy.randomInt
+  pairingEntropy.randomInt = (...args) => {
+    called++
+    assert.equal(args[0], 0)
+    assert.equal(args[1], 1_000_000)
+    return orig.apply(pairingEntropy, args)
+  }
+  try {
+    const state = {}
+    const code = newPairingCode(state, 60)
+    assert.equal(called, 1)
+    assert.match(code, /^\d{6}$/)
+  } finally {
+    pairingEntropy.randomInt = orig
+  }
+})
+
+test("state.json 权限与不含明文 code", () => {
+  const file = join(TMP, "state.json")
+  const dirStat = statSync(TMP)
+  const fileStat = statSync(file)
+  assert.equal(dirStat.mode & 0o777, 0o700)
+  assert.equal(fileStat.mode & 0o777, 0o600)
+  const parsed = JSON.parse(readFileSync(file, "utf8"))
+  assert.equal(parsed.pairing?.code, undefined)
+  assert.ok(!JSON.stringify(parsed).includes('"code":'))
+})
+
+test("吊销设备后 token 立即失效", async () => {
+  const rev = await callRoute(revokeRoute(), { body: { deviceId: globalThis.__testDevice.deviceId } })
+  assert.equal(rev.status, 200)
+
+  const r = await fetch(`${base()}/dsh-link/mobile/bootstrap`, {
+    headers: { "x-dsh-link-token": globalThis.__testDevice.token },
+  })
+  assert.equal(r.status, 401)
 })
 
 test("lanUrls 分类功能：返回结构含 urls + infos", async () => {
-  // pair-info 仅在 3080 面板可见（18640 返回 401），从注册路由取
   const info = await callRoute(pairInfoRoute())
   assert.equal(info.status, 200)
   assert.ok(info.body.urls && Array.isArray(info.body.urls))
   assert.ok(info.body.infos && Array.isArray(info.body.infos))
   assert.ok(info.body.infos.length === info.body.urls.length)
-  // 验证每个条目都有分类标记
   for (const item of info.body.infos) {
     assert.ok(item.category && typeof item.category === "string")
     assert.ok(typeof item.isRecommended === "boolean")
@@ -251,7 +327,6 @@ test("pair-info 分类信息：至少一条局域网 IP 且推荐标记合理", 
   const info = await callRoute(pairInfoRoute())
   const infos = info.body.infos ?? []
   assert.ok(infos.length > 0, "应至少展示一个可用地址")
-  // 推荐标记只有一个
   const recommended = infos.filter((u) => u.isRecommended)
   assert.equal(recommended.length, 1, "推荐地址应唯一")
 })

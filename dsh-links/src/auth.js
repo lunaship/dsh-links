@@ -2,119 +2,146 @@
  * dsh-links 认证核心（纯逻辑，可 node --test 单测）
  * ============================================================
  * 凭据分层：
- *   配对码（一次性）→ deviceId + deviceToken（Keystore，不进 WebView）
- *   → 启动 ticket（30s 单次）→ Web session cookie（30min 滑动，HttpOnly）
+ *   配对码（一次性，内存明文 + 落盘 salt/hash）→ deviceId + deviceToken（App Keystore）
  *
  * 安全约定：
- *   - ticket 只存哈希，不落盘、不写日志
- *   - Web session 仅内存（服务重启即失效，不持久化）
- *   - 吊销设备立即清除其全部 ticket 与 session
+ *   - 配对码明文不落盘
+ *   - 失败限流与具体配对码解耦，冷却期内不换发新码
  */
-import { createHash, randomBytes } from "node:crypto"
+import * as crypto from "node:crypto"
 
-export const SESSION_TTL_MS = 30 * 60 * 1000      // 30 分钟滑动续期
-export const TICKET_TTL_MS = 30 * 1000            // 30 秒单次
-export const MAX_SESSIONS_PER_DEVICE = 3
 export const PAIR_FAIL_LIMIT = 5                  // 失败限流阈值
 export const PAIR_COOLDOWN_MS = 15 * 60 * 1000    // 冷却 15 分钟
 
-function sha256(v) {
-  return createHash("sha256").update(String(v)).digest("hex")
+const liveCodes = new WeakMap()
+
+export const pairingEntropy = {
+  randomInt(min, max) {
+    return crypto.randomInt(min, max)
+  },
+}
+
+function sha256Hex(v) {
+  return crypto.createHash("sha256").update(String(v)).digest("hex")
+}
+
+function hashPairing(salt, code) {
+  return crypto.createHash("sha256").update(String(salt)).update(":").update(String(code)).digest()
+}
+
+function safeEqualBuf(a, b) {
+  if (!Buffer.isBuffer(a) || !Buffer.isBuffer(b) || a.length !== b.length) return false
+  return crypto.timingSafeEqual(a, b)
 }
 
 export function randomToken(bytes = 24) {
-  return randomBytes(bytes).toString("hex")
+  return crypto.randomBytes(bytes).toString("hex")
 }
 
-/** 内存认证存储：tickets / sessions 两张表。 */
+/** 内存认证存储（吊销时关闭流等由调用方处理；票据/Web session 已移除）。 */
 export function newAuthStore() {
-  return { tickets: new Map(), sessions: new Map() }
+  return {}
 }
 
-/* ---------------- 启动 ticket ---------------- */
+/** 吊销设备：插件侧不再维护 ticket/session。 */
+export function revokeDevice(_store, _deviceId) {}
 
-export function issueTicket(store, deviceId, ttlMs = TICKET_TTL_MS) {
-  const ticket = randomToken(32)
-  store.tickets.set(sha256(ticket), { deviceId, expiresAt: Date.now() + ttlMs })
-  return ticket
+function pairingRate(state) {
+  if (!state.pairingRate) state.pairingRate = { failCount: 0, cooldownUntil: 0 }
+  return state.pairingRate
 }
 
-/** 单次消费：成功返回 deviceId 并移除；已消费/过期/不存在返回 null。 */
-export function consumeTicket(store, ticket, ttlMs = TICKET_TTL_MS) {
-  if (!ticket) return null
-  const key = sha256(ticket)
-  const rec = store.tickets.get(key)
-  if (!rec) return null
-  store.tickets.delete(key)
-  if (Date.now() > rec.expiresAt) return null
-  return rec.deviceId
+export function getLivePairingCode(state) {
+  return liveCodes.get(state) ?? null
 }
 
-/* ---------------- Web session ---------------- */
-
-/** 创建短期 Web session，返回 HttpOnly cookie 值。单设备最多 3 个活跃 session。 */
-export function createSession(store, deviceId, ttlMs = SESSION_TTL_MS) {
-  // 超过上限：驱逐最旧的
-  const mine = [...store.sessions.entries()].filter(([, s]) => s.deviceId === deviceId)
-  if (mine.length >= MAX_SESSIONS_PER_DEVICE) {
-    mine.sort((a, b) => a[1].expiresAt - b[1].expiresAt)
-    store.sessions.delete(mine[0][0])
+/** 启动时把旧版明文 pairing.code 迁到内存 + hash，并把限流字段拆出。 */
+export function hydratePairing(state) {
+  const p = state.pairing ?? {}
+  if (!state.pairingRate) {
+    state.pairingRate = {
+      failCount: p.failCount ?? 0,
+      cooldownUntil: p.cooldownUntil ?? 0,
+    }
   }
-  const value = randomToken(32)
-  store.sessions.set(value, { deviceId, expiresAt: Date.now() + ttlMs })
-  return value
-}
-
-/** 校验并滑动续期。返回 deviceId 或 null。 */
-export function getSession(store, cookieValue, ttlMs = SESSION_TTL_MS) {
-  if (!cookieValue) return null
-  const rec = store.sessions.get(cookieValue)
-  if (!rec) return null
-  if (Date.now() > rec.expiresAt) {
-    store.sessions.delete(cookieValue)
-    return null
+  if (p.code) {
+    const code = String(p.code)
+    liveCodes.set(state, code)
+    const salt = crypto.randomBytes(16).toString("hex")
+    state.pairing = {
+      salt,
+      codeHash: hashPairing(salt, code).toString("hex"),
+      expiresAt: p.expiresAt,
+      consumed: Boolean(p.consumed),
+    }
   }
-  rec.expiresAt = Date.now() + ttlMs
-  return rec.deviceId
 }
 
-export function destroySession(store, cookieValue) {
-  store.sessions.delete(cookieValue)
+/** 落盘用的 pairing 投影：不含明文 code。 */
+export function persistablePairing(pairing) {
+  if (!pairing?.codeHash) return {}
+  return {
+    salt: pairing.salt,
+    codeHash: pairing.codeHash,
+    expiresAt: pairing.expiresAt,
+    consumed: Boolean(pairing.consumed),
+  }
 }
 
-/** 吊销设备：清除其全部 ticket 与 session。 */
-export function revokeDevice(store, deviceId) {
-  for (const [k, v] of store.tickets) if (v.deviceId === deviceId) store.tickets.delete(k)
-  for (const [k, v] of store.sessions) if (v.deviceId === deviceId) store.sessions.delete(k)
-}
-
-/* ---------------- 配对码：一次性 + 限流 ---------------- */
-
-/** 生成一次性配对码（旧码立即失效）。 */
+/** 生成一次性配对码（旧码立即失效）。不重置限流计数。 */
 export function newPairingCode(state, ttlSeconds) {
-  const code = String(Math.floor(Math.random() * 1_000_000)).padStart(6, "0")
+  const code = String(pairingEntropy.randomInt(0, 1_000_000)).padStart(6, "0")
+  const salt = crypto.randomBytes(16).toString("hex")
+  liveCodes.set(state, code)
+  pairingRate(state)
   state.pairing = {
-    code,
+    salt,
+    codeHash: hashPairing(salt, code).toString("hex"),
     expiresAt: Date.now() + ttlSeconds * 1000,
     consumed: false,
-    failCount: 0,
-    cooldownUntil: 0,
   }
   return code
 }
 
-/** 校验配对码：返回 ok/error。成功后标记已消费（一次性）。 */
+/**
+ * 需要展示/使用配对码时调用。冷却期内绝不换发。
+ * @returns {string|null}
+ */
+export function ensurePairingCode(state, ttlSeconds) {
+  const rate = pairingRate(state)
+  const live = getLivePairingCode(state)
+  if (Date.now() < (rate.cooldownUntil ?? 0)) return live
+  const p = state.pairing
+  if (live && p && !p.consumed && (p.expiresAt ?? 0) > Date.now()) return live
+  return newPairingCode(state, ttlSeconds)
+}
+
+/** 校验配对码：返回 ok/error。成功后由 consumePairingCode 标记一次性消费。 */
 export function verifyPairingCode(state, code) {
+  const rate = pairingRate(state)
+  if (Date.now() < (rate.cooldownUntil ?? 0)) return { ok: false, error: "尝试过于频繁，请稍后再试" }
   const p = state.pairing ?? {}
-  if (Date.now() < (p.cooldownUntil ?? 0)) return { ok: false, error: "尝试过于频繁，请稍后再试" }
-  if (!p.code) return { ok: false, error: "尚未生成配对码" }
+  const live = getLivePairingCode(state)
+  if (!p.codeHash && !live) return { ok: false, error: "尚未生成配对码" }
   if (p.consumed) return { ok: false, error: "配对码已使用" }
   if (Date.now() > (p.expiresAt ?? 0)) return { ok: false, error: "配对码已过期" }
-  if (p.code !== code) {
-    p.failCount = (p.failCount ?? 0) + 1
-    if (p.failCount >= PAIR_FAIL_LIMIT) {
-      p.cooldownUntil = Date.now() + PAIR_COOLDOWN_MS
-      p.failCount = 0
+
+  const offered = String(code ?? "")
+  let match = false
+  if (p.salt && p.codeHash) {
+    const expected = Buffer.from(String(p.codeHash), "hex")
+    const actual = hashPairing(p.salt, offered)
+    match = safeEqualBuf(expected, actual)
+  } else if (live) {
+    const a = Buffer.from(live.padStart(6, "0"))
+    const b = Buffer.from(offered.padStart(6, "0"))
+    match = a.length === b.length && safeEqualBuf(a, b)
+  }
+  if (!match) {
+    rate.failCount = (rate.failCount ?? 0) + 1
+    if (rate.failCount >= PAIR_FAIL_LIMIT) {
+      rate.cooldownUntil = Date.now() + PAIR_COOLDOWN_MS
+      rate.failCount = 0
     }
     return { ok: false, error: "配对码无效" }
   }
@@ -124,4 +151,7 @@ export function verifyPairingCode(state, code) {
 /** 配对成功后调用：配对码立即失效（一次性）。 */
 export function consumePairingCode(state) {
   if (state.pairing) state.pairing.consumed = true
+  liveCodes.delete(state)
 }
+
+export { sha256Hex as sha256 }

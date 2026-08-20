@@ -2,25 +2,22 @@
  * dsh-links — 服务端面（host face）
  *
  * 一个插件完成"手机端使用 dsh"：
- *   1. 在主 web 服务上注册 /dsh-link/* 路由，给网页界面提供二维码与配对管理；
- *   2. 在 0.0.0.0:<port> 起一个带 token 校验的反向代理，手机 App 从这里进入 dsh，
- *      并重写 Host/Origin 让 dsh 的 browser-trust 防火墙放行（/api 可用）；
+ *   1. 在主 web 服务上注册 /dsh-link/* 路由（仅回环同源），给网页界面提供二维码与配对管理；
+ *   2. 在 0.0.0.0:<port> 起一个带 token 校验的手机 API（只服务 App：health / pair / mobile/*）；
  *   3. 配对采用一次性 6 位配对码（默认 10 分钟有效），扫码即自动批准。
  */
 import { createServer, request as httpRequest } from "node:http"
-import { connect } from "node:net"
-import { cpSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
-import { join } from "node:path"
+import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs"
+import { dirname, join } from "node:path"
 import { homedir, hostname, networkInterfaces } from "node:os"
-import { createHash, randomBytes } from "node:crypto"
+import { randomBytes } from "node:crypto"
 import { zstdDecompressSync } from "node:zlib"
 import z from "@deepseek-ai/schemastery"
 import QRCode from "qrcode"
 import { projectHistoryPage } from "./history.js"
 import {
-  newAuthStore, issueTicket, consumeTicket, createSession, getSession,
-  revokeDevice, newPairingCode, verifyPairingCode, consumePairingCode,
-  randomToken, SESSION_TTL_MS, TICKET_TTL_MS,
+  consumePairingCode, ensurePairingCode, hydratePairing, persistablePairing,
+  randomToken, revokeDevice, sha256, verifyPairingCode,
 } from "./auth.js"
 
 export const name = "dsh-links"
@@ -45,44 +42,16 @@ export const Config = z.object({
   reconnectHistoryLimit: z.natural().default(50),
 })
 
-const COOKIE_NAME = "dsh_link_token"
 const HEADER_NAME = "x-dsh-link-token"
-const SESSION_COOKIE = "dsh_web_session"
 
-/**
- * crypto.randomUUID 只在安全上下文（https 或 localhost）可用。
- * 手机经 http://局域网IP:18640 访问时是非安全上下文，DSH 运行时用它生成
- * RPC ID，缺失会导致连接循环第一代即失败（表现为"看不到会话/建不了会话"）。
- * 通过 tapIndex 注入到每份 index.html 的 <head>，在任何客户端 bundle 之前生效。
- */
-const RANDOM_UUID_POLYFILL = `<script>/* dsh-links: crypto.randomUUID polyfill for non-secure contexts */
-if (typeof crypto !== "undefined" && typeof crypto.randomUUID !== "function") {
-  crypto.randomUUID = function () {
-    return ([1e7] + -1e3 + -4e3 + -8e3 + -1e11).replace(/[018]/g, function (c) {
-      return (c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (c / 4)))).toString(16)
-    })
-  }
-}</script>`
-
-/**
- * dsh-ui-mobile 安装引导抑制：仅对 App WebView（UA 含 DshMobile）生效。
- * App 内不需要 PWA「安装到主屏幕」引导；桌面/手机浏览器不受影响。
- * 必须在 dsh-ui-mobile client 启动前（<head> 注入）设置 localStorage。
- */
-const MOBILE_INSTALL_SUPPRESS = `<script>/* dsh-links: suppress dsh-ui-mobile PWA install prompt inside App WebView */
-if (/\bDshMobile\b/.test(navigator.userAgent || "")) {
-  try {
-    localStorage.setItem("dsh-ui-mobile:install-promotion-dismissed", "1")
-    localStorage.setItem("dsh-ui-mobile:ios-install-hint", "1")
-  } catch (_) {}
-  /* beforeinstallprompt 触发的横幅不受 dismissed key 控制，用动态 CSS 隐藏 */
-  var __s = document.createElement("style")
-  __s.textContent = '[aria-label="安装应用"], [aria-label="添加到主屏幕"] { display: none !important }'
-  document.head.appendChild(__s)
-}</script>`
-
-function sha256(text) {
-  return createHash("sha256").update(String(text)).digest("hex")
+/** App 实际会写的 settings.update 键路径（反查 AppSettingsStore / SettingsActivity）。未知 ns/键一律拒绝。 */
+const SETTINGS_WRITE_ALLOWLIST = {
+  "agent-presets": ["default"],
+  permission: ["defaultPreset"],
+  locale: ["preference"],
+  "ui-theme": ["preference"],
+  "ui-conversation": ["busyEnter"],
+  "agent-default-model": ["provider", "model", "reasoningEffort"],
 }
 
 const DEFAULT_STATE_DIR = join(homedir(), ".dsh", "dsh-links")
@@ -100,17 +69,18 @@ function ensureStateDir(config) {
       for (const legacyDir of LEGACY_STATE_DIRS) {
         const legacyState = join(legacyDir, "state.json")
         if (!existsSync(legacyState)) continue
-        mkdirSync(dir, { recursive: true })
+        mkdirSync(dir, { recursive: true, mode: 0o700 })
         try {
           cpSync(legacyDir, dir, { recursive: true })
         } catch {
-          writeFileSync(newState, readFileSync(legacyState))
+          writeFileSync(newState, readFileSync(legacyState), { mode: 0o600 })
         }
         break
       }
     }
   }
-  mkdirSync(dir, { recursive: true })
+  mkdirSync(dir, { recursive: true, mode: 0o700 })
+  try { chmodSync(dir, 0o700) } catch {}
   return dir
 }
 
@@ -119,25 +89,37 @@ function statePathOf(config) {
 }
 
 function loadState(file) {
+  if (!existsSync(file)) return {}
+  let raw
   try {
-    return JSON.parse(readFileSync(file, "utf8"))
+    raw = readFileSync(file, "utf8")
+  } catch (err) {
+    throw new Error(`dsh-links: 无法读取 state.json: ${err?.message ?? err}`)
+  }
+  try {
+    return JSON.parse(raw)
   } catch {
-    return {}
+    throw new Error(`dsh-links: state.json 已损坏，拒绝静默清空已配对设备 (${file})`)
   }
 }
 
 function saveState(file, state) {
-  writeFileSync(file, JSON.stringify(state, null, 2))
+  const dir = dirname(file)
+  mkdirSync(dir, { recursive: true, mode: 0o700 })
+  try { chmodSync(dir, 0o700) } catch {}
+  const persist = {
+    ...state,
+    pairing: persistablePairing(state.pairing),
+  }
+  const data = JSON.stringify(persist, null, 2)
+  const tmp = `${file}.${process.pid}.tmp`
+  writeFileSync(tmp, data, { mode: 0o600 })
+  renameSync(tmp, file)
+  try { chmodSync(file, 0o600) } catch {}
 }
 
 function now() {
   return Date.now()
-}
-
-function ensurePairingCode(state, ttlSeconds) {
-  const p = state.pairing
-  if (p && p.code && !p.consumed && p.expiresAt > now() && Date.now() >= (p.cooldownUntil ?? 0)) return p.code
-  return newPairingCode(state, ttlSeconds)
 }
 
 function classifyUrl(url) {
@@ -154,7 +136,13 @@ function classifyUrl(url) {
 function lanUrls(config) {
   const urls = new Set()
   const urlInfos = []
-  for (const list of Object.values(networkInterfaces())) {
+  let ifaces = {}
+  try {
+    ifaces = networkInterfaces() ?? {}
+  } catch {
+    ifaces = {}
+  }
+  for (const list of Object.values(ifaces)) {
     for (const iface of list ?? []) {
       if (iface && iface.family === "IPv4" && !iface.internal && !iface.address.startsWith("198.18.")) {
         const fullUrl = `http://${iface.address}:${config.port}`
@@ -194,6 +182,99 @@ function json(res, code, obj) {
   res.end(JSON.stringify(obj))
 }
 
+function headerVal(headers, name) {
+  const value = headers?.[name] ?? headers?.[name.toLowerCase()]
+  return typeof value === "string" ? value : undefined
+}
+
+function isLoopbackHostname(hostname) {
+  const host = String(hostname ?? "").toLowerCase().replace(/^\[|\]$/g, "")
+  if (host === "localhost" || host === "::1") return true
+  const parts = host.split(".")
+  return parts.length === 4 && parts[0] === "127" && parts.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255)
+}
+
+/**
+ * 对齐 dsh-client-connection isTrustedApiRequest（trustedHosts 为空，只认回环）。
+ * 依赖 dsh 内部信任围栏语义，dsh 升级时需复查。
+ */
+function requireLoopbackSameOrigin(req, res) {
+  const host = headerVal(req.headers, "host")
+  if (!host) {
+    json(res, 403, { error: "forbidden" })
+    return false
+  }
+  let hostUrl
+  try {
+    hostUrl = new URL(`http://${host}`)
+  } catch {
+    json(res, 403, { error: "forbidden" })
+    return false
+  }
+  if (!isLoopbackHostname(hostUrl.hostname)) {
+    json(res, 403, { error: "forbidden" })
+    return false
+  }
+  if (headerVal(req.headers, "sec-fetch-site") === "cross-site") {
+    json(res, 403, { error: "forbidden" })
+    return false
+  }
+  const origin = headerVal(req.headers, "origin")
+  if (origin !== undefined) {
+    try {
+      if (new URL(origin).host !== hostUrl.host) {
+        json(res, 403, { error: "forbidden" })
+        return false
+      }
+    } catch {
+      json(res, 403, { error: "forbidden" })
+      return false
+    }
+  }
+  return true
+}
+
+/** 状态变更请求：强制 JSON media type（触发 CORS 预检）+ 拒绝跨站 Origin。 */
+function requireJsonWrite(req, res) {
+  if (headerVal(req.headers, "sec-fetch-site") === "cross-site") {
+    json(res, 403, { error: "forbidden" })
+    return false
+  }
+  const origin = headerVal(req.headers, "origin")
+  const host = headerVal(req.headers, "host")
+  if (origin) {
+    if (!host) {
+      json(res, 403, { error: "forbidden" })
+      return false
+    }
+    try {
+      if (new URL(origin).host !== host) {
+        json(res, 403, { error: "forbidden" })
+        return false
+      }
+    } catch {
+      json(res, 403, { error: "forbidden" })
+      return false
+    }
+  }
+  const ct = (headerVal(req.headers, "content-type") ?? "").toLowerCase()
+  if (ct !== "application/json" && !ct.startsWith("application/json;")) {
+    json(res, 415, { error: "content-type must be application/json" })
+    return false
+  }
+  return true
+}
+
+function filterSettingsPatch(ns, patch) {
+  const allowed = SETTINGS_WRITE_ALLOWLIST[ns]
+  if (!allowed) return { error: "该设置命名空间不允许从手机端写入" }
+  const keys = Object.keys(patch)
+  if (keys.length === 0) return { error: "patch 为空" }
+  const unknown = keys.filter((k) => !allowed.includes(k))
+  if (unknown.length > 0) return { error: "包含不允许写入的键" }
+  return { ok: true }
+}
+
 function readBody(req, limit = 64 * 1024) {
   return new Promise((resolve) => {
     const chunks = []
@@ -213,17 +294,7 @@ function readBody(req, limit = 64 * 1024) {
   })
 }
 
-function authorize(req, state, authStore) {
-  // 1) Web session cookie（WebView 页面/资源/WebSocket；HttpOnly，原生层不可读）
-  const raw = req.headers.cookie ?? ""
-  for (const part of raw.split(";")) {
-    const kv = part.trim()
-    if (kv.startsWith(`${SESSION_COOKIE}=`)) {
-      const deviceId = getSession(authStore, decodeURIComponent(kv.slice(SESSION_COOKIE.length + 1)))
-      if (deviceId) return (state.devices ?? []).find((d) => d.deviceId === deviceId) ?? null
-    }
-  }
-  // 2) 长期设备 token（仅原生层 header 请求；永不进入 WebView/Cookie/URL）
+function authorize(req, state) {
   const token = typeof req.headers[HEADER_NAME] === "string" ? req.headers[HEADER_NAME] : null
   if (!token) return null
   const hash = sha256(token)
@@ -244,11 +315,13 @@ async function qrPng(res, config, state) {
     res.writeHead(200, { "content-type": "image/png", "cache-control": "no-store" })
     res.end(buf)
   } catch (err) {
-    json(res, 500, { error: String(err?.message ?? err) })
+    console.error(`dsh-links: qr.png: ${err?.message ?? err}`)
+    json(res, 500, { error: "failed to render qr" })
   }
 }
 
 async function handlePair(req, res, config, state, stateFile) {
+  if (!requireJsonWrite(req, res)) return
   const body = await readBody(req)
   const code = String(body.code ?? "").trim()
   const deviceName = (String(body.deviceName ?? "手机").trim().slice(0, 32) || "手机")
@@ -456,6 +529,12 @@ async function selectSessionModel(targetPort, sessionId, provider, model, reason
   throw lastErr ?? new Error("切换模型失败")
 }
 
+/**
+ * 向本机 dsh /api 发 RPC。刻意把 Host/Origin 写成回环：dsh 的 PRIVILEGED_METHODS
+ * 只认 isTrustedApiRequest(req, [])，插件代调的方法名是写死的闭集（session.* /
+ * workspace.* / settings.describe|update / agentPreset.list / llm.models|balance），
+ * 不是 18640 上的开放转发。依赖 dsh 内部 API，升级时需复查。
+ */
 function callLocalRpc(targetPort, method, payload) {
   return new Promise((resolve, reject) => {
     const rpcId = "mobile-" + randomBytes(12).toString("hex")
@@ -647,6 +726,9 @@ function mobileSessionSummary(item) {
 
 async function handleMobileApi(req, res, targetPort, state, device, pathname) {
   try {
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      if (!requireJsonWrite(req, res)) return
+    }
     if (req.method === "GET" && pathname === "/dsh-link/mobile/bootstrap") {
       const value = await callLocalRpc(targetPort, "session.list", {})
       const sessions = (value.items ?? []).map(mobileSessionSummary)
@@ -797,6 +879,8 @@ async function handleMobileApi(req, res, targetPort, state, device, pathname) {
       if (typeof patch !== "object" || patch === null || Array.isArray(patch)) {
         return json(res, 400, { error: "patch 必须是对象" })
       }
+      const filtered = filterSettingsPatch(ns, patch)
+      if (filtered.error) return json(res, 403, { error: filtered.error })
       const payload = { ns, patch }
       if (Number.isInteger(body.expectedRevision)) payload.expectedRevision = body.expectedRevision
       const value = await callLocalRpc(targetPort, "settings.update", payload)
@@ -957,34 +1041,12 @@ async function handleMobileApi(req, res, targetPort, state, device, pathname) {
 
     return json(res, 404, { error: "mobile endpoint not found" })
   } catch (error) {
-    return json(res, 502, { error: error?.message ?? "mobile API unavailable" })
+    console.error(`dsh-links: mobile API error: ${error?.message ?? error}`)
+    return json(res, 502, { error: "mobile API unavailable" })
   }
 }
 
-function forwardHttp(req, res, targetPort) {
-  const headers = {}
-  for (const [k, v] of Object.entries(req.headers)) {
-    if (v === undefined) continue
-    if (["host", "origin", "connection", "keep-alive", "proxy-connection", "upgrade", "transfer-encoding"].includes(k)) continue
-    headers[k] = v
-  }
-  headers.host = `127.0.0.1:${targetPort}`
-  headers.origin = `http://127.0.0.1:${targetPort}`
-
-  const upstream = httpRequest(
-    { host: "127.0.0.1", port: targetPort, method: req.method, path: req.url, headers },
-    (upRes) => {
-      res.writeHead(upRes.statusCode ?? 502, upRes.headers)
-      upRes.pipe(res)
-    },
-  )
-  upstream.on("error", () => {
-    if (!res.headersSent) json(res, 502, { error: "upstream unreachable" })
-    else res.destroy()
-  })
-  res.on("close", () => upstream.destroy())
-  req.pipe(upstream)
-}
+const PANEL_ONLY_PATHS = new Set(["/dsh-link/pair-info", "/dsh-link/qr.png", "/dsh-link/revoke", "/dsh-link/devices"])
 
 // 审批接管：挂起 approval/request waterfall，由移动端 HTTP 接口 resolve
 const pendingApprovals = new Map() // approvalId → resolve(outcome)
@@ -992,9 +1054,9 @@ const pendingApprovals = new Map() // approvalId → resolve(outcome)
 export function apply(ctx, config) {
   const web = ctx.get("webServer")
   const targetPort = web.port
-  const authStore = newAuthStore()
   const stateFile = statePathOf(config)
   const state = loadState(stateFile)
+  hydratePairing(state)
   if (!state.deviceId) state.deviceId = `dsh-${randomBytes(8).toString("hex")}`
   if (!state.devices) state.devices = []
   if (!state.pairing) state.pairing = {}
@@ -1009,26 +1071,30 @@ export function apply(ctx, config) {
   saveState(stateFile, state)
   if (migrated) ctx.logger.info("dsh-links: 已为旧设备补发 deviceId")
 
-  // ---------- 主 web 服务上的路由（网页界面「手机连接」面板用） ----------
+  // ---------- 主 web 服务上的路由（网页界面「手机连接」面板用；回环同源围栏） ----------
   const disposers = [
-    web.tapIndex((html) => html.replace(/<head([^>]*)>/i, `<head$1>${MOBILE_INSTALL_SUPPRESS}${RANDOM_UUID_POLYFILL}`)),
     web.register({
       kind: "exact",
       path: "/dsh-link/pair-info",
       handler: (req, res) => {
-        saveState(stateFile, state)
+        if (!requireLoopbackSameOrigin(req, res)) return
         json(res, 200, pairInfo(config, state))
       },
     }),
     web.register({
       kind: "exact",
       path: "/dsh-link/qr.png",
-      handler: (req, res) => qrPng(res, config, state),
+      handler: (req, res) => {
+        if (!requireLoopbackSameOrigin(req, res)) return
+        return qrPng(res, config, state)
+      },
     }),
     web.register({
       kind: "exact",
       path: "/dsh-link/revoke",
       handler: async (req, res) => {
+        if (!requireLoopbackSameOrigin(req, res)) return
+        if (!requireJsonWrite(req, res)) return
         const body = await readBody(req)
         const targetName = String(body.name ?? "").trim()
         const targetId = String(body.deviceId ?? "").trim()
@@ -1036,7 +1102,7 @@ export function apply(ctx, config) {
         const target = (state.devices ?? []).find((d) => d.name === targetName || d.deviceId === targetId)
         if (!target) return json(res, 404, { error: "设备不存在" })
         state.devices = (state.devices ?? []).filter((d) => d.deviceId !== target.deviceId)
-        revokeDevice(authStore, target.deviceId) // 吊销：立即清除其全部 ticket 与 Web session
+        revokeDevice(null, target.deviceId)
         saveState(stateFile, state)
         json(res, 200, { ok: true, removed: 1, deviceId: target.deviceId })
       },
@@ -1045,6 +1111,7 @@ export function apply(ctx, config) {
       kind: "exact",
       path: "/dsh-link/devices",
       handler: (req, res) => {
+        if (!requireLoopbackSameOrigin(req, res)) return
         json(res, 200, {
           devices: state.devices.map(({ deviceId, name, createdAt, lastSeenAt }) => ({ deviceId, name, createdAt, lastSeenAt })),
         })
@@ -1062,49 +1129,20 @@ export function apply(ctx, config) {
     })
   })
 
-  // ---------- 手机接入代理（0.0.0.0:<port>，token 校验 + Host/Origin 重写） ----------
+  // ---------- 手机接入代理（0.0.0.0:<port>）：仅 health / pair / mobile/* ----------
   const proxy = createServer(async (req, res) => {
     try {
       const pathname = new URL(req.url ?? "/", "http://x").pathname
       if (pathname === "/dsh-link/health" && req.method === "GET") {
-        return json(res, 200, { ok: true, name: "dsh-links", deviceId: state.deviceId })
+        return json(res, 200, { ok: true })
       }
       if (pathname === "/dsh-link/pair" && req.method === "POST") {
         return handlePair(req, res, config, state, stateFile)
       }
-      // 18640 不提供匿名配对信息/二维码：配对码只能从本机 3080 管理界面获得
-      if ((pathname === "/dsh-link/pair-info" || pathname === "/dsh-link/qr.png") && req.method === "GET") {
-        return json(res, 401, { error: "配对信息仅限本机管理界面（3080）" })
+      if (PANEL_ONLY_PATHS.has(pathname)) {
+        return json(res, 404, { error: "not found" })
       }
-      // 一次性启动 ticket → 短期 HttpOnly Web session（WebView 入口）
-      if (pathname === "/dsh-link/mobile/web-tickets" && req.method === "POST") {
-        const device = authorize(req, state, authStore)
-        if (!device) return json(res, 401, { error: "无效设备凭据" })
-        const ticket = issueTicket(authStore, device.deviceId)
-        return json(res, 200, {
-          ticket,
-          expiresAt: Date.now() + TICKET_TTL_MS,
-          bootstrapPath: "/dsh-link/web-bootstrap",
-        })
-      }
-      if (pathname === "/dsh-link/web-bootstrap" && req.method === "GET") {
-        const ticket = new URL(req.url ?? "/", "http://x").searchParams.get("ticket") ?? ""
-        const deviceId = consumeTicket(authStore, ticket)
-        if (!deviceId) return json(res, 401, { error: "ticket 无效、已消费或已过期" })
-        const device = (state.devices ?? []).find((d) => d.deviceId === deviceId)
-        if (!device) return json(res, 401, { error: "设备不存在或已吊销" })
-        const sessionValue = createSession(authStore, deviceId)
-        const secure = req.headers["x-forwarded-proto"] === "https"
-        res.writeHead(302, {
-          "set-cookie": `${SESSION_COOKIE}=${sessionValue}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}${secure ? "; Secure" : ""}`,
-          location: "/",
-          "referrer-policy": "no-referrer",
-          "cache-control": "no-store",
-        })
-        res.end()
-        return
-      }
-      const device = authorize(req, state, authStore)
+      const device = authorize(req, state)
       if (config.debug) {
         ctx.logger.info(`dsh-links: ${req.method} ${pathname} → ${device ? `device:${device.deviceId}` : "denied"}`)
       }
@@ -1115,6 +1153,7 @@ export function apply(ctx, config) {
       if (pathname.startsWith("/dsh-link/mobile/")) {
         const permissionMatch = pathname.match(/^\/dsh-link\/mobile\/sessions\/([^/]+)\/permission$/)
         if (req.method === "POST" && permissionMatch) {
+          if (!requireJsonWrite(req, res)) return
           const sessionId = decodeURIComponent(permissionMatch[1])
           const body = await readBody(req)
           const preset = String(body.preset ?? "").trim()
@@ -1126,7 +1165,6 @@ export function apply(ctx, config) {
           const spec = PRESET_SPECS[preset]
           if (!spec) return json(res, 400, { error: "preset 无效" })
           try {
-            // 通过 DSH sessions 服务写入策略事件（与 /permission 命令等效）
             const sessions = ctx.get("sessions")
             const session = typeof sessions?.get === "function" ? await sessions.get(sessionId) : undefined
             if (!session) return json(res, 404, { error: "会话不存在" })
@@ -1135,7 +1173,8 @@ export function apply(ctx, config) {
             session.append("sandbox/mode", { mode: spec.sandbox })
             return json(res, 200, { ok: true, preset, approval: spec.approval, sandbox: spec.sandbox })
           } catch (err) {
-            return json(res, 500, { error: String(err?.message ?? err) })
+            ctx.logger.warn(`dsh-links: permission update: ${err?.message ?? err}`)
+            return json(res, 500, { error: "permission update failed" })
           }
         }
         const streamMatch = pathname.match(/^\/dsh-link\/mobile\/sessions\/([^/]+)\/stream$/)
@@ -1144,56 +1183,12 @@ export function apply(ctx, config) {
         }
         return handleMobileApi(req, res, targetPort, state, device, pathname)
       }
-      forwardHttp(req, res, targetPort)
+      return json(res, 404, { error: "not found" })
     } catch (err) {
       ctx.logger.warn(`dsh-links: proxy request error: ${err?.message ?? err}`)
       if (!res.headersSent) json(res, 500, { error: "proxy error" })
       else res.destroy()
     }
-  })
-
-  proxy.on("upgrade", (req, socket, head) => {
-    const device = authorize(req, state, authStore)
-    if (!device) {
-      socket.destroy()
-      return
-    }
-    touchDevice(state, device, stateFile)
-    if (config.debug) {
-      ctx.logger.info(`dsh-links: upgrade ${req.url}`)
-    }
-    const upstream = connect(targetPort, "127.0.0.1", () => {
-      const lines = [`${req.method} ${req.url} HTTP/${req.httpVersion}`]
-      for (const [k, v] of Object.entries(req.headers)) {
-        if (v === undefined) continue
-        if (k === "host") {
-          lines.push(`host: 127.0.0.1:${targetPort}`)
-          continue
-        }
-        if (k === "origin") {
-          lines.push(`origin: http://127.0.0.1:${targetPort}`)
-          continue
-        }
-        for (const vv of Array.isArray(v) ? v : [v]) lines.push(`${k}: ${vv}`)
-      }
-      upstream.write(`${lines.join("\r\n")}\r\n\r\n`)
-      if (head && head.length > 0) upstream.write(head)
-      socket.pipe(upstream)
-      upstream.pipe(socket)
-      if (config.debug) {
-        upstream.once("data", (d) => ctx.logger.info(`dsh-links: upstream first bytes: ${d.toString().slice(0, 160)}`))
-        socket.once("data", (d) => ctx.logger.info(`dsh-links: client first frame bytes: ${d.toString("hex").slice(0, 120)}`))
-        socket.on("close", () => ctx.logger.info("dsh-links: client socket closed"))
-        upstream.on("close", () => ctx.logger.info("dsh-links: upstream socket closed"))
-        socket.on("end", () => ctx.logger.info("dsh-links: client socket end"))
-        upstream.on("end", () => ctx.logger.info("dsh-links: upstream socket end"))
-      }
-    })
-    upstream.on("error", (e) => {
-      if (config.debug) ctx.logger.info(`dsh-links: upstream connect error: ${e?.message ?? e}`)
-      socket.destroy()
-    })
-    socket.on("error", () => upstream.destroy())
   })
 
   proxy.on("error", (err) => {
