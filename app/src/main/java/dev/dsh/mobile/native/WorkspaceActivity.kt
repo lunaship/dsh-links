@@ -477,11 +477,10 @@ fun WorkspaceScreen(
                     hasMoreMessages = result.hasMore
                     nextBeforeSeq = result.nextBeforeSeq
                     stoppedReason = result.stoppedReason
-                    // 登记本页最新事件 seq，作为 SSE 增量去重基线
-                    result.maxSeq?.let { maxSeq ->
-                        seedMaxSeq = maxOf(seedMaxSeq, maxSeq)
-                        streamClient?.noteSeedMaxSeq(maxSeq)
-                    }
+                    // 登记本页最新事件 seq，作为 SSE 增量去重基线（缺 maxSeq 也必须 seed）
+                    val seed = historySeedSeq(result.maxSeq, msgs.map { it.seq })
+                    seedMaxSeq = maxOf(seedMaxSeq, seed)
+                    streamClient?.noteSeedMaxSeq(seed)
                     // 回前台/手动刷新：仅用户停在底部附近时跟随新尾部（WI-003）
                     if (autoScroll && !sameContent) followIfNearBottom()
                 }
@@ -974,7 +973,7 @@ fun WorkspaceScreen(
             delay(2000)
             if (currentSessionId != null && isForeground) {
                 refreshSessions()
-                if (streamClient?.isConnected != true) {
+                if (streamClient?.isConnected != true || streamClient?.isSeeded != true) {
                     refreshMessages(autoScroll = false)
                 }
             }

@@ -18,6 +18,7 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.util.concurrent.atomic.AtomicLong
 
 /** DSH 会话 SSE 实时流客户端。 */
 class SessionStreamClient(
@@ -34,20 +35,24 @@ class SessionStreamClient(
 
     enum class ConnectionState { CONNECTING, CONNECTED, RETRYING, FAILURE }
 
-    private val _items = Channel<Item>(capacity = Channel.BUFFERED)
+    private val _items = Channel<Item>(capacity = Channel.UNLIMITED)
     val items: Channel<Item> = _items
-    var lastSeq: Long = 0
-        private set
+    private val lastSeqAtomic = AtomicLong(0)
+    val lastSeq: Long get() = lastSeqAtomic.get()
     var connectionState by mutableStateOf(ConnectionState.RETRYING)
         private set
     /** Compatibility for polling gates and existing callers. */
     val isConnected: Boolean get() = connectionState == ConnectionState.CONNECTED
+    @Volatile private var seeded = false
+    val isSeeded: Boolean get() = seeded
     var lastFailure by mutableStateOf<StreamFailure?>(null)
         private set
     private var job: Job? = null
-    private var seeded = false
 
-    fun noteSeedMaxSeq(seq: Long) { seeded = true; if (seq > lastSeq) lastSeq = seq }
+    fun noteSeedMaxSeq(seq: Long) {
+        seeded = true
+        lastSeqAtomic.updateAndGet { cur -> maxOf(cur, seq) }
+    }
 
     fun start() {
         if (job?.isActive == true) return
@@ -83,9 +88,10 @@ class SessionStreamClient(
         }
     }
 
-    private fun connectOnce(): ConnectResult {
+    private suspend fun connectOnce(): ConnectResult {
         val connection = try {
-            (URL(host.baseUrl.trimEnd('/') + "/dsh-link/mobile/sessions/" + URLEncoder.encode(sessionId, "UTF-8") + "/stream").openConnection() as HttpURLConnection).apply {
+            val path = "/dsh-link/mobile/sessions/" + URLEncoder.encode(sessionId, "UTF-8") + "/stream?afterSeq=" + lastSeq
+            (URL(host.baseUrl.trimEnd('/') + path).openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"; connectTimeout = 8_000; readTimeout = 60_000; useCaches = false
                 setRequestProperty("Accept", "text/event-stream")
                 setRequestProperty("x-dsh-link-token", host.token)
@@ -97,10 +103,14 @@ class SessionStreamClient(
             connection.inputStream.bufferedReader(Charsets.UTF_8).use { readSSE(it) }
             ConnectResult(true, null)
         } catch (e: Exception) { ConnectResult(false, classifyFailure(e)) }
-        finally { connection.disconnect(); connectionState = ConnectionState.RETRYING; _items.trySend(Item.Disconnected) }
+        finally {
+            connection.disconnect()
+            connectionState = ConnectionState.RETRYING
+            _items.trySend(Item.Disconnected)
+        }
     }
 
-    private fun readSSE(reader: BufferedReader) {
+    private suspend fun readSSE(reader: BufferedReader) {
         var eventName = ""; var data = ""
         while (true) {
             val line = reader.readLine() ?: break
@@ -113,11 +123,23 @@ class SessionStreamClient(
         }
     }
 
-    private fun dispatch(name: String, data: String) {
+    private suspend fun dispatch(name: String, data: String) {
         when (name) {
-            "ready" -> { val seq = JSONObject(data).optLong("resumeSeq"); if (seeded) lastSeq = maxOf(lastSeq, seq); connectionState = ConnectionState.CONNECTED; lastFailure = null; _items.trySend(Item.Ready(seq)) }
-            "message" -> { if (!seeded) return; val obj = JSONObject(data); val seq = obj.optLong("seq"); if (isDuplicateEvent(seq, lastSeq, seeded)) return; lastSeq = seq; _items.trySend(Item.Message(seq, obj.optString("type"), obj.optLong("time"), obj.optJSONObject("data") ?: JSONObject())) }
-            "stats" -> _items.trySend(Item.Stats(JSONObject(data)))
+            "ready" -> {
+                val seq = JSONObject(data).optLong("resumeSeq")
+                connectionState = ConnectionState.CONNECTED
+                lastFailure = null
+                _items.send(Item.Ready(seq))
+            }
+            "message" -> {
+                if (!seeded) return
+                val obj = JSONObject(data)
+                val seq = obj.optLong("seq")
+                if (isDuplicateEvent(seq, lastSeqAtomic.get(), seeded)) return
+                _items.send(Item.Message(seq, obj.optString("type"), obj.optLong("time"), obj.optJSONObject("data") ?: JSONObject()))
+                lastSeqAtomic.updateAndGet { cur -> maxOf(cur, seq) }
+            }
+            "stats" -> _items.send(Item.Stats(JSONObject(data)))
         }
     }
 }
@@ -144,3 +166,7 @@ internal fun nextBackoffMillis(ok: Boolean, failures: Int): Long = when {
 }
 
 internal fun isDuplicateEvent(seq: Long, lastSeq: Long, seeded: Boolean): Boolean = !seeded || seq <= lastSeq
+
+/** 历史接口缺 maxSeq 时仍要 seed，否则 SSE 会一直丢消息。 */
+internal fun historySeedSeq(maxSeq: Long?, messageSeqs: Iterable<Long>): Long =
+    maxSeq ?: messageSeqs.maxOrNull() ?: 0L

@@ -21,6 +21,7 @@ import {
   randomToken, revokeDevice, sha256, verifyPairingCode,
 } from "./auth.js"
 import { loadOrCreateTls } from "./tls.js"
+import { loadEventsAfter, sseMessageFrame } from "./stream-cursor.js"
 
 export const name = "dsh-links"
 export const inject = ["webServer"]
@@ -545,10 +546,9 @@ function callLocalRpc(targetPort, method, payload) {
 // ---------- SSE 实时推送（/dsh-link/mobile/sessions/:id/stream） ----------
 // 数据流：DSH 产生事件 → 写入 JSONL → 插件轮询 session.history RPC（增量 seq）→
 // SSE emit → App 订阅 → Compose state 更新。轮询间隔可配，空闲会话用文件大小跳过 RPC。
-const sessionStreams = new Map() // sessionId → Set<http.ServerResponse>（活跃 SSE writer）
-const lastEventSeqs = new Map() // sessionId → 已推送的最大事件 seq（断点续传游标）
-const sessionFiles = new Map() // sessionId → { path, lastSize }（文件大小变化检测）
-const inflightPolls = new Set() // sessionId → 轮询中（防重叠）
+const sessionStreams = new Map() // sessionId → Set<{ res, lastSeq }>
+const sessionFiles = new Map() // sessionId → { path, lastSize }
+const inflightPolls = new Set()
 
 /** 定位会话存储文件（session.list → cwd → ~/.dsh/sessions/<cwd编码>/<id>/session.jsonl.zstd）。 */
 async function sessionFilePath(targetPort, sessionId) {
@@ -571,23 +571,21 @@ async function sessionFilePath(targetPort, sessionId) {
 
 function dropSession(sessionId) {
   sessionStreams.delete(sessionId)
-  lastEventSeqs.delete(sessionId)
   sessionFiles.delete(sessionId)
 }
 
-/** 向一组 writer 写 SSE 帧；写失败（客户端断开）即移除。 */
 function writeSse(writers, frame) {
-  for (const w of [...writers]) {
+  for (const conn of [...writers]) {
     try {
-      w.write(frame)
+      conn.res.write(frame)
     } catch {
-      writers.delete(w)
-      try { w.destroy() } catch {}
+      writers.delete(conn)
+      try { conn.res.destroy() } catch {}
     }
   }
 }
 
-/** 轮询一个会话：增量事件（seq 过滤）+ projections（stats 事件）。 */
+/** 轮询一个会话：每条连接自己的游标，分页直到追上。 */
 async function pollSession(sessionId, targetPort) {
   const writers = sessionStreams.get(sessionId)
   if (!writers || writers.size === 0 || inflightPolls.has(sessionId)) return
@@ -599,28 +597,31 @@ async function pollSession(sessionId, targetPort) {
     try {
       size = statSync(filePath).size
     } catch {
-      return // 会话文件不存在（已删除）
+      return
     }
     const info = sessionFiles.get(sessionId)
-    if (info && info.lastSize === size) return // 无新事件，跳过 RPC
-    const value = await callLocalRpc(targetPort, "session.history", { sessionId, maxMessages: 50 })
-    const events = value.events ?? []
-    const lastSeq = lastEventSeqs.get(sessionId) ?? 0
-    let maxSeq = lastSeq
-    const payloads = []
-    for (const item of events) {
-      const e = item?.event
-      if (!e || typeof e.seq !== "number" || e.seq <= lastSeq) continue
-      maxSeq = Math.max(maxSeq, e.seq)
-      payloads.push(`event: message\ndata: ${JSON.stringify({ seq: e.seq, type: e.type, time: e.time, data: e.data })}\n\n`)
+    if (info && info.lastSize === size) return
+    const minCursor = Math.min(...[...writers].map((c) => c.lastSeq))
+    const { events, projections } = await loadEventsAfter(minCursor, (payload) =>
+      callLocalRpc(targetPort, "session.history", { sessionId, ...payload }),
+    )
+    for (const conn of [...writers]) {
+      const forConn = events.filter((e) => e.seq > conn.lastSeq)
+      for (const e of forConn) {
+        try {
+          conn.res.write(sseMessageFrame(e))
+          conn.lastSeq = e.seq
+        } catch {
+          writers.delete(conn)
+          try { conn.res.destroy() } catch {}
+          break
+        }
+      }
+      if (forConn.length > 0 && projections) {
+        try { conn.res.write(`event: stats\ndata: ${JSON.stringify(projections)}\n\n`) } catch {}
+      }
     }
-    if (payloads.length > 0) {
-      lastEventSeqs.set(sessionId, maxSeq)
-      for (const p of payloads) writeSse(writers, p)
-      const projections = value.projections?.values
-      if (projections) writeSse(writers, `event: stats\ndata: ${JSON.stringify(projections)}\n\n`)
-    }
-    info.lastSize = size
+    if (info) info.lastSize = size
   } catch {
     // RPC 失败/会话消失：静默跳过，下个周期重试
   } finally {
@@ -629,7 +630,7 @@ async function pollSession(sessionId, targetPort) {
 }
 
 /** SSE 路由：ready（含断点游标）→ 补发历史（最多 reconnectHistoryLimit 条消息）→ 实时增量。 */
-function handleStreamRoute(sessionId, res, targetPort, config) {
+function handleStreamRoute(sessionId, res, targetPort, config, req) {
   res.writeHead(200, {
     "content-type": "text/event-stream; charset=utf-8",
     "cache-control": "no-store, no-cache, must-revalidate",
@@ -642,36 +643,35 @@ function handleStreamRoute(sessionId, res, targetPort, config) {
     writers = new Set()
     sessionStreams.set(sessionId, writers)
   }
-  writers.add(res)
-  const resumeSeq = lastEventSeqs.get(sessionId) ?? 0
-  res.write(`event: ready\ndata: ${JSON.stringify({ resumeSeq })}\n\n`)
-  // 断点续传：补发上次已推送 seq 之后的事件（新连接/重连时兜住间隙）
+  const afterRaw = Number(new URL(req?.url ?? "/", "http://x").searchParams.get("afterSeq") ?? 0)
+  const conn = { res, lastSeq: Number.isFinite(afterRaw) && afterRaw > 0 ? afterRaw : 0 }
+  writers.add(conn)
+  res.write(`event: ready\ndata: ${JSON.stringify({ resumeSeq: conn.lastSeq })}\n\n`)
   ;(async () => {
     try {
-      const value = await callLocalRpc(targetPort, "session.history", {
-        sessionId,
-        maxMessages: config.reconnectHistoryLimit,
-      })
-      const events = value.events ?? []
-      const baseline = lastEventSeqs.get(sessionId) ?? 0
-      for (const item of events) {
-        const e = item?.event
-        if (!e || typeof e.seq !== "number" || e.seq <= baseline) continue
+      const { events, projections } = await loadEventsAfter(conn.lastSeq, (payload) =>
+        callLocalRpc(targetPort, "session.history", {
+          sessionId,
+          ...payload,
+          maxMessages: payload.maxMessages ?? config.reconnectHistoryLimit,
+        }),
+      )
+      for (const e of events) {
         try {
-          res.write(`event: message\ndata: ${JSON.stringify({ seq: e.seq, type: e.type, time: e.time, data: e.data })}\n\n`)
+          conn.res.write(sseMessageFrame(e))
+          conn.lastSeq = e.seq
         } catch {
           return
         }
       }
-      const projections = value.projections?.values
       if (projections) {
-        try { res.write(`event: stats\ndata: ${JSON.stringify(projections)}\n\n`) } catch {}
+        try { conn.res.write(`event: stats\ndata: ${JSON.stringify(projections)}\n\n`) } catch {}
       }
     } catch {}
   })()
   res.on("close", () => {
     const set = sessionStreams.get(sessionId)
-    set?.delete(res)
+    set?.delete(conn)
     if (set && set.size === 0) dropSession(sessionId)
   })
 }
@@ -1180,7 +1180,7 @@ export function apply(ctx, config) {
         }
         const streamMatch = pathname.match(/^\/dsh-link\/mobile\/sessions\/([^/]+)\/stream$/)
         if (req.method === "GET" && streamMatch) {
-          return handleStreamRoute(decodeURIComponent(streamMatch[1]), res, targetPort, config)
+          return handleStreamRoute(decodeURIComponent(streamMatch[1]), res, targetPort, config, req)
         }
         return handleMobileApi(req, res, targetPort, state, device, pathname)
       }
@@ -1230,12 +1230,11 @@ export function apply(ctx, config) {
       if (pollTimer) clearInterval(pollTimer)
       if (keepAliveTimer) clearInterval(keepAliveTimer)
       for (const writers of sessionStreams.values()) {
-        for (const w of writers) {
-          try { w.end() } catch {}
+        for (const conn of writers) {
+          try { conn.res.end() } catch {}
         }
       }
       sessionStreams.clear()
-      lastEventSeqs.clear()
       sessionFiles.clear()
       for (const rec of pendingApprovals.values()) {
         try { rec.settle("cancelled") } catch {}

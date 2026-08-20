@@ -48,6 +48,13 @@ class SessionStreamClientTest {
     }
 
     @Test
+    fun `缺 maxSeq 时用消息 seq 否则 0`() {
+        assertEquals(42L, historySeedSeq(42L, listOf(1L, 9L)))
+        assertEquals(9L, historySeedSeq(null, listOf(1L, 9L)))
+        assertEquals(0L, historySeedSeq(null, emptyList()))
+    }
+
+    @Test
     fun `seed 后按 seq 去重`() {
         // seq <= 基线：重复
         assertTrue(isDuplicateEvent(seq = 5L, lastSeq = 5L, seeded = true))

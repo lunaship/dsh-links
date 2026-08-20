@@ -24,6 +24,7 @@ data class MobileMessage(
     val todos: List<MobileTodoItem> = emptyList(),
     // SSE 流式消息为 true：播放入场动画；历史/全量刷新消息为 false：跳过（避免整列重放）
     val entrance: Boolean = false,
+    val seq: Long = 0L,
 )
 
 data class MobileTodoItem(val content: String, val status: String = "pending")
@@ -315,6 +316,7 @@ class MobileApiClient(private val host: Host) {
                     val t = todosArr.getJSONObject(j)
                     MobileTodoItem(t.optString("content", ""), t.optString("status", "pending"))
                 },
+                seq = obj.optLong("seq", 0L),
             )
         }
         // stats（StatsLine：轮次/步骤/LLM 耗时/工具调用/首 token/吞吐/缓存/tokens）
