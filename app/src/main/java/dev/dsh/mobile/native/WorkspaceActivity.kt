@@ -1,6 +1,7 @@
 package dev.dsh.mobile.native
 import dev.dsh.mobile.core.Dsh
 import dev.dsh.mobile.core.Host
+import dev.dsh.mobile.core.L
 import dev.dsh.mobile.core.ThemeManager
 import dev.dsh.mobile.native.MobileSession
 import dev.dsh.mobile.native.MobileMessage
@@ -11,7 +12,6 @@ import dev.dsh.mobile.core.DshNotifier
 import dev.dsh.mobile.core.DshTheme
 import dev.dsh.mobile.core.HostStore
 import dev.dsh.mobile.devices.DevicesActivity
-
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 
@@ -123,7 +123,9 @@ import dev.dsh.mobile.native.util.classifySession
 import dev.dsh.mobile.native.util.contextInjectionLabels
 import dev.dsh.mobile.native.util.groupMessages
 import dev.dsh.mobile.native.util.isContextInjectionText
+import dev.dsh.mobile.native.util.isUserWorkspace
 import dev.dsh.mobile.native.util.matchesTool
+import dev.dsh.mobile.native.util.visibleUserWorkspaces
 
 /**
  * DeepSeek Harness 工作台 —— 1:1 复刻 DSH Web (127.0.0.1:3080) 设计语言。
@@ -149,7 +151,7 @@ class WorkspaceActivity : ComponentActivity() {
         ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         if (!isGranted) {
-            Toast.makeText(this, "需要录音权限才能进行语音输入", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, L.voicePermissionRequired, Toast.LENGTH_SHORT).show()
             voiceIdle?.invoke()
         }
     }
@@ -231,7 +233,7 @@ class WorkspaceActivity : ComponentActivity() {
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.CHINESE.toString())
-            putExtra(RecognizerIntent.EXTRA_PROMPT, "正在倾听...")
+            putExtra(RecognizerIntent.EXTRA_PROMPT, L.voiceListeningPrompt)
         }
 
         speechRecognizer?.setRecognitionListener(object : RecognitionListener {
@@ -242,7 +244,7 @@ class WorkspaceActivity : ComponentActivity() {
             override fun onEndOfSpeech() { onIdle() }
             override fun onError(error: Int) {
                 onIdle()
-                Toast.makeText(this@WorkspaceActivity, "语音识别未听清，请重试", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@WorkspaceActivity, L.voiceRecognitionRetry, Toast.LENGTH_SHORT).show()
             }
             override fun onResults(results: Bundle?) {
                 onIdle()
@@ -348,6 +350,8 @@ fun WorkspaceScreen(
     var expandedGroups by remember { mutableStateOf(setOf<String>()) } // 组内"显示全部"展开态
     var deleteWorkspaceTarget by remember { mutableStateOf<String?>(null) } // 待删除的工作区路径
     var deleteSessionTarget by remember { mutableStateOf<MobileSession?>(null) } // 待删除的会话
+    /** 服务端已注册工作区路径（与会话 cwd 合并后供侧栏 / 选择器共用）。 */
+    var workspaceRegistry by remember { mutableStateOf<List<String>>(emptyList()) }
     // 本地已删除工作区（服务端删注册后会话 cwd 仍在；侧边栏不再单独建「未分组」文件夹）
     var deletedWorkspaces by remember { mutableStateOf(
         context.getSharedPreferences("dsh_workspace", android.content.Context.MODE_PRIVATE)
@@ -405,12 +409,12 @@ fun WorkspaceScreen(
                         }
                     } else {
                         withContext(Dispatchers.Main) {
-                            Toast.makeText(context, "图片超过 8MB，已跳过", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, L.imageTooLargeSkipped, Toast.LENGTH_SHORT).show()
                         }
                     }
                 } catch (e: Exception) {
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(context, "无法读取图片：${e.message ?: "未知错误"}", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, L.readImageFailed.format(e.message ?: L.unknownError), Toast.LENGTH_SHORT).show()
                     }
                 }
             }
@@ -502,9 +506,25 @@ fun WorkspaceScreen(
                 throw e
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(context, "刷新会话失败：${e.message ?: "未知错误"}", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, L.refreshSessionsFailed.format(e.message ?: L.unknownError), Toast.LENGTH_SHORT).show()
                 }
             }
+        }
+    }
+
+    fun refreshWorkspaces() {
+        scope.launch(Dispatchers.IO) {
+            try {
+                val catalog = client.getWorkspaces()
+                withContext(Dispatchers.Main) {
+                    workspaceRegistry = catalog.paths
+                    if (catalog.archivedSessionIds.isNotEmpty()) {
+                        archivedIds = archivedIds + catalog.archivedSessionIds
+                        context.getSharedPreferences("dsh_workspace", android.content.Context.MODE_PRIVATE)
+                            .edit().putStringSet("archived_sessions", archivedIds).apply()
+                    }
+                }
+            } catch (_: Exception) {}
         }
     }
 
@@ -524,7 +544,7 @@ fun WorkspaceScreen(
                 client.archiveSession(session.sessionId)
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(context, "归档失败：${e.message ?: "请稍后重试"}", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, L.archiveFailed.format(e.message ?: L.fallbackRetryLater), Toast.LENGTH_SHORT).show()
                 }
             }
         }
@@ -698,14 +718,14 @@ fun WorkspaceScreen(
                     searchResults = results
                     searchState = if (results.isEmpty()) SearchUiState.Empty
                     else SearchUiState.Results(query, results.size)
-                    if (degraded) Toast.makeText(context, "全文检索不可用，已按标题匹配", Toast.LENGTH_SHORT).show()
+                    if (degraded) Toast.makeText(context, L.fullTextSearchUnavailable, Toast.LENGTH_SHORT).show()
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
                 if (seq != searchSeq) return@launch
                 withContext(Dispatchers.Main) {
-                    searchState = SearchUiState.Error(e.message ?: "搜索失败")
+                    searchState = SearchUiState.Error(e.message ?: L.searchFailed)
                 }
             }
         }
@@ -990,7 +1010,7 @@ fun WorkspaceScreen(
                 appendStreamMessage(MobileMessage(
                     id = "approval-${item.seq}",
                     role = "approval",
-                    text = data.optString("reason").ifBlank { "请求授权执行 ${data.optString("toolName", "工具")}" },
+                    text = data.optString("reason").ifBlank { L.approvalRequest.format(data.optString("toolName", L.toolFallbackName)) },
                     toolName = data.optString("toolName", "tool"),
                     approvalId = data.optString("id", ""),
                     time = item.time,
@@ -999,7 +1019,7 @@ fun WorkspaceScreen(
                 // 后台时系统通知提醒（前台有审批卡）
                 val sid = currentSessionId
                 if (!isForeground && sid != null) {
-                    DshNotifier.notifyApproval(context, host, sid, data.optString("toolName", "工具"))
+                    DshNotifier.notifyApproval(context, host, sid, data.optString("toolName", L.toolFallbackName))
                 }
             }
             "compaction/start" -> {
@@ -1061,8 +1081,9 @@ fun WorkspaceScreen(
             }
             try {
                 val catalog = client.getWorkspaces()
-                if (catalog.archivedSessionIds.isNotEmpty()) {
-                    withContext(Dispatchers.Main) {
+                withContext(Dispatchers.Main) {
+                    workspaceRegistry = catalog.paths
+                    if (catalog.archivedSessionIds.isNotEmpty()) {
                         archivedIds = archivedIds + catalog.archivedSessionIds
                         context.getSharedPreferences("dsh_workspace", android.content.Context.MODE_PRIVATE)
                             .edit().putStringSet("archived_sessions", archivedIds).apply()
@@ -1174,7 +1195,7 @@ fun WorkspaceScreen(
     val harnessLabel = remember(agentPresets, activeHarnessPresetId, appSettings.agentPreset) {
         val id = activeHarnessPresetId?.takeIf { it.isNotBlank() } ?: appSettings.agentPreset
         agentPresets.find { it.id == id }?.name?.ifBlank { id }
-            ?: id.ifBlank { "标准模式" }
+            ?: id.ifBlank { L.defaultHarnessPreset }
     }
     val composeModelLabel = remember(pendingModel, modelCatalog) {
         pendingModel?.second ?: modelChipLabel(modelCatalog)
@@ -1190,7 +1211,7 @@ fun WorkspaceScreen(
     var wasRunning by remember { mutableStateOf(false) }
     LaunchedEffect(running) {
         if (!running && wasRunning && !isForeground && currentSessionId != null) {
-            val title = currentSession?.title ?: "会话"
+            val title = currentSession?.title ?: L.sessionFallbackTitle
             if (stoppedReason.isNullOrBlank()) {
                 DshNotifier.notifyTaskDone(context, host, currentSessionId!!, title)
             } else {
@@ -1252,7 +1273,7 @@ fun WorkspaceScreen(
                         ) {
                             Icon(
                                 Icons.Default.Devices,
-                                contentDescription = "切换设备",
+                                contentDescription = L.switchDevice,
                                 tint = Dsh.labelSecondary,
                                 modifier = Modifier.size(20.dp)
                             )
@@ -1284,7 +1305,7 @@ fun WorkspaceScreen(
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(Modifier.width(8.dp))
-                        Text("新会话", color = Dsh.labelPrimary, fontSize = 14.sp, fontWeight = FontWeight(500), lineHeight = 20.sp)
+                        Text(L.newSession, color = Dsh.labelPrimary, fontSize = 14.sp, fontWeight = FontWeight(500), lineHeight = 20.sp)
                     }
 
                     Spacer(Modifier.height(4.dp))
@@ -1296,7 +1317,7 @@ fun WorkspaceScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            "工作区",
+                            L.workspace,
                             color = Dsh.labelTertiary,
                             fontSize = 12.sp,
                             fontWeight = FontWeight(500),
@@ -1305,7 +1326,7 @@ fun WorkspaceScreen(
                         Spacer(Modifier.weight(1f))
                         SidebarHeaderIcon(
                             icon = SearchOutline16,
-                            contentDescription = "搜索会话",
+                            contentDescription = L.searchSessions,
                             active = sidebarSearchOpen || searchQuery.isNotBlank(),
                             onClick = {
                                 sidebarSearchOpen = !sidebarSearchOpen
@@ -1318,14 +1339,14 @@ fun WorkspaceScreen(
                         Spacer(Modifier.width(2.dp))
                         SidebarHeaderIcon(
                             icon = ChecklistOutline14,
-                            contentDescription = "筛选会话",
+                            contentDescription = L.filterSessions,
                             active = sessionFilter != SessionFilter.ALL,
                             onClick = { showSessionFilterSheet = true },
                         )
                         Spacer(Modifier.width(2.dp))
                         SidebarHeaderIcon(
                             icon = PlusOutline16,
-                            contentDescription = "添加工作区",
+                            contentDescription = L.addWorkspace,
                             onClick = { showAddWorkspace = true },
                         )
                     }
@@ -1357,7 +1378,7 @@ fun WorkspaceScreen(
                                 decorationBox = { inner ->
                                     Box(contentAlignment = Alignment.CenterStart) {
                                         if (searchQuery.isEmpty()) {
-                                            Text("搜索会话…", color = Dsh.labelTertiary, fontSize = 13.sp)
+                                            Text(L.searchSessionsPlaceholder, color = Dsh.labelTertiary, fontSize = 13.sp)
                                         }
                                         inner()
                                     }
@@ -1376,7 +1397,7 @@ fun WorkspaceScreen(
                             if (searchQuery.isNotEmpty()) {
                                 Icon(
                                     CloseOutline16,
-                                    contentDescription = "清除搜索",
+                                    contentDescription = L.clearSearch,
                                     tint = Dsh.labelCaption,
                                     modifier = Modifier
                                         .size(14.dp)
@@ -1416,16 +1437,41 @@ fun WorkspaceScreen(
                         if (searchMatchedIds == null) filterCandidates
                         else filterCandidates.filter { it.sessionId in searchMatchedIds }
                     }
+                    val knownWorkspaces = remember(sessions, deletedWorkspaces, workspaceRegistry) {
+                        visibleUserWorkspaces(
+                            sessionCwds = sessions.map { it.cwd },
+                            deletedWorkspaces = deletedWorkspaces,
+                            registeredPaths = workspaceRegistry,
+                        )
+                    }
+                    val sidebarGrouped = remember(visibleCandidates, deletedWorkspaces, sessionFilter) {
+                        visibleCandidates
+                            .filter { sessionFilter == SessionFilter.ALL || classifySession(it) == sessionFilter }
+                            .groupBy { it.cwd?.takeUnless { c -> c in deletedWorkspaces } }
+                            .filterKeys { isUserWorkspace(it) }
+                    }
+                    val workspacesToShow = remember(knownWorkspaces, sidebarGrouped, searchNeedle, sessionFilter) {
+                        when {
+                            searchNeedle.isNotEmpty() -> knownWorkspaces.filter { cwd ->
+                                cwd.contains(searchNeedle, ignoreCase = true) ||
+                                    cwd.substringAfterLast('/').contains(searchNeedle, ignoreCase = true) ||
+                                    sidebarGrouped[cwd].orEmpty().isNotEmpty()
+                            }
+                            sessionFilter != SessionFilter.ALL ->
+                                knownWorkspaces.filter { sidebarGrouped[it].orEmpty().isNotEmpty() }
+                            else -> knownWorkspaces
+                        }
+                    }
 
                     // 会话列表
                     LazyColumn(
                         modifier = Modifier.weight(1f),
                         verticalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
-                        if (searchNeedle.isNotEmpty() && visibleCandidates.isEmpty()) {
+                        if (searchNeedle.isNotEmpty() && visibleCandidates.isEmpty() && workspacesToShow.isEmpty()) {
                             item(key = "sidebar-search-empty") {
                                 Text(
-                                    if (searchState is SearchUiState.Loading) "搜索中…" else "无匹配会话",
+                                    if (searchState is SearchUiState.Loading) L.searching else L.noMatchingSessions,
                                     color = Dsh.labelTertiary,
                                     fontSize = 13.sp,
                                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 20.dp)
@@ -1471,15 +1517,8 @@ fun WorkspaceScreen(
                             }
                         } else {
                             // 按工作区（cwd）分组：组头点击 = 折叠；组内 + = 在该工作区新建会话
-                            // 过滤系统/隐藏目录（DSH workspace 列表只显示用户工作区）
-                            // 过滤已归档/已删除（空白超24h）/子智能体/sessionFilter；组内默认预览 5 条
-                            // 无 cwd / 已删工作区的会话不再放进「未分组」假文件夹（点开会因 cwd==null 崩溃），
-                            // 有实质内容的直接铺在列表顶部。
-                            val grouped = visibleCandidates.filter {
-                                sessionFilter == SessionFilter.ALL || classifySession(it) == sessionFilter
-                            }
-                                .groupBy { it.cwd?.takeUnless { c -> c in deletedWorkspaces } }
-                                .filterKeys { isUserWorkspace(it) }
+                            // 工作区列表 = 服务端注册 ∪ 会话 cwd（与新建会话弹层对齐，含空工作区）
+                            val grouped = sidebarGrouped
                             grouped[null].orEmpty().filter { !it.blank }.forEach { s ->
                                 item(key = "ungrouped-${s.sessionId}") {
                                     SessionRowItem(
@@ -1509,8 +1548,8 @@ fun WorkspaceScreen(
                                     )
                                 }
                             }
-                            grouped.forEach { (cwd, groupSessions) ->
-                                if (cwd == null) return@forEach
+                            workspacesToShow.forEach { cwd ->
+                                val groupSessions = grouped[cwd].orEmpty()
                                 val collapsed = cwd !in expandedWorkspaces
                                 item(key = "ws-$cwd") {
                                     val folderInteraction = remember { MutableInteractionSource() }
@@ -1565,7 +1604,7 @@ fun WorkspaceScreen(
                                         ) {
                                             Icon(
                                                 PlusOutline16,
-                                                contentDescription = "新建会话",
+                                                contentDescription = L.createSession,
                                                 tint = Dsh.labelTertiary,
                                                 modifier = Modifier.size(12.dp)
                                             )
@@ -1596,7 +1635,7 @@ fun WorkspaceScreen(
                                                         verticalAlignment = Alignment.CenterVertically
                                                     ) {
                                                         Text(
-                                                            "展开其余 ${groupSessions.size - 5} 个会话",
+                                                            L.expandMoreSessions.format(groupSessions.size - 5),
                                                             color = Dsh.labelTertiary,
                                                             fontSize = 12.sp,
                                                             lineHeight = 18.sp
@@ -1669,7 +1708,7 @@ fun WorkspaceScreen(
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(Modifier.width(8.dp))
-                            Text("设置", color = Dsh.labelSecondary, fontSize = 13.sp, fontWeight = FontWeight(500), lineHeight = 20.sp)
+                            Text(L.settingsTitle, color = Dsh.labelSecondary, fontSize = 13.sp, fontWeight = FontWeight(500), lineHeight = 20.sp)
                         }
 
                         // 快速切换深浅色模式按钮（带太阳/月亮图标与提示文案）
@@ -1685,13 +1724,13 @@ fun WorkspaceScreen(
                         ) {
                             Icon(
                                 if (isDarkTheme) LightOutline16 else DarkOutline16,
-                                contentDescription = if (isDarkTheme) "切换为浅色" else "切换为深色",
+                                contentDescription = if (isDarkTheme) L.switchToLight else L.switchToDark,
                                 tint = Dsh.labelSecondary,
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(Modifier.width(4.dp))
                             Text(
-                                if (isDarkTheme) "浅色" else "深色",
+                                if (isDarkTheme) L.light else L.dark,
                                 color = Dsh.labelSecondary,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight(500)
@@ -1737,7 +1776,7 @@ fun WorkspaceScreen(
                     ) {
                         Icon(
                             Icons.Default.Menu,
-                            contentDescription = "会话菜单",
+                            contentDescription = L.sessionMenu,
                             tint = Dsh.labelSecondary,
                             modifier = Modifier.size(18.dp)
                         )
@@ -1761,7 +1800,7 @@ fun WorkspaceScreen(
                             Spacer(Modifier.width(6.dp))
                         }
                         Text(
-                            currentSession?.title ?: "新会话",
+                            currentSession?.title ?: L.newSession,
                             color = Dsh.labelPrimary,
                             fontSize = 14.sp,
                             fontWeight = FontWeight(500),
@@ -1798,7 +1837,7 @@ fun WorkspaceScreen(
                                 .padding(horizontal = 12.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text("停止", color = Dsh.labelSecondary, fontSize = 13.sp, fontWeight = FontWeight(500))
+                            Text(L.stop, color = Dsh.labelSecondary, fontSize = 13.sp, fontWeight = FontWeight(500))
                         }
                     }
                     // 工具调用查找开关（仅对话视图；切换时重置瞬时查询）
@@ -1824,7 +1863,7 @@ fun WorkspaceScreen(
                         ) {
                             Icon(
                                 SearchOutline16,
-                                contentDescription = if (toolSearchOpen) "关闭工具搜索" else "搜索工具调用",
+                                contentDescription = if (toolSearchOpen) L.closeToolSearch else L.searchToolCalls,
                                 tint = if (toolSearchOpen) Dsh.labelPrimary else Dsh.labelSecondary,
                                 modifier = Modifier.size(16.dp)
                             )
@@ -1845,7 +1884,7 @@ fun WorkspaceScreen(
                         ) {
                             Icon(
                                 EllipsisOutline16,
-                                contentDescription = "更多操作",
+                                contentDescription = L.moreActions,
                                 tint = Dsh.labelSecondary,
                                 modifier = Modifier.size(18.dp)
                             )
@@ -1854,11 +1893,11 @@ fun WorkspaceScreen(
                             expanded = headerMenuOpen,
                             onDismiss = { headerMenuOpen = false },
                             items = listOf(
-                                DshMenuItem(EditOutline16, "重命名会话") {
+                                DshMenuItem(EditOutline16, L.renameSession) {
                                     headerMenuOpen = false
                                     currentSession?.let { renameTarget = it }
                                 },
-                                DshMenuItem(BranchOutline16, "分叉会话") {
+                                DshMenuItem(BranchOutline16, L.forkSession) {
                                     headerMenuOpen = false
                                     val sid = currentSessionId ?: return@DshMenuItem
                                     scope.launch(Dispatchers.IO) {
@@ -1873,21 +1912,21 @@ fun WorkspaceScreen(
                                         } catch (e: Exception) {}
                                     }
                                 },
-                                DshMenuItem(CopyOutline16, "复制会话标题") {
+                                DshMenuItem(CopyOutline16, L.copySessionTitle) {
                                     headerMenuOpen = false
                                     val title = currentSession?.title ?: return@DshMenuItem
                                     val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
                                     clipboard.setPrimaryClip(android.content.ClipData.newPlainText("session title", title))
-                                    Toast.makeText(context, "已复制", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, L.copied, Toast.LENGTH_SHORT).show()
                                 },
-                                DshMenuItem(ArchiveOutline20, "归档会话") {
+                                DshMenuItem(ArchiveOutline20, L.archiveSession) {
                                     headerMenuOpen = false
                                     currentSession?.let { archiveSessionNow(it) }
                                 },
-                                DshMenuItem(Icons.Default.Share, "导出对话") {
+                                DshMenuItem(Icons.Default.Share, L.exportConversation) {
                                     headerMenuOpen = false
                                     val sid = currentSessionId ?: return@DshMenuItem
-                                    val title = currentSession?.title ?: "会话"
+                                    val title = currentSession?.title ?: L.sessionFallbackTitle
                                     scope.launch(Dispatchers.IO) {
                                         try {
                                             val text = exportSessionTranscript(client, sid, title)
@@ -1897,16 +1936,16 @@ fun WorkspaceScreen(
                                                     putExtra(Intent.EXTRA_SUBJECT, title)
                                                     putExtra(Intent.EXTRA_TEXT, text)
                                                 }
-                                                context.startActivity(Intent.createChooser(send, "导出对话"))
+                                                context.startActivity(Intent.createChooser(send, L.exportConversation))
                                             }
                                         } catch (e: Exception) {
                                             withContext(Dispatchers.Main) {
-                                                Toast.makeText(context, "导出失败：${e.message ?: "未知错误"}", Toast.LENGTH_SHORT).show()
+                                                Toast.makeText(context, L.exportFailed.format(e.message ?: L.unknownError), Toast.LENGTH_SHORT).show()
                                             }
                                         }
                                     }
                                 },
-                                DshMenuItem(TrashOutline16, "删除会话", danger = true) {
+                                DshMenuItem(TrashOutline16, L.deleteSession, danger = true) {
                                     headerMenuOpen = false
                                     currentSession?.let { deleteSessionTarget = it }
                                 },
@@ -1922,7 +1961,7 @@ fun WorkspaceScreen(
                     horizontalArrangement = Arrangement.spacedBy(2.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    listOf("chat" to "对话", "trace" to "轨迹", "history" to "历史").forEach { (id, label) ->
+                    listOf("chat" to L.tabChat, "trace" to L.tabTrace, "history" to L.tabHistory).forEach { (id, label) ->
                         val selected = viewMode == id
                         val vInteraction = remember { MutableInteractionSource() }
                         val vPressed by vInteraction.collectIsPressedAsState()
@@ -1993,7 +2032,7 @@ fun WorkspaceScreen(
                         }
                         if (activeSubagentCount > 0) {
                             Text(
-                                "$activeSubagentCount 个子代理",
+                                L.subagentCount.format(activeSubagentCount),
                                 color = Dsh.brand400,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight(500),
@@ -2025,13 +2064,13 @@ fun WorkspaceScreen(
             ) {
                 DshBanner(
                     text = when (streamState) {
-                        SessionStreamClient.ConnectionState.CONNECTING -> "正在连接…"
-                        SessionStreamClient.ConnectionState.FAILURE -> "连接失败，正在重连…"
-                        else -> "连接已断开，正在重连…"
+                        SessionStreamClient.ConnectionState.CONNECTING -> L.connecting
+                        SessionStreamClient.ConnectionState.FAILURE -> L.connectionFailedReconnecting
+                        else -> L.disconnectedReconnecting
                     },
                     tone = if (streamState == SessionStreamClient.ConnectionState.FAILURE)
                         DshBannerTone.Error else DshBannerTone.Info,
-                    actionLabel = "重试",
+                    actionLabel = L.retry,
                     onAction = { streamClient?.reconnect() },
                     leading = {
                         val reconnRotation = rememberMotionSpin(900, label = "reconnRot")
@@ -2044,7 +2083,7 @@ fun WorkspaceScreen(
                                 .rotate(reconnRotation ?: 0f)
                         )
                     },
-                    contentDescription = "连接已断开，正在自动重连",
+                    contentDescription = L.disconnectedReconnectingContentDescription,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 12.dp, vertical = 6.dp),
@@ -2087,7 +2126,7 @@ fun WorkspaceScreen(
                             decorationBox = { inner ->
                                 Box(contentAlignment = Alignment.CenterStart) {
                                     if (toolQuery.isEmpty()) {
-                                        Text("搜索工具调用（名称 / 参数 / 结果）", color = Dsh.labelTertiary, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text(L.toolSearchPlaceholder, color = Dsh.labelTertiary, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     }
                                     inner()
                                 }
@@ -2096,7 +2135,7 @@ fun WorkspaceScreen(
                         if (toolQuery.isNotEmpty()) {
                             Icon(
                                 CloseOutline16,
-                                contentDescription = "清除工具搜索",
+                                contentDescription = L.clearSearch,
                                 tint = Dsh.labelCaption,
                                 modifier = Modifier
                                     .size(14.dp)
@@ -2222,11 +2261,11 @@ fun WorkspaceScreen(
                                             try {
                                                 val accepted = client.answerApproval(sid, approvalId, outcome)
                                                 if (!accepted) withContext(Dispatchers.Main) {
-                                                    Toast.makeText(context, "审批未被接受", Toast.LENGTH_SHORT).show()
+                                                    Toast.makeText(context, L.approvalNotAccepted, Toast.LENGTH_SHORT).show()
                                                 }
                                             } catch (e: Exception) {
                                                 withContext(Dispatchers.Main) {
-                                                    Toast.makeText(context, "审批失败：${e.message ?: "未知错误"}", Toast.LENGTH_SHORT).show()
+                                                    Toast.makeText(context, L.approvalFailed.format(e.message ?: L.unknownError), Toast.LENGTH_SHORT).show()
                                                 }
                                             }
                                         }
@@ -2234,7 +2273,7 @@ fun WorkspaceScreen(
                                     onCopy = {
                                         val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
                                         clipboard.setPrimaryClip(android.content.ClipData.newPlainText("dsh message", group.msg.text))
-                                        Toast.makeText(context, "已复制", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(context, L.copied, Toast.LENGTH_SHORT).show()
                                     },
                                     onQuote = {
                                         // DSH 引用：把消息首行作为引用注入输入框
@@ -2265,7 +2304,7 @@ fun WorkspaceScreen(
                                         } else null
                                         val prompt = prevUser?.text?.takeIf { it.isNotBlank() }
                                         if (prompt.isNullOrBlank()) {
-                                            Toast.makeText(context, "找不到可重新生成的用户消息", Toast.LENGTH_SHORT).show()
+                                            Toast.makeText(context, L.cannotFindUserMessageToRegenerate, Toast.LENGTH_SHORT).show()
                                         } else {
                                             scope.launch(Dispatchers.IO) {
                                                 try {
@@ -2275,12 +2314,12 @@ fun WorkspaceScreen(
                                                         mode = resolvePromptMode(running, appSettings.busyEnter),
                                                     )
                                                     withContext(Dispatchers.Main) {
-                                                        Toast.makeText(context, "已重新生成", Toast.LENGTH_SHORT).show()
+                                                        Toast.makeText(context, L.regenerated, Toast.LENGTH_SHORT).show()
                                                         refreshSessions()
                                                     }
                                                 } catch (e: Exception) {
                                                     withContext(Dispatchers.Main) {
-                                                        Toast.makeText(context, "重新生成失败：${e.message ?: "未知错误"}", Toast.LENGTH_SHORT).show()
+                                                        Toast.makeText(context, L.regenerateFailed.format(e.message ?: L.unknownError), Toast.LENGTH_SHORT).show()
                                                     }
                                                 }
                                             }
@@ -2298,7 +2337,7 @@ fun WorkspaceScreen(
                     if (toolQuery.isNotBlank() && visibleGroups.isEmpty()) {
                         item(key = "tool-search-empty") {
                             Text(
-                                "无匹配工具调用",
+                                L.noMatchingToolCalls,
                                 color = Dsh.labelTertiary,
                                 fontSize = 13.sp,
                                 lineHeight = 20.sp,
@@ -2367,7 +2406,7 @@ fun WorkspaceScreen(
                                         }
                                     } catch (e: Exception) {
                                         withContext(Dispatchers.Main) {
-                                            Toast.makeText(context, "命令发送失败：${e.message ?: "未知错误"}", Toast.LENGTH_SHORT).show()
+                                            Toast.makeText(context, L.commandSendFailed.format(e.message ?: L.unknownError), Toast.LENGTH_SHORT).show()
                                         }
                                     }
                                 }
@@ -2390,6 +2429,7 @@ fun WorkspaceScreen(
                     ComposerTopRow(
                         sessions = sessions,
                         deletedWorkspaces = deletedWorkspaces,
+                        registeredPaths = workspaceRegistry,
                         currentCwd = if (currentSessionId == null) {
                             pendingSessionCwd?.takeUnless { it in deletedWorkspaces }
                                 ?: currentSession?.cwd?.takeUnless { it in deletedWorkspaces }
@@ -2444,19 +2484,19 @@ fun WorkspaceScreen(
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(Modifier.width(6.dp))
-                            Text("回到底部", color = Dsh.labelSecondary, fontSize = 12.sp, fontWeight = FontWeight(500), lineHeight = 18.sp)
+                            Text(L.scrollToBottom, color = Dsh.labelSecondary, fontSize = 12.sp, fontWeight = FontWeight(500), lineHeight = 18.sp)
                         }
                     }
                 }
                 // 发送队列 dock（DSH QueueDock：发送中显示在输入卡上方）
                 if (isSending) {
                     QueueDock(
-                        label = if (running) "智能体仍在执行…" else "正在发送…",
+                        label = if (running) L.agentStillRunning else L.sending,
                         badge = when {
-                            !running -> "发送中"
-                            appSettings.busyEnter == "send" -> "插话"
-                            appSettings.busyEnter == "steer" -> "引导"
-                            else -> "排队"
+                            !running -> L.sendingBadge
+                            appSettings.busyEnter == "send" -> L.interruptBadge
+                            appSettings.busyEnter == "steer" -> L.steerBadge
+                            else -> L.queueBadge
                         },
                     )
                 }
@@ -2477,9 +2517,9 @@ fun WorkspaceScreen(
                 heroMode = heroMode,
                 onModeChange = { heroMode = it },
                 permissionLabel = when (appSettings.permissionPreset) {
-                    "read-only" -> "只读"
-                    "danger-full-access" -> "完全访问"
-                    else -> "工作区写入"
+                    "read-only" -> L.permReadOnly
+                    "danger-full-access" -> L.permFullAccess
+                    else -> L.permWorkspaceWrite
                 },
                 onOpenModelPicker = {
                     if (currentSessionId == null) {
@@ -2498,7 +2538,7 @@ fun WorkspaceScreen(
                                 }
                             } catch (e: Exception) {
                                 withContext(Dispatchers.Main) {
-                                    Toast.makeText(context, "加载模型列表失败", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, L.loadModelListFailed, Toast.LENGTH_SHORT).show()
                                 }
                             }
                         }
@@ -2588,9 +2628,9 @@ fun WorkspaceScreen(
                                 if (!createdNow && running) {
                                     withContext(Dispatchers.Main) {
                                         val tip = when (promptMode) {
-                                            "send" -> "已插话发送"
-                                            "steer" -> "已引导发送"
-                                            else -> "已加入排队"
+                                            "send" -> L.interruptSent
+                                            "steer" -> L.steerSent
+                                            else -> L.queuedSent
                                         }
                                         Toast.makeText(context, tip, Toast.LENGTH_SHORT).show()
                                     }
@@ -2605,7 +2645,7 @@ fun WorkspaceScreen(
                                     messages = messages.filterNot { it.id == "local-pending" }
                                     // 发送失败：若尚未真正进入 turn，收回乐观 running
                                     if (currentSession?.running != true) liveRunning = false
-                                    Toast.makeText(context, "发送失败：${e.message ?: "未知错误"}", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, L.sendFailed.format(e.message ?: L.unknownError), Toast.LENGTH_SHORT).show()
                                 }
                             } finally {
                                 withContext(Dispatchers.Main) { isSending = false }
@@ -2644,7 +2684,7 @@ fun WorkspaceScreen(
                         withContext(Dispatchers.Main) { refreshModels() }
                     } catch (e: Exception) {
                         withContext(Dispatchers.Main) {
-                            Toast.makeText(context, "切换模型失败：${friendlySelectModelError(e.message)}", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, L.switchModelFailed.format(friendlySelectModelError(e.message)), Toast.LENGTH_SHORT).show()
                         }
                     }
                 }
@@ -2713,9 +2753,9 @@ fun WorkspaceScreen(
                     .padding(horizontal = 20.dp)
                     .padding(bottom = 32.dp)
             ) {
-                Text("添加工作区", color = Dsh.labelPrimary, fontSize = 18.sp, fontWeight = FontWeight(500), lineHeight = 24.sp)
+                Text(L.addWorkspace, color = Dsh.labelPrimary, fontSize = 18.sp, fontWeight = FontWeight(500), lineHeight = 24.sp)
                 Spacer(Modifier.height(4.dp))
-                Text("输入文件夹路径，将其注册为工作区", color = Dsh.labelTertiary, fontSize = 12.sp, lineHeight = 18.sp)
+                Text(L.addWorkspaceDesc, color = Dsh.labelTertiary, fontSize = 12.sp, lineHeight = 18.sp)
                 Spacer(Modifier.height(14.dp))
                 BasicTextField(
                     value = path,
@@ -2732,7 +2772,7 @@ fun WorkspaceScreen(
                         .padding(horizontal = 13.dp),
                     decorationBox = { inner ->
                         Box(contentAlignment = Alignment.CenterStart) {
-                            if (path.isEmpty()) Text("例如 /Users/me/projects/my-app", color = Dsh.labelTertiary, fontSize = 13.sp)
+                            if (path.isEmpty()) Text(L.workspacePathExample, color = Dsh.labelTertiary, fontSize = 13.sp)
                             inner()
                         }
                     }
@@ -2750,6 +2790,7 @@ fun WorkspaceScreen(
                                 try {
                                     client.createWorkspace(path.trim())
                                     withContext(Dispatchers.Main) {
+                                        refreshWorkspaces()
                                         refreshSessions()
                                     }
                                 } catch (e: Exception) {}
@@ -2757,7 +2798,7 @@ fun WorkspaceScreen(
                         },
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("添加", color = if (path.isBlank()) Dsh.labelTertiary else Color.White, fontSize = 13.sp, fontWeight = FontWeight(500))
+                    Text(L.add, color = if (path.isBlank()) Dsh.labelTertiary else Color.White, fontSize = 13.sp, fontWeight = FontWeight(500))
                 }
             }
         }
@@ -2786,14 +2827,15 @@ fun WorkspaceScreen(
     // 删除工作区（取消注册；会话日志保留，不再显示在该工作区下）
     deleteWorkspaceTarget?.let { path ->
         DshConfirmDialog(
-            title = "删除工作区？",
-            message = "将移除「${path.substringAfterLast('/')}」及其中所有会话。",
-            confirmLabel = "删除",
+            title = L.deleteWorkspaceTitle,
+            message = L.deleteWorkspaceMessage.format(path.substringAfterLast('/')),
+            confirmLabel = L.delete,
             danger = true,
             onDismiss = { deleteWorkspaceTarget = null },
             onConfirm = {
                 deleteWorkspaceTarget = null
                 setDeletedWorkspace(path)
+                workspaceRegistry = workspaceRegistry.filter { it != path }
                 if (pendingSessionCwd == path) pendingSessionCwd = null
                 if (workspacePrefs.lastSelectedWorkspace == path) {
                     workspacePrefs.lastSelectedWorkspace = null
@@ -2808,6 +2850,7 @@ fun WorkspaceScreen(
                     sessionsInWs.forEach { s ->
                         try { client.archiveSession(s.sessionId) } catch (_: Exception) {}
                     }
+                    withContext(Dispatchers.Main) { refreshWorkspaces() }
                 }
             }
         )
@@ -2816,9 +2859,9 @@ fun WorkspaceScreen(
     // 删除会话（服务端归档 + 本机隐藏）
     deleteSessionTarget?.let { target ->
         DshConfirmDialog(
-            title = "删除会话？",
-            message = "将归档到电脑端并从本机列表移除「${target.title}」。与「归档」效果相同。",
-            confirmLabel = "删除",
+            title = L.deleteSessionTitle,
+            message = L.deleteSessionMessage.format(target.title),
+            confirmLabel = L.delete,
             danger = true,
             onDismiss = { deleteSessionTarget = null },
             onConfirm = {
@@ -2851,10 +2894,10 @@ fun WorkspaceScreen(
                     .padding(bottom = 24.dp),
             ) {
                 SheetGrabber()
-                Text("子代理", color = Dsh.labelPrimary, fontSize = 18.sp, fontWeight = FontWeight(600))
+                Text(L.subagents, color = Dsh.labelPrimary, fontSize = 18.sp, fontWeight = FontWeight(600))
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    if (children.isEmpty()) "暂无子代理会话" else "共 ${children.size} 个 · 点选可切换",
+                    if (children.isEmpty()) L.noSubagentSessions else L.subagentSheetSummary.format(children.size),
                     color = Dsh.labelTertiary,
                     fontSize = 13.sp,
                 )
@@ -2883,7 +2926,7 @@ fun WorkspaceScreen(
                                 overflow = TextOverflow.Ellipsis,
                             )
                             if (child.running) {
-                                Text("运行中", color = Dsh.brand400, fontSize = 11.sp)
+                                Text(L.runningStatus, color = Dsh.brand400, fontSize = 11.sp)
                             }
                         }
                     }
@@ -2891,7 +2934,7 @@ fun WorkspaceScreen(
                 if (!parentOfCurrent.isNullOrBlank()) {
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "返回父会话",
+                        L.returnToParentSession,
                         color = Dsh.brand400,
                         fontSize = 13.sp,
                         fontWeight = FontWeight(500),
@@ -2944,9 +2987,9 @@ private fun DshRenameDialog(
                     .border(1.dp, Dsh.borderL2, RoundedCornerShape(DshRadius.lg))
                     .padding(18.dp)
             ) {
-                Text("重命名会话", color = Dsh.labelPrimary, fontSize = 15.sp, fontWeight = FontWeight(500), lineHeight = 21.sp)
+                Text(L.renameSession, color = Dsh.labelPrimary, fontSize = 15.sp, fontWeight = FontWeight(500), lineHeight = 21.sp)
                 Spacer(Modifier.height(8.dp))
-                Text("设置一个方便识别的会话名称。", color = Dsh.labelTertiary, fontSize = 12.sp, lineHeight = 17.sp)
+                Text(L.renameSessionDesc, color = Dsh.labelTertiary, fontSize = 12.sp, lineHeight = 17.sp)
                 Spacer(Modifier.height(14.dp))
                 BasicTextField(
                     value = name,
@@ -2975,7 +3018,7 @@ private fun DshRenameDialog(
                             .padding(horizontal = 14.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text("取消", color = Dsh.labelSecondary, fontSize = 12.sp, fontWeight = FontWeight(500))
+                        Text(L.cancel, color = Dsh.labelSecondary, fontSize = 12.sp, fontWeight = FontWeight(500))
                     }
                     Spacer(Modifier.width(8.dp))
                     Box(
@@ -2987,7 +3030,7 @@ private fun DshRenameDialog(
                             .padding(horizontal = 14.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text("保存", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight(500))
+                        Text(L.save, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight(500))
                     }
                 }
             }
@@ -3049,7 +3092,7 @@ private fun DshConfirmDialog(
                             .padding(horizontal = 14.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text("取消", color = Dsh.labelSecondary, fontSize = 12.sp, fontWeight = FontWeight(500))
+                        Text(L.cancel, color = Dsh.labelSecondary, fontSize = 12.sp, fontWeight = FontWeight(500))
                     }
                     Spacer(Modifier.width(8.dp))
                     Box(
@@ -3071,11 +3114,7 @@ private fun DshConfirmDialog(
 
 // ---------- 新会话 Hero（仅口号；工作区/模式在输入区顶栏） ----------
 
-private enum class HeroMode(val label: String, val placeholder: String) {
-    CHAT("对话", "描述你想要构建的内容"),
-    PLAN("计划", "描述你的任务以生成计划"),
-    GOAL("目标", "输入目标，智能体将持续执行"),
-}
+private enum class HeroMode { CHAT, PLAN, GOAL }
 
 @Composable
 private fun HeroShell() {
@@ -3086,7 +3125,7 @@ private fun HeroShell() {
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
-            "探索未至之境",
+            L.heroSlogan,
             color = Dsh.labelPrimary,
             fontSize = 26.sp,
             fontWeight = FontWeight(500),
@@ -3121,12 +3160,17 @@ private fun SheetGrabber() {
 private fun WorkspacePickerSheet(
     sessions: List<MobileSession>,
     deletedWorkspaces: Set<String> = emptySet(),
+    registeredPaths: List<String> = emptyList(),
     selectedPath: String? = null,
     onDismiss: () -> Unit,
     onPick: (String?) -> Unit,
 ) {
-    val workspaces = remember(sessions, deletedWorkspaces) {
-        visibleUserWorkspaces(sessions, deletedWorkspaces)
+    val workspaces = remember(sessions, deletedWorkspaces, registeredPaths) {
+        visibleUserWorkspaces(
+            sessionCwds = sessions.map { it.cwd },
+            deletedWorkspaces = deletedWorkspaces,
+            registeredPaths = registeredPaths,
+        )
     }
     var query by remember { mutableStateOf("") }
     val filtered = remember(workspaces, query) {
@@ -3151,12 +3195,12 @@ private fun WorkspacePickerSheet(
                 .padding(bottom = 24.dp)
         ) {
             SheetGrabber()
-            Text("选择一个工作区开始", color = Dsh.labelPrimary, fontSize = 18.sp, fontWeight = FontWeight(600), lineHeight = 24.sp)
+            Text(L.chooseWorkspaceTitle, color = Dsh.labelPrimary, fontSize = 18.sp, fontWeight = FontWeight(600), lineHeight = 24.sp)
             Spacer(Modifier.height(4.dp))
-            Text("会话将保存在所选工作区", color = Dsh.labelTertiary, fontSize = 13.sp, lineHeight = 18.sp)
+            Text(L.chooseWorkspaceDesc, color = Dsh.labelTertiary, fontSize = 13.sp, lineHeight = 18.sp)
             if (workspaces.size > 6) {
                 Spacer(Modifier.height(12.dp))
-                SheetSearchField(value = query, onValueChange = { query = it }, placeholder = "搜索工作区")
+                SheetSearchField(value = query, onValueChange = { query = it }, placeholder = L.searchWorkspace)
             }
             Spacer(Modifier.height(14.dp))
 
@@ -3168,8 +3212,8 @@ private fun WorkspacePickerSheet(
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 WorkspaceOptionRow(
-                    title = "未分组",
-                    path = "不绑定工作区",
+                    title = L.ungrouped,
+                    path = L.noWorkspaceBinding,
                     selected = selectedPath == null,
                     onClick = {
                         onDismiss()
@@ -3189,7 +3233,7 @@ private fun WorkspacePickerSheet(
                 }
                 if (query.isNotBlank() && filtered.isEmpty()) {
                     Text(
-                        "没有匹配「$query」的工作区",
+                        L.noMatchingWorkspace.format(query),
                         color = Dsh.labelTertiary,
                         fontSize = 13.sp,
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 16.dp)
@@ -3242,7 +3286,7 @@ private fun SheetSearchField(
         if (value.isNotEmpty()) {
             Icon(
                 CloseOutline16,
-                contentDescription = "清除",
+                contentDescription = L.clearSearch,
                 tint = Dsh.labelCaption,
                 modifier = Modifier
                     .size(16.dp)
@@ -3353,7 +3397,7 @@ private fun AddWorkspaceRow(onCreate: (String) -> Unit) {
                 Icon(PlusOutline16, contentDescription = null, tint = Dsh.brand400, modifier = Modifier.size(14.dp))
             }
             Spacer(Modifier.width(10.dp))
-            Text("添加工作区", color = Dsh.labelPrimary, fontSize = 14.sp, fontWeight = FontWeight(500), lineHeight = 20.sp)
+            Text(L.addWorkspace, color = Dsh.labelPrimary, fontSize = 14.sp, fontWeight = FontWeight(500), lineHeight = 20.sp)
             Spacer(Modifier.weight(1f))
             Icon(
                 if (expanded) ChevronUpOutline14 else ChevronDownOutline14,
@@ -3380,7 +3424,7 @@ private fun AddWorkspaceRow(onCreate: (String) -> Unit) {
                         .padding(horizontal = 10.dp, vertical = 8.dp),
                     decorationBox = { inner ->
                         Box(contentAlignment = Alignment.CenterStart) {
-                            if (path.isEmpty()) Text("输入工作区目录路径", color = Dsh.labelTertiary, fontSize = 13.sp)
+                            if (path.isEmpty()) Text(L.enterWorkspacePath, color = Dsh.labelTertiary, fontSize = 13.sp)
                             inner()
                         }
                     }
@@ -3395,7 +3439,7 @@ private fun AddWorkspaceRow(onCreate: (String) -> Unit) {
                         .padding(horizontal = 14.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("创建", color = if (path.isBlank()) Dsh.labelTertiary else Color.White, fontSize = 13.sp, fontWeight = FontWeight(500))
+                    Text(L.create, color = if (path.isBlank()) Dsh.labelTertiary else Color.White, fontSize = 13.sp, fontWeight = FontWeight(500))
                 }
             }
         }
@@ -3526,21 +3570,21 @@ private fun SessionFilterSheet(
                 .padding(bottom = 24.dp),
         ) {
             SheetGrabber()
-            Text("筛选会话", color = Dsh.labelPrimary, fontSize = 18.sp, fontWeight = FontWeight(600), lineHeight = 24.sp)
+            Text(L.filterSessions, color = Dsh.labelPrimary, fontSize = 18.sp, fontWeight = FontWeight(600), lineHeight = 24.sp)
             Spacer(Modifier.height(14.dp))
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 SessionFilter.entries.forEach { f ->
                     val label = when (f) {
-                        SessionFilter.ALL -> "全部"
-                        SessionFilter.RUNNING -> "运行中"
-                        SessionFilter.STOPPED -> "已停止"
+                        SessionFilter.ALL -> L.allSessions
+                        SessionFilter.RUNNING -> L.runningStatus
+                        SessionFilter.STOPPED -> L.stopped
                     }
                     PermissionModeOption(
                         title = "$label · ${counts[f] ?: 0}",
                         desc = when (f) {
-                            SessionFilter.ALL -> "显示所有会话"
-                            SessionFilter.RUNNING -> "仅显示正在执行的会话"
-                            SessionFilter.STOPPED -> "仅显示已停止的会话"
+                            SessionFilter.ALL -> L.showAllSessions
+                            SessionFilter.RUNNING -> L.onlyShowRunningSessions
+                            SessionFilter.STOPPED -> L.onlyShowStoppedSessions
                         },
                         accent = Dsh.labelSecondary,
                         icon = ChecklistOutline14,
@@ -3577,17 +3621,17 @@ private fun SessionFilterChips(
         SessionFilter.entries.forEach { f ->
             DshFilterChip(
                 label = when (f) {
-                    SessionFilter.ALL -> "全部"
-                    SessionFilter.RUNNING -> "运行中"
-                    SessionFilter.STOPPED -> "已停止"
+                    SessionFilter.ALL -> L.allSessions
+                    SessionFilter.RUNNING -> L.runningStatus
+                    SessionFilter.STOPPED -> L.stopped
                 },
                 count = counts[f] ?: 0,
                 selected = f == selected,
                 onClick = { onSelect(f) },
-                contentDescription = "筛选会话：${when (f) {
-                    SessionFilter.ALL -> "全部"
-                    SessionFilter.RUNNING -> "运行中"
-                    SessionFilter.STOPPED -> "已停止"
+                contentDescription = "${L.filterSessions}: ${when (f) {
+                    SessionFilter.ALL -> L.allSessions
+                    SessionFilter.RUNNING -> L.runningStatus
+                    SessionFilter.STOPPED -> L.stopped
                 }}"
             )
         }
@@ -3614,7 +3658,7 @@ private fun StatsLine(stats: MobileSessionStats?) {
     if (stats == null) return
     if (stats.turns <= 0 && stats.steps <= 0 && stats.llmMs <= 0 && stats.outputTokens <= 0) return
     val parts = buildList {
-        if (stats.turns > 0 || stats.steps > 0) add("${stats.turns} 轮 · ${stats.steps} 步")
+        if (stats.turns > 0 || stats.steps > 0) add(L.statsTurnsSteps.format(stats.turns, stats.steps))
         if (stats.llmMs > 0) add("LLM ${formatDuration(stats.llmMs)}")
         val ttft = when {
             stats.ttftSteps > 0 -> stats.ttftMs / stats.ttftSteps
@@ -3625,16 +3669,16 @@ private fun StatsLine(stats: MobileSessionStats?) {
             stats.decodeTokens * 1000.0 / stats.decodeMs
         else null
         val perf = buildList {
-            if (ttft > 0) add("首 token ${formatDuration(ttft)}")
+            if (ttft > 0) add(L.firstToken.format(formatDuration(ttft)))
             if (tokPerSec != null) add(String.format(Locale.US, "%.0f tok/s", tokPerSec))
         }
         if (perf.isNotEmpty()) add(perf.joinToString(" · "))
         val inTokens = stats.uncachedInputTokens + stats.cacheReadTokens
         if (inTokens > 0 && stats.cacheReadTokens > 0) {
-            add("缓存命中 ${(stats.cacheReadTokens * 100 / inTokens).toInt()}%")
+            add(L.cacheHit.format((stats.cacheReadTokens * 100 / inTokens).toInt()))
         }
         if (inTokens > 0 || stats.outputTokens > 0) {
-            add("输入 ${formatTokens(inTokens)} tok · 输出 ${formatTokens(stats.outputTokens)} tok")
+            add(L.inputOutputTokens.format(formatTokens(inTokens), formatTokens(stats.outputTokens)))
         }
     }
     if (parts.isEmpty()) return
@@ -3734,7 +3778,7 @@ private fun ModelPickerSheet(
                 if (page != ModelPickerPage.MENU) {
                     Icon(
                         ChevronLeftOutline14,
-                        contentDescription = "返回",
+                        contentDescription = L.back,
                         tint = Dsh.labelSecondary,
                         modifier = Modifier
                             .size(22.dp)
@@ -3745,9 +3789,9 @@ private fun ModelPickerSheet(
                 }
                 Text(
                     when (page) {
-                        ModelPickerPage.MENU -> "选择模型"
-                        ModelPickerPage.MODELS -> "模型"
-                        ModelPickerPage.EFFORT -> "推理等级"
+                        ModelPickerPage.MENU -> L.selectModel
+                        ModelPickerPage.MODELS -> L.model
+                        ModelPickerPage.EFFORT -> L.reasoningEffort
                     },
                     color = Dsh.labelPrimary,
                     fontSize = 18.sp,
@@ -3759,7 +3803,7 @@ private fun ModelPickerSheet(
             Text(
                 if (currentName != null) {
                     listOfNotNull(currentName, currentEffort?.let { formatEffortLabel(it) }).joinToString(" ")
-                } else "选择本会话使用的模型",
+                } else L.selectSessionModel,
                 color = Dsh.labelTertiary,
                 fontSize = 13.sp,
                 lineHeight = 18.sp,
@@ -3771,25 +3815,25 @@ private fun ModelPickerSheet(
             when (page) {
                 ModelPickerPage.MENU -> {
                     ModelMenuRow(
-                        title = "模型",
-                        value = currentName ?: "未选择",
+                        title = L.model,
+                        value = currentName ?: L.noneSelected,
                         onClick = { page = ModelPickerPage.MODELS }
                     )
                     Spacer(Modifier.height(6.dp))
                     ModelMenuRow(
-                        title = "推理等级",
-                        value = currentEffort?.let { formatEffortLabel(it) } ?: if (currentEfforts.isEmpty()) "—" else "默认",
+                        title = L.reasoningEffort,
+                        value = currentEffort?.let { formatEffortLabel(it) } ?: if (currentEfforts.isEmpty()) "—" else L.defaultLabel,
                         enabled = currentEfforts.isNotEmpty(),
                         onClick = { page = ModelPickerPage.EFFORT }
                     )
                 }
                 ModelPickerPage.MODELS -> {
-                    SheetSearchField(value = query, onValueChange = { query = it }, placeholder = "搜索模型或供应商")
+                    SheetSearchField(value = query, onValueChange = { query = it }, placeholder = L.searchModelProvider)
                     Spacer(Modifier.height(12.dp))
                     when {
-                        catalog == null -> Text("正在加载模型列表…", color = Dsh.labelTertiary, fontSize = 13.sp, modifier = Modifier.padding(vertical = 16.dp))
-                        catalog.groups.isEmpty() -> Text("没有可用的模型。", color = Dsh.labelTertiary, fontSize = 13.sp, modifier = Modifier.padding(vertical = 16.dp))
-                        filteredGroups.isEmpty() -> Text("没有匹配「$query」的模型", color = Dsh.labelTertiary, fontSize = 13.sp, modifier = Modifier.padding(vertical = 16.dp))
+                        catalog == null -> Text(L.loadingModelList, color = Dsh.labelTertiary, fontSize = 13.sp, modifier = Modifier.padding(vertical = 16.dp))
+                        catalog.groups.isEmpty() -> Text(L.noAvailableModels, color = Dsh.labelTertiary, fontSize = 13.sp, modifier = Modifier.padding(vertical = 16.dp))
+                        filteredGroups.isEmpty() -> Text(L.noMatchingModels.format(query), color = Dsh.labelTertiary, fontSize = 13.sp, modifier = Modifier.padding(vertical = 16.dp))
                         else -> Column(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -3842,7 +3886,7 @@ private fun ModelPickerSheet(
                 }
                 ModelPickerPage.EFFORT -> {
                     if (currentEfforts.isEmpty()) {
-                        Text("当前模型没有可调推理等级。", color = Dsh.labelTertiary, fontSize = 13.sp, modifier = Modifier.padding(vertical = 16.dp))
+                        Text(L.noAdjustableReasoningEffort, color = Dsh.labelTertiary, fontSize = 13.sp, modifier = Modifier.padding(vertical = 16.dp))
                     } else {
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             currentEfforts.forEach { effort ->
@@ -3900,23 +3944,23 @@ private fun formatEffortLabel(effort: String): String =
     effort.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.US) else it.toString() }
 
 internal fun friendlySelectModelError(raw: String?): String {
-    val text = raw?.trim().orEmpty().ifBlank { return "未知错误" }
+    val text = raw?.trim().orEmpty().ifBlank { return L.unknownError }
     val lower = text.lowercase()
     return when {
-        "no adapter registered" in lower -> "找不到该模型供应商，请确认电脑端已启用对应插件"
-        "unsupported_reasoning" in lower || "does not support reasoning" in lower -> "该模型不支持当前推理等级"
-        "model-unavailable" in lower -> "该模型当前不可用"
-        "调用" in text && "api" in lower -> "电脑端调用模型接口失败，请检查 DeepSeek 密钥后重载插件"
+        "no adapter registered" in lower -> L.noAdapterRegistered
+        "unsupported_reasoning" in lower || "does not support reasoning" in lower -> L.unsupportedReasoningEffort
+        "model-unavailable" in lower -> L.modelUnavailable
+        "调用" in text && "api" in lower -> L.modelApiFailed
         else -> text
     }
 }
 
 private fun modelChipLabel(catalog: MobileModelCatalog?): String {
-    if (catalog == null) return "选择模型"
+    if (catalog == null) return L.selectModel
     val option = catalog.groups.asSequence()
         .flatMap { g -> g.models.asSequence() }
         .firstOrNull { it.id == catalog.currentModel }
-    val name = option?.name ?: catalog.currentModel ?: "选择模型"
+    val name = option?.name ?: catalog.currentModel ?: L.selectModel
     val effort = catalog.currentReasoningEffort ?: option?.defaultEffort
     return if (effort.isNullOrBlank()) name else "$name ${formatEffortLabel(effort)}"
 }
@@ -4076,19 +4120,19 @@ private fun SessionRowItem(
             expanded = menuOpen,
             onDismiss = { menuOpen = false },
             items = listOf(
-                DshMenuItem(EditOutline16, "重命名") {
+                DshMenuItem(EditOutline16, L.rename) {
                     menuOpen = false
                     onRename()
                 },
-                DshMenuItem(BranchOutline16, "分叉会话") {
+                DshMenuItem(BranchOutline16, L.forkSession) {
                     menuOpen = false
                     onFork()
                 },
-                DshMenuItem(ArchiveOutline20, "归档会话") {
+                DshMenuItem(ArchiveOutline20, L.archiveSession) {
                     menuOpen = false
                     onArchive()
                 },
-                DshMenuItem(TrashOutline16, "删除会话", danger = true) {
+                DshMenuItem(TrashOutline16, L.deleteSession, danger = true) {
                     menuOpen = false
                     onDelete()
                 },
@@ -4188,7 +4232,7 @@ private fun ApprovalCard(
             )
             Spacer(Modifier.width(8.dp))
             Text(
-                "等待审批",
+                L.waitingApproval,
                 color = Dsh.warn,
                 fontSize = 13.sp,
                 lineHeight = 18.sp
@@ -4236,7 +4280,7 @@ private fun ApprovalCard(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        "拒绝",
+                        L.reject,
                         color = if (answered) Dsh.labelTertiary else Dsh.labelSecondary,
                         fontSize = 13.sp,
                         fontWeight = FontWeight(500),
@@ -4257,7 +4301,7 @@ private fun ApprovalCard(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        if (answered) "已处理" else "允许一次",
+                        if (answered) L.processed else L.allowOnce,
                         color = Color.White,
                         fontSize = 13.sp,
                         fontWeight = FontWeight(500),
@@ -4335,7 +4379,7 @@ private fun ContextMeterButton(stats: MobileSessionStats, running: Boolean = fal
             Column(modifier = Modifier.width(240.dp).padding(12.dp)) {
                 // header：上下文已用 + 百分比 + 用量数字
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("上下文已用", color = Dsh.labelTertiary, fontSize = 12.sp, lineHeight = 20.sp)
+                    Text(L.contextUsed, color = Dsh.labelTertiary, fontSize = 12.sp, lineHeight = 20.sp)
                     Spacer(Modifier.width(6.dp))
                     Text(
                         "${percent.toInt()}%",
@@ -4390,11 +4434,11 @@ private fun ContextMeterButton(stats: MobileSessionStats, running: Boolean = fal
                 }
                 Spacer(Modifier.height(12.dp))
                 // 明细行（系统提示词/工具/对话消息 + 色块 + tok 数）
-                ContextMeterRow("系统提示词", formatTokens(stats.systemTokens), DshColorSystem)
+                ContextMeterRow(L.systemPrompt, formatTokens(stats.systemTokens), DshColorSystem)
                 Spacer(Modifier.height(4.dp))
-                ContextMeterRow("工具", formatTokens(stats.toolsTokens), DshColorTools)
+                ContextMeterRow(L.tools, formatTokens(stats.toolsTokens), DshColorTools)
                 Spacer(Modifier.height(4.dp))
-                ContextMeterRow("对话消息", formatTokens(stats.messageTokens), Dsh.brand450)
+                ContextMeterRow(L.chatMessages, formatTokens(stats.messageTokens), Dsh.brand450)
             }
         }
     }
@@ -4534,11 +4578,11 @@ private fun exportSessionTranscript(client: MobileApiClient, sessionId: String, 
     }
     val body = pages.mapNotNull { msg ->
         val role = when (msg.role) {
-            "user" -> "用户"
-            "assistant" -> "助手"
-            "reasoning" -> "思考"
-            "tool_call" -> "工具:${msg.toolName ?: "?"}"
-            "tool_result" -> "结果"
+            "user" -> L.userRole
+            "assistant" -> L.assistantRole
+            "reasoning" -> L.reasoningRole
+            "tool_call" -> "${L.tools}:${msg.toolName ?: "?"}"
+            "tool_result" -> L.resultRole
             else -> msg.role
         }
         val text = msg.text.ifBlank { msg.toolArgs.orEmpty() }.trim()
@@ -4597,7 +4641,7 @@ private fun HistoryView(
                 modifier = Modifier.weight(1f),
                 decorationBox = { inner ->
                     Box(contentAlignment = Alignment.CenterStart) {
-                        if (searchQuery.isEmpty()) Text("搜索会话…", color = Dsh.labelTertiary, fontSize = 14.sp)
+                        if (searchQuery.isEmpty()) Text(L.searchSessionsPlaceholder, color = Dsh.labelTertiary, fontSize = 14.sp)
                         inner()
                     }
                 }
@@ -4616,7 +4660,7 @@ private fun HistoryView(
             if (searchQuery.isNotEmpty()) {
                 Icon(
                     CloseOutline16,
-                    contentDescription = "清除搜索",
+                    contentDescription = L.clearSearch,
                     tint = Dsh.labelCaption,
                     modifier = Modifier
                         .size(16.dp)
@@ -4638,7 +4682,7 @@ private fun HistoryView(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    "搜索失败：${searchState.message}",
+                    L.searchFailedWithMessage.format(searchState.message),
                     color = Dsh.labelSecondary,
                     fontSize = 12.sp,
                     lineHeight = 18.sp,
@@ -4651,7 +4695,7 @@ private fun HistoryView(
                         .clickable { onRetry() }
                         .padding(horizontal = 10.dp, vertical = 4.dp)
                 ) {
-                    Text("重试", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight(500))
+                    Text(L.retry, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight(500))
                 }
             }
             Spacer(Modifier.height(8.dp))
@@ -4662,7 +4706,7 @@ private fun HistoryView(
             when (searchState) {
                 is SearchUiState.Loading -> {
                     Text(
-                        "搜索中…",
+                        L.searching,
                         color = Dsh.labelTertiary,
                         fontSize = 13.sp,
                         modifier = Modifier.padding(vertical = 20.dp)
@@ -4672,7 +4716,7 @@ private fun HistoryView(
                     // Empty / Error 状态互斥：error 优先渲染（已在顶部错误条给重试入口）
                     if (searchState is SearchUiState.Empty) {
                         Text(
-                            "无匹配会话",
+                            L.noMatchingSessions,
                             color = Dsh.labelTertiary,
                             fontSize = 13.sp,
                             modifier = Modifier.padding(vertical = 20.dp)
@@ -4682,7 +4726,7 @@ private fun HistoryView(
                 else -> {
                     if (searchResults.isEmpty() && searchState is SearchUiState.Idle) {
                         Text(
-                            "无匹配会话",
+                            L.noMatchingSessions,
                             color = Dsh.labelTertiary,
                             fontSize = 13.sp,
                             modifier = Modifier.padding(vertical = 20.dp)
@@ -4690,7 +4734,7 @@ private fun HistoryView(
                     } else {
                         // 标题 + bounded LazyColumn
                         Text(
-                            "搜索结果",
+                            L.searchResults,
                             color = Dsh.labelTertiary,
                             fontSize = 12.sp,
                             lineHeight = 18.sp,
@@ -4717,7 +4761,7 @@ private fun HistoryView(
                             if (searchResults.size > HISTORY_LIST_LIMIT) {
                                 item(key = "history-overflow") {
                                     Text(
-                                        "已显示前 $HISTORY_LIST_LIMIT 条，共 ${searchResults.size} 条",
+                                        L.historyOverflow.format(HISTORY_LIST_LIMIT, searchResults.size),
                                         color = Dsh.labelCaption,
                                         fontSize = 11.sp,
                                         lineHeight = 16.sp,
@@ -4738,14 +4782,14 @@ private fun HistoryView(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
-                        "暂无会话",
+                        L.noSessions,
                         color = Dsh.labelTertiary,
                         fontSize = 14.sp,
                         fontWeight = FontWeight(500)
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "新建一段对话后会出现在这里",
+                        L.noSessionsHint,
                         color = Dsh.labelCaption,
                         fontSize = 12.sp,
                         lineHeight = 18.sp
@@ -4763,7 +4807,7 @@ private fun HistoryView(
                     if (all.size > HISTORY_LIST_LIMIT) {
                         item(key = "history-overflow") {
                             Text(
-                                "已显示前 $HISTORY_LIST_LIMIT 条，共 ${all.size} 条",
+                                L.historyOverflow.format(HISTORY_LIST_LIMIT, all.size),
                                 color = Dsh.labelCaption,
                                 fontSize = 11.sp,
                                 lineHeight = 16.sp,
@@ -4879,14 +4923,14 @@ private data class TraceRoleVisual(
 
 @Composable
 private fun traceRoleVisual(role: String): TraceRoleVisual = when (role) {
-    "user" -> TraceRoleVisual("目标", Dsh.brand400, GoalOutline16)
-    "reasoning" -> TraceRoleVisual("思考", Color(0xFF8B7CF6), ThinkOutline16)
-    "tool_call" -> TraceRoleVisual("工具调用", Dsh.warn, CodeOutline16)
-    "tool_result" -> TraceRoleVisual("执行结果", Dsh.success, CheckOutline16)
-    "approval" -> TraceRoleVisual("授权", Color(0xFFF97316), WarningOutline16)
-    "todo" -> TraceRoleVisual("任务", Color(0xFF06B6D4), ChecklistOutline14)
-    "compaction" -> TraceRoleVisual("压缩", Dsh.labelTertiary, ArchiveOutline20)
-    else -> TraceRoleVisual("回答", Dsh.brand400, Sparkle16)
+    "user" -> TraceRoleVisual(L.goalRole, Dsh.brand400, GoalOutline16)
+    "reasoning" -> TraceRoleVisual(L.reasoningRole, Color(0xFF8B7CF6), ThinkOutline16)
+    "tool_call" -> TraceRoleVisual(L.toolCallRole, Dsh.warn, CodeOutline16)
+    "tool_result" -> TraceRoleVisual(L.executionResultRole, Dsh.success, CheckOutline16)
+    "approval" -> TraceRoleVisual(L.approvalRole, Color(0xFFF97316), WarningOutline16)
+    "todo" -> TraceRoleVisual(L.taskRole, Color(0xFF06B6D4), ChecklistOutline14)
+    "compaction" -> TraceRoleVisual(L.compactionRole, Dsh.labelTertiary, ArchiveOutline20)
+    else -> TraceRoleVisual(L.answerRole, Dsh.brand400, Sparkle16)
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -4900,17 +4944,17 @@ private fun TrajectoryView(
 ) {
     var roleFilter by remember { mutableStateOf<String?>(null) }
     val filterOptions = remember(messages) {
-        listOf(null to "全部") + messages.map { it.role }.distinct()
+        listOf(null to L.allSessions) + messages.map { it.role }.distinct()
             .map { role ->
                 role to when (role) {
-                    "user" -> "目标"
-                    "assistant" -> "回答"
-                    "reasoning" -> "思考"
-                    "tool_call" -> "工具"
-                    "tool_result" -> "结果"
-                    "approval" -> "授权"
-                    "todo" -> "任务"
-                    "compaction" -> "压缩"
+                    "user" -> L.goalRole
+                    "assistant" -> L.answerRole
+                    "reasoning" -> L.reasoningRole
+                    "tool_call" -> L.tools
+                    "tool_result" -> L.resultRole
+                    "approval" -> L.approvalRole
+                    "todo" -> L.taskRole
+                    "compaction" -> L.compactionRole
                     else -> role
                 }
             }
@@ -4965,13 +5009,13 @@ private fun TrajectoryView(
                     Icon(ThinkOutline16, contentDescription = null, tint = Dsh.brand400, modifier = Modifier.size(20.dp))
                 }
                 Spacer(Modifier.height(14.dp))
-                Text("暂无轨迹", color = Dsh.labelPrimary, fontSize = 15.sp, fontWeight = FontWeight(500))
+                Text(L.noTrace, color = Dsh.labelPrimary, fontSize = 15.sp, fontWeight = FontWeight(500))
                 Spacer(Modifier.height(6.dp))
                 Text(
                     if (messages.isEmpty()) {
-                        "开始一段对话后，思考、工具调用、结果与回答会按步骤记录在这里。"
+                        L.noTraceEmpty
                     } else {
-                        "当前筛选下没有步骤，试试「全部」。"
+                        L.noTraceFilterEmpty
                     },
                     color = Dsh.labelTertiary,
                     fontSize = 13.sp,
@@ -4991,13 +5035,13 @@ private fun TrajectoryView(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 DshTag(
-                    text = "${s.turns} 轮",
+                    text = L.turnsCount.format(s.turns),
                     color = Dsh.brand400.copy(alpha = 0.12f),
                     contentColor = Dsh.brand400,
                     shape = RoundedCornerShape(DshRadius.full),
                 )
                 DshTag(
-                    text = "${s.steps} 步",
+                    text = L.stepsCount.format(s.steps),
                     color = Color(0xFF8B7CF6).copy(alpha = 0.12f),
                     contentColor = Color(0xFF8B7CF6),
                     shape = RoundedCornerShape(DshRadius.full),
@@ -5110,12 +5154,12 @@ private fun TraceStepHeader(msg: MobileMessage, durationMs: Long?, visual: Trace
             color = visual.color.copy(alpha = 0.14f),
             contentColor = visual.color,
             shape = RoundedCornerShape(DshRadius.full),
-            contentDescription = "步骤类型：${visual.label}",
+            contentDescription = L.stepType.format(visual.label),
         )
         if (msg.role == "tool_call") {
             Spacer(Modifier.width(8.dp))
             Text(
-                msg.toolName ?: "工具调用",
+                msg.toolName ?: L.toolCallRole,
                 color = Dsh.labelPrimary,
                 fontSize = 13.sp,
                 lineHeight = 18.sp,
@@ -5148,14 +5192,14 @@ private fun TraceStepBody(msg: MobileMessage, running: Boolean, accent: Color) {
         "todo" -> {
             val done = msg.todos.count { it.status == "completed" }
             Text(
-                if (msg.todos.isNotEmpty()) "任务清单更新 · $done/${msg.todos.size} 已完成" else "任务清单已更新",
+                if (msg.todos.isNotEmpty()) L.todoUpdate.format(done, msg.todos.size) else L.todoListUpdated,
                 color = Dsh.labelSecondary,
                 fontSize = 13.sp,
                 lineHeight = 20.sp
             )
         }
         "compaction" -> Text(
-            if (msg.running == true) "正在压缩…" else msg.text.lineSequence().firstOrNull().orEmpty().ifBlank { "上下文已压缩" },
+            if (msg.running == true) L.compressing else msg.text.lineSequence().firstOrNull().orEmpty().ifBlank { L.contextCompressed },
             color = Dsh.labelSecondary,
             fontSize = 13.sp,
             lineHeight = 20.sp,
@@ -5204,7 +5248,7 @@ private fun TraceExpandableText(text: String, maxLines: Int = 4, mono: Boolean =
         )
         if (text.length > (if (mono) 140 else 100)) {
             Text(
-                if (expanded) "收起" else "展开",
+                if (expanded) L.collapse else L.expand,
                 color = Dsh.brand400,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
@@ -5224,6 +5268,7 @@ private fun TraceExpandableText(text: String, maxLines: Int = 4, mono: Boolean =
 private fun ComposerTopRow(
     sessions: List<MobileSession>,
     deletedWorkspaces: Set<String> = emptySet(),
+    registeredPaths: List<String> = emptyList(),
     currentCwd: String?,
     lastCwd: String?,
     harnessLabel: String,
@@ -5233,8 +5278,12 @@ private fun ComposerTopRow(
     onOpenHarnessPicker: (() -> Unit)? = null,
     onStartSession: (String?) -> Unit,
 ) {
-    val workspaces = remember(sessions, deletedWorkspaces) {
-        visibleUserWorkspaces(sessions, deletedWorkspaces)
+    val workspaces = remember(sessions, deletedWorkspaces, registeredPaths) {
+        visibleUserWorkspaces(
+            sessionCwds = sessions.map { it.cwd },
+            deletedWorkspaces = deletedWorkspaces,
+            registeredPaths = registeredPaths,
+        )
     }
     var showPicker by remember { mutableStateOf(false) }
     var pickedCwd by remember(deletedWorkspaces) {
@@ -5281,7 +5330,7 @@ private fun ComposerTopRow(
                 )
                 Spacer(Modifier.width(6.dp))
                 Text(
-                    displayCwd?.substringAfterLast('/') ?: if (workspaceEditable) "选择工作区" else "未绑定工作区",
+                    displayCwd?.substringAfterLast('/') ?: if (workspaceEditable) L.selectWorkspaceShort else L.unboundWorkspace,
                     color = if (workspaceEditable) Dsh.labelPrimary else Dsh.labelSecondary,
                     fontSize = 13.sp,
                     fontWeight = FontWeight(500),
@@ -5359,6 +5408,7 @@ private fun ComposerTopRow(
         WorkspacePickerSheet(
             sessions = sessions,
             deletedWorkspaces = deletedWorkspaces,
+            registeredPaths = registeredPaths,
             selectedPath = displayCwd,
             onDismiss = { showPicker = false },
             onPick = { cwd ->
@@ -5403,7 +5453,7 @@ private fun AgentPresetPickerSheet(
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 Text(
-                    selectedPreset?.name?.ifBlank { "标准模式" } ?: "标准模式",
+                    selectedPreset?.name?.ifBlank { L.defaultHarnessPreset } ?: L.defaultHarnessPreset,
                     color = Dsh.labelPrimary,
                     fontSize = 18.sp,
                     fontWeight = FontWeight(600),
@@ -5421,14 +5471,14 @@ private fun AgentPresetPickerSheet(
             }
             Spacer(Modifier.height(4.dp))
             Text(
-                "选择新会话使用的模式（Agent preset）",
+                L.chooseAgentPresetDesc,
                 color = Dsh.labelTertiary,
                 fontSize = 13.sp,
                 lineHeight = 18.sp
             )
             Spacer(Modifier.height(14.dp))
             if (presets.isEmpty()) {
-                Text("加载预设中…", color = Dsh.labelTertiary, fontSize = 13.sp)
+                Text(L.loadingPresets, color = Dsh.labelTertiary, fontSize = 13.sp)
             } else {
                 LazyColumn(
                     modifier = Modifier.heightIn(max = 440.dp),
@@ -5517,7 +5567,7 @@ private fun PermissionPickerSheet(
                     MobileApiClient(host).setSessionPermission(sessionId, preset)
                     withContext(Dispatchers.Main) {
                         saving = false
-                        Toast.makeText(context, "已更新当前会话权限", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, L.currentSessionPermissionUpdated, Toast.LENGTH_SHORT).show()
                         onDismiss()
                     }
                 } else {
@@ -5531,7 +5581,7 @@ private fun PermissionPickerSheet(
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     saving = false
-                    error = e.message ?: "保存失败，请重试"
+                    error = e.message ?: L.saveFailed
                 }
             }
         }
@@ -5553,10 +5603,10 @@ private fun PermissionPickerSheet(
                 .padding(bottom = 24.dp)
         ) {
             SheetGrabber()
-            Text("访问模式", color = Dsh.labelPrimary, fontSize = 18.sp, fontWeight = FontWeight(600), lineHeight = 24.sp)
+            Text(L.accessMode, color = Dsh.labelPrimary, fontSize = 18.sp, fontWeight = FontWeight(600), lineHeight = 24.sp)
             Spacer(Modifier.height(4.dp))
             Text(
-                if (sessionId != null) "仅影响当前会话的权限预设" else "选择新会话的默认权限模式",
+                if (sessionId != null) L.currentSessionPermissionDesc else L.defaultPermissionDesc,
                 color = Dsh.labelTertiary,
                 fontSize = 13.sp,
                 lineHeight = 18.sp,
@@ -5564,8 +5614,8 @@ private fun PermissionPickerSheet(
             Spacer(Modifier.height(14.dp))
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 PermissionModeOption(
-                    title = "只读",
-                    desc = "agent 只读，所有写入操作需确认",
+                    title = L.permReadOnly,
+                    desc = L.readOnlyPermissionDesc,
                     accent = Dsh.labelSecondary,
                     icon = BrowseOutline16,
                     selected = selected == "read-only",
@@ -5576,8 +5626,8 @@ private fun PermissionPickerSheet(
                     }
                 )
                 PermissionModeOption(
-                    title = "工作区写入",
-                    desc = "允许 agent 在工作区内修改文件",
+                    title = L.permWorkspaceWrite,
+                    desc = L.workspaceWritePermissionDesc,
                     accent = Dsh.brand400,
                     icon = FolderOpenOutline16,
                     selected = selected == "workspace-write",
@@ -5588,8 +5638,8 @@ private fun PermissionPickerSheet(
                     }
                 )
                 PermissionModeOption(
-                    title = "完全访问",
-                    desc = "减少确认步骤，可执行敏感操作与外部命令",
+                    title = L.permFullAccess,
+                    desc = L.fullAccessPermissionDesc,
                     accent = Dsh.warn,
                     icon = WarningOutline16,
                     selected = selected == "danger-full-access",
@@ -5602,12 +5652,12 @@ private fun PermissionPickerSheet(
             }
             if (saving) {
                 Spacer(Modifier.height(10.dp))
-                Text("保存中…", color = Dsh.labelTertiary, fontSize = 12.sp)
+                Text(L.saving, color = Dsh.labelTertiary, fontSize = 12.sp)
             }
             if (error != null) {
                 Spacer(Modifier.height(10.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("保存失败：$error", color = Dsh.error, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                    Text(L.saveFailedWithMessage.format(error), color = Dsh.error, fontSize = 12.sp, modifier = Modifier.weight(1f))
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(7.dp))
@@ -5616,7 +5666,7 @@ private fun PermissionPickerSheet(
                             .padding(horizontal = 12.dp, vertical = 5.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text("重试", color = Dsh.brand400, fontSize = 12.sp, fontWeight = FontWeight(500))
+                        Text(L.retry, color = Dsh.brand400, fontSize = 12.sp, fontWeight = FontWeight(500))
                     }
                 }
             }
@@ -5652,10 +5702,10 @@ private fun PermissionPickerSheet(
                         .border(1.dp, Dsh.borderL2, RoundedCornerShape(DshRadius.lg))
                         .padding(18.dp)
                 ) {
-                    Text("确认启用 Full access？", color = Dsh.labelPrimary, fontSize = 15.sp, fontWeight = FontWeight(500), lineHeight = 21.sp)
+                    Text(L.confirmFullAccessTitle, color = Dsh.labelPrimary, fontSize = 15.sp, fontWeight = FontWeight(500), lineHeight = 21.sp)
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "启用 Full access 后，agent 将减少确认步骤，并且可以直接执行更多操作，包括敏感操作、文件修改或外部命令。仅建议在你信任当前任务时使用。",
+                        L.confirmFullAccessMessage,
                         color = Dsh.labelTertiary,
                         fontSize = 12.sp,
                         lineHeight = 18.sp
@@ -5673,7 +5723,7 @@ private fun PermissionPickerSheet(
                                 .padding(horizontal = 14.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text("取消", color = Dsh.labelSecondary, fontSize = 12.sp, fontWeight = FontWeight(500))
+                            Text(L.cancel, color = Dsh.labelSecondary, fontSize = 12.sp, fontWeight = FontWeight(500))
                         }
                         Spacer(Modifier.width(8.dp))
                         Box(
@@ -5688,7 +5738,7 @@ private fun PermissionPickerSheet(
                                 .padding(horizontal = 14.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text("启用 Full access", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight(500))
+                            Text(L.enableFullAccess, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight(500))
                         }
                     }
                 }
@@ -5773,7 +5823,7 @@ private fun PermissionModeOption(
 // ---------- 发送队列 dock（DSH QueueDock：输入卡上方，发送中显示） ----------
 
 @Composable
-private fun QueueDock(label: String = "正在发送…", badge: String = "处理中") {
+private fun QueueDock(label: String = L.sending, badge: String = L.processing) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -5880,7 +5930,7 @@ private fun InputBar(
                                 model = coil.request.ImageRequest.Builder(androidx.compose.ui.platform.LocalContext.current)
                                     .data(preview)
                                     .build(),
-                                contentDescription = "待发送图片",
+                                contentDescription = L.pendingImage,
                                 contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                                 modifier = Modifier
                                     .size(56.dp)
@@ -5898,7 +5948,7 @@ private fun InputBar(
                             ) {
                                 Icon(
                                     CloseOutline16,
-                                    contentDescription = "移除图片",
+                                    contentDescription = L.removeImage,
                                     tint = Dsh.labelSecondary,
                                     modifier = Modifier.size(12.dp)
                                 )
@@ -5931,10 +5981,10 @@ private fun InputBar(
                         if (inputText.isEmpty()) {
                             Text(
                                 when {
-                                    isListening -> "正在倾听…"
-                                    heroMode == HeroMode.PLAN -> "描述你的任务以生成计划"
-                                    heroMode == HeroMode.GOAL -> "当前目标进行中。可输入 edit 修改 / pause 暂停 / resume 继续 / clear 清除"
-                                    else -> "给智能体发消息"
+                                    isListening -> L.listening
+                                    heroMode == HeroMode.PLAN -> L.planPlaceholder
+                                    heroMode == HeroMode.GOAL -> L.goalPlaceholder
+                                    else -> L.chatPlaceholder
                                 },
                                 color = Dsh.labelTertiary,
                                 fontSize = 16.sp,
@@ -5961,7 +6011,7 @@ private fun InputBar(
                     RoundIconButton(
                         icon = PlusOutline16,
                         tint = Dsh.labelPrimary,
-                        contentDescription = "添加附件",
+                        contentDescription = L.addAttachment,
                         onClick = onPickImage
                     )
                 }
@@ -6019,7 +6069,7 @@ private fun InputBar(
                     ) {
                         Icon(
                             StopFill16,
-                            contentDescription = "停止生成",
+                            contentDescription = L.stopGenerating,
                             tint = Dsh.labelPrimary,
                             modifier = Modifier.size(14.dp)
                         )
@@ -6042,7 +6092,7 @@ private fun InputBar(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            currentModel ?: "选择模型",
+                            currentModel ?: L.selectModel,
                             color = Dsh.labelSecondary,
                             fontSize = 13.sp,
                             fontWeight = FontWeight(500),
@@ -6116,7 +6166,7 @@ private fun InputBar(
                     } else {
                         Icon(
                             SendOutline16,
-                            contentDescription = "发送消息",
+                            contentDescription = L.sendMessage,
                             tint = Color.White,
                             modifier = Modifier.size(14.dp)
                         )
@@ -6193,7 +6243,7 @@ private fun ToolGroupHeader(
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    "${group.items.size} 个工具调用",
+                    L.toolCallCount.format(group.items.size),
                     color = Dsh.labelSecondary,
                     fontSize = 14.sp,
                     lineHeight = 24.sp,
@@ -6203,7 +6253,7 @@ private fun ToolGroupHeader(
                     modifier = Modifier.weight(1f)
                 )
                 if (groupRunning) {
-                    Text("执行中…", color = Dsh.labelTertiary, fontSize = 12.sp, lineHeight = 18.sp)
+                    Text(L.executing, color = Dsh.labelTertiary, fontSize = 12.sp, lineHeight = 18.sp)
                     Spacer(Modifier.width(6.dp))
                     RunningDots(tint = Dsh.brand400)
                     Spacer(Modifier.width(8.dp))
@@ -6295,12 +6345,12 @@ fun MessageItem(
                     onAnswerApproval?.invoke(approvalId, outcome)
                 }
             )
-            msg.role == "tool_call" -> CommandCard(msg.toolName ?: "工具调用", msg.toolArgs, running)
+            msg.role == "tool_call" -> CommandCard(msg.toolName ?: L.toolCallRole, msg.toolArgs, running)
             msg.role == "tool_result" -> CommandCard(
-                title = "执行结果" + (msg.durationMs?.let { " · ${formatTraceDuration(it)}" } ?: ""),
+                title = L.executionResultRole + (msg.durationMs?.let { " · ${formatTraceDuration(it)}" } ?: ""),
                 body = msg.text.take(4000),
                 running = running,
-                runningLabel = "执行中…"
+                runningLabel = L.executing
             )
             msg.role == "compaction" -> CompactionRow(msg.text, msg.running ?: false)
             msg.role == "todo" -> TodoPanel(msg.todos)
@@ -6334,20 +6384,20 @@ fun MessageItem(
             expanded = menuOpen,
             onDismiss = { menuOpen = false },
             items = buildList {
-                add(DshMenuItem(CopyOutline16, "复制") {
+                add(DshMenuItem(CopyOutline16, L.copy) {
                     menuOpen = false
                     onCopy()
                 })
-                add(DshMenuItem(Icons.Default.FormatQuote, "引用") {
+                add(DshMenuItem(Icons.Default.FormatQuote, L.quote) {
                     menuOpen = false
                     onQuote()
                 })
-                add(DshMenuItem(BranchOutline16, "分叉会话") {
+                add(DshMenuItem(BranchOutline16, L.forkSession) {
                     menuOpen = false
                     onFork()
                 })
                 if (onRegenerate != null) {
-                    add(DshMenuItem(RefreshOutline16, "重新生成") {
+                    add(DshMenuItem(RefreshOutline16, L.regenerate) {
                         menuOpen = false
                         onRegenerate()
                     })
@@ -6370,20 +6420,20 @@ private fun MessageActionRow(
     ) {
         MessageActionIcon(
             icon = CopyOutline16,
-            contentDescription = "复制",
+            contentDescription = L.copy,
             onClick = onCopy,
         )
         if (onFork != null) {
             MessageActionIcon(
                 icon = BranchOutline16,
-                contentDescription = "分叉会话",
+                contentDescription = L.forkSession,
                 onClick = onFork,
             )
         }
         if (onRegenerate != null) {
             MessageActionIcon(
                 icon = RefreshOutline16,
-                contentDescription = "重新生成",
+                contentDescription = L.regenerate,
                 onClick = onRegenerate,
             )
         }
@@ -6453,7 +6503,7 @@ private fun RawMessageCard(msg: MobileMessage) {
             )
             Spacer(Modifier.width(6.dp))
             Text(
-                "未支持的消息类型：${msg.role}",
+                L.unsupportedMessageType.format(msg.role),
                 color = Dsh.labelSecondary,
                 fontSize = 13.sp,
                 lineHeight = 20.sp
@@ -6509,7 +6559,7 @@ private fun CompactionRow(summary: String, running: Boolean) {
         }
         Spacer(Modifier.width(6.dp))
         Text(
-            if (running) "正在压缩…" else "上下文已压缩",
+            if (running) L.compressing else L.contextCompressed,
             color = Dsh.labelPrimary.copy(alpha = 0.85f),
             fontSize = 14.sp,
             lineHeight = 24.sp
@@ -6579,7 +6629,7 @@ private fun ContextInjectionRow(text: String) {
             )
             Spacer(Modifier.width(6.dp))
             Text(
-                "上下文注入",
+                L.contextInjection,
                 color = Dsh.labelTertiary,
                 fontSize = 12.sp,
                 fontWeight = FontWeight(500),
@@ -6602,7 +6652,7 @@ private fun ContextInjectionRow(text: String) {
             )
             Icon(
                 if (expanded) ChevronUpOutline14 else ChevronDownOutline14,
-                contentDescription = if (expanded) "收起注入内容" else "展开注入内容",
+                contentDescription = if (expanded) L.collapseInjectionContent else L.expandInjectionContent,
                 tint = Dsh.labelCaption,
                 modifier = Modifier.size(14.dp)
             )
@@ -6662,7 +6712,7 @@ private fun TodoPanel(todos: List<MobileTodoItem>) {
             )
             Spacer(Modifier.width(10.dp))
             Text(
-                "任务",
+                L.tasks,
                 color = Dsh.labelPrimary,
                 fontSize = 13.sp,
                 fontWeight = FontWeight(500),
@@ -6670,7 +6720,7 @@ private fun TodoPanel(todos: List<MobileTodoItem>) {
             )
             Spacer(Modifier.width(10.dp))
             Text(
-                "$done/${todos.size} 已完成",
+                L.todoCompleted.format(done, todos.size),
                 color = Dsh.labelTertiary,
                 fontSize = 13.sp,
                 lineHeight = 20.sp,
@@ -6750,7 +6800,7 @@ private fun TodoGlyph(status: String) {
 private fun LoadOlderRow(loading: Boolean, onClick: () -> Unit) {
     Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
         Text(
-            text = if (loading) "载入历史…" else "加载更早",
+            text = if (loading) L.loadHistory else L.loadOlder,
             color = Dsh.labelSecondary,
             fontSize = 12.sp,
             lineHeight = 18.sp,
@@ -6765,13 +6815,13 @@ private fun LoadOlderRow(loading: Boolean, onClick: () -> Unit) {
 
 // 已停止标记（按 turn/end reason 显示具体原因）
 private fun stoppedReasonLabel(reason: String): String = when (reason.lowercase()) {
-    "interrupted" -> "已中断"
-    "stopped" -> "已停止"
-    "error" -> "出错停止"
-    "maxtokens", "max_tokens" -> "达到 token 上限"
-    "aborted" -> "已取消"
-    "timeout" -> "超时停止"
-    else -> if (reason.isBlank()) "已停止" else reason
+    "interrupted" -> L.interrupted
+    "stopped" -> L.stopped
+    "error" -> L.errorStopped
+    "maxtokens", "max_tokens" -> L.maxTokensReached
+    "aborted" -> L.cancelled
+    "timeout" -> L.timeoutStopped
+    else -> if (reason.isBlank()) L.stopped else reason
 }
 
 @Composable
@@ -6813,7 +6863,7 @@ private fun ReasoningRow(text: String, running: Boolean = false) {
                 modifier = Modifier.size(16.dp)
             )
             Text(
-                "思考",
+                L.thinking,
                 color = Dsh.labelPrimary,
                 fontSize = 14.sp,
                 lineHeight = 24.sp,
@@ -6862,40 +6912,12 @@ private fun relativeTime(timestamp: Long): String {
     if (timestamp <= 0) return ""
     val diff = System.currentTimeMillis() - timestamp
     return when {
-        diff < 60_000 -> "刚刚"
-        diff < 3_600_000 -> "${diff / 60_000}分钟"
-        diff < 86_400_000 -> "${diff / 3_600_000}小时"
-        else -> "${diff / 86_400_000}天"
+        diff < 60_000 -> L.justNowShort
+        diff < 3_600_000 -> L.minutesShort.format(diff / 60_000)
+        diff < 86_400_000 -> L.hoursShort.format(diff / 3_600_000)
+        else -> L.daysShort.format(diff / 86_400_000)
     }
 }
-
-/** 用户工作区过滤：排除隐藏目录与系统/依赖目录（DSH 只显示用户项目工作区）。 */
-private fun isUserWorkspace(cwd: String?): Boolean {
-    if (cwd.isNullOrBlank()) return true
-    val parts = cwd.split('/').filter { it.isNotBlank() }
-    if (parts.isEmpty()) return false
-    return parts.none { part ->
-        part.startsWith(".") ||
-            part == "node_modules" ||
-            part == ".npm" ||
-            part == ".bin" ||
-            part == "Library" ||
-            part == "Applications" ||
-            part == "System" ||
-            part == "tmp" ||
-            part == "private"
-    }
-}
-
-/** 侧边栏与会话页共用的可见工作区列表（排除本地已删）。 */
-private fun visibleUserWorkspaces(
-    sessions: List<MobileSession>,
-    deletedWorkspaces: Set<String>,
-): List<String> = sessions
-    .mapNotNull { it.cwd }
-    .distinct()
-    .filter { isUserWorkspace(it) && it !in deletedWorkspaces }
-    .sorted()
 
 // 用户消息：右对齐气泡（max-width min(525px,82%), radius 22, bg #2C2C2E）
 @Composable
@@ -7169,19 +7191,19 @@ private fun MarkdownCodeBlock(lang: String?, content: String) {
                     .clickable(interactionSource = copyInteraction, indication = null) {
                         val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
                         clipboard.setPrimaryClip(android.content.ClipData.newPlainText("code", content.trimEnd()))
-                        Toast.makeText(context, "已复制", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, L.copied, Toast.LENGTH_SHORT).show()
                     }
                     .padding(horizontal = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(
                     CopyOutline16,
-                    contentDescription = "复制",
+                    contentDescription = L.copy,
                     tint = Dsh.labelTertiary,
                     modifier = Modifier.size(12.dp)
                 )
                 Spacer(Modifier.width(4.dp))
-                Text("复制", color = Dsh.labelTertiary, fontSize = 11.sp, lineHeight = 16.sp)
+                Text(L.copy, color = Dsh.labelTertiary, fontSize = 11.sp, lineHeight = 16.sp)
             }
         }
         val dark = Dsh.isDark
@@ -7513,7 +7535,7 @@ private fun RunningSweep() {
 
 // 命令卡片（tool call / result：radius 12, bg code-block, max-height 260）
 @Composable
-private fun CommandCard(title: String, body: String?, running: Boolean = false, runningLabel: String = "执行中…") {
+private fun CommandCard(title: String, body: String?, running: Boolean = false, runningLabel: String = L.executing) {
     var expanded by remember { mutableStateOf(false) }
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
@@ -7611,7 +7633,7 @@ fun EmptyHostScreen(onScan: () -> Unit) {
                 lineHeight = 32.sp
             )
             Spacer(Modifier.height(12.dp))
-            Text("未连接工作台，请先添加设备", color = Dsh.labelTertiary, fontSize = 12.sp, lineHeight = 18.sp)
+            Text(L.noWorkbenchConnected, color = Dsh.labelTertiary, fontSize = 12.sp, lineHeight = 18.sp)
             Spacer(Modifier.height(28.dp))
             Box(
                 modifier = Modifier
@@ -7622,7 +7644,7 @@ fun EmptyHostScreen(onScan: () -> Unit) {
                     .padding(horizontal = 24.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Text("去设备列表", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight(500))
+                Text(L.goToDeviceList, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight(500))
             }
         }
     }

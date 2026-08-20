@@ -9,6 +9,8 @@ import dev.dsh.mobile.core.DeviceName
 import dev.dsh.mobile.core.DshTheme
 import dev.dsh.mobile.core.HostLoadResult
 import dev.dsh.mobile.core.HostStore
+import dev.dsh.mobile.core.DshS
+import dev.dsh.mobile.core.DshStrings
 import dev.dsh.mobile.core.PairClient
 import dev.dsh.mobile.core.PinnedSsl
 import dev.dsh.mobile.native.MobileApiClient
@@ -245,6 +247,7 @@ fun DevicesScreen(
     onManualPair: (name: String, url: String, code: String, fingerprint: String?, onSuccess: (Host) -> Unit, onError: (String) -> Unit) -> Unit,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val s = DshS
     var devices by remember { mutableStateOf(emptyList<DeviceUi>()) }
     var showPairingPanel by remember { mutableStateOf(false) }
     var renameTarget by remember { mutableStateOf<Host?>(null) }
@@ -282,7 +285,7 @@ fun DevicesScreen(
             }
             val anyOnline = devices.any { it.state == DeviceState.ONLINE }
             allOfflineError = if (!anyOnline && devices.isNotEmpty()) {
-                "所有设备均离线。请确认电脑端 dsh 已启动，且本机与电脑在同一局域网（或已配置远程隧道）。"
+                s.allOffline
             } else null
         }
     }
@@ -300,7 +303,7 @@ fun DevicesScreen(
             }
             HostLoadResult.Undecryptable -> {
                 devices = emptyList()
-                allOfflineError = "凭据无法读取，请重新配对"
+                allOfflineError = s.credentialsUnreadable
             }
         }
     }
@@ -328,7 +331,12 @@ fun DevicesScreen(
                     )
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    pairedDevicesError = e.message ?: "加载失败"
+                    val raw = e.message ?: "加载失败"
+                    pairedDevicesError = when {
+                        raw.contains("404") || raw.contains("Not Found", ignoreCase = true) ->
+                            "接口不可用（404）。请确认电脑端已安装最新 dsh-links 插件并重启 dsh web。"
+                        else -> raw
+                    }
                 }
                 emptyList()
             }
@@ -377,7 +385,7 @@ fun DevicesScreen(
                         letterSpacing = (-0.25).sp
                     )
                     Text(
-                        "管理你的 DSH Links",
+                        s.manageYourLinks,
                         color = HStudio.textSecondary,
                         fontSize = 12.sp,
                         lineHeight = 18.sp
@@ -433,7 +441,7 @@ fun DevicesScreen(
                                     if (!ok) {
                                         Toast.makeText(
                                             context,
-                                            "无法连接「${device.host.name}」。请确认电脑在线，且 18640 端口可访问。",
+                                            s.cannotConnectHost.format(device.host.name),
                                             Toast.LENGTH_LONG,
                                         ).show()
                                         refreshHealth()
@@ -443,10 +451,15 @@ fun DevicesScreen(
                             onRename = { renameTarget = device.host },
                             onDelete = { deleteTarget = device.host },
                             onManagePairing = {
-                                if (device.state != DeviceState.ONLINE) {
-                                    Toast.makeText(context, "设备离线，无法管理配对", Toast.LENGTH_SHORT).show()
-                                } else {
-                                    pairedDevicesHost = device.host
+                                when (device.state) {
+                                    DeviceState.OFFLINE -> {
+                                        Toast.makeText(
+                                            context,
+                                            s.deviceOfflineCannotManage,
+                                            Toast.LENGTH_SHORT,
+                                        ).show()
+                                    }
+                                    else -> pairedDevicesHost = device.host
                                 }
                             },
                         )
@@ -470,7 +483,7 @@ fun DevicesScreen(
                     ) {
                         Text(msg, color = HStudio.textMuted, fontSize = 11.sp)
                         Text(
-                            "重新同步",
+                            s.resync,
                             color = HStudio.textPrimary,
                             fontWeight = FontWeight(600),
                             fontSize = 11.sp,
@@ -500,9 +513,9 @@ fun DevicesScreen(
     // ---------- 删除确认弹窗 ----------
     deleteTarget?.let { target ->
         HStudioConfirmDialog(
-            title = "删除设备",
-            content = "删除设备“${target.name}”？将同时从电脑端吊销本机配对并移除本机记录。",
-            confirmText = "删除",
+            title = s.deleteDevice,
+            content = s.deleteDeviceContent.format(target.name),
+            confirmText = s.delete,
             danger = true,
             onConfirm = {
                 scope.launch(Dispatchers.IO) {
@@ -540,9 +553,9 @@ fun DevicesScreen(
 
     revokeTarget?.let { target ->
         HStudioConfirmDialog(
-            title = "吊销配对",
-            content = "吊销设备“${target.name}”？该设备将无法再连接此电脑。",
-            confirmText = "吊销",
+            title = s.revokePairing,
+            content = s.revokePairingContent.format(target.name),
+            confirmText = s.revoke,
             danger = true,
             onConfirm = {
                 val host = pairedDevicesHost
@@ -556,11 +569,11 @@ fun DevicesScreen(
                                         .thenByDescending { it.lastSeenAt },
                                 )
                             withContext(Dispatchers.Main) {
-                                Toast.makeText(context, "已吊销「${target.name}」", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, s.revokeOk.format(target.name), Toast.LENGTH_SHORT).show()
                             }
                         } catch (e: Exception) {
                             withContext(Dispatchers.Main) {
-                                Toast.makeText(context, "吊销失败：${e.message ?: "未知错误"}", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, s.revokeFailed.format(e.message ?: s.unknownError), Toast.LENGTH_SHORT).show()
                             }
                         }
                         withContext(Dispatchers.Main) { revokeTarget = null }
@@ -591,11 +604,15 @@ fun DevicesScreen(
 
 // ---------- 设备卡片 ----------
 
-private fun statusLabel(state: DeviceState): String = when (state) {
-    DeviceState.CHECKING -> "检测中"
-    DeviceState.ONLINE -> "在线"
-    DeviceState.OFFLINE -> "离线"
-    DeviceState.CONNECTING -> "连接中"
+@Composable
+private fun statusLabel(state: DeviceState): String {
+    val s = DshS
+    return when (state) {
+        DeviceState.CHECKING -> s.statusChecking
+        DeviceState.ONLINE -> s.statusOnline
+        DeviceState.OFFLINE -> s.statusOffline
+        DeviceState.CONNECTING -> s.statusConnecting
+    }
 }
 
 @Composable
@@ -606,6 +623,7 @@ private fun DeviceCard(
     onDelete: () -> Unit,
     onManagePairing: () -> Unit,
 ) {
+    val s = DshS
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val scale by animateFloatAsState(if (pressed) 0.96f else 1f)
@@ -714,12 +732,12 @@ private fun DeviceCard(
                 .fillMaxWidth()
                 .padding(top = 11.dp)
         ) {
-            CardAction("修改名称", false, modifier = Modifier.weight(1f), onClick = onRename)
+            CardAction(s.rename, false, modifier = Modifier.weight(1f), onClick = onRename)
             Spacer(Modifier.width(7.dp))
-            CardAction("删除", true, modifier = Modifier.weight(1f), onClick = onDelete)
+            CardAction(s.delete, true, modifier = Modifier.weight(1f), onClick = onDelete)
         }
         Spacer(Modifier.height(7.dp))
-        CardAction("配对管理", false, modifier = Modifier.fillMaxWidth(), onClick = onManagePairing)
+        CardAction(s.pairingManage, false, modifier = Modifier.fillMaxWidth(), onClick = onManagePairing)
     }
 }
 
@@ -873,15 +891,16 @@ private fun Modifier.dashedBorder(width: Dp, color: Color, cornerRadius: Dp): Mo
 
 @Composable
 private fun EmptyDevicesState(onAdd: () -> Unit) {
+    val s = DshS
     Column(
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Text("还没有配对任何设备", color = HStudio.textPrimary, fontSize = 14.sp, fontWeight = FontWeight(600))
+        Text(s.noDevicesYet, color = HStudio.textPrimary, fontSize = 14.sp, fontWeight = FontWeight(600))
         Spacer(Modifier.height(6.dp))
         Text(
-            "在电脑端 dsh（DeepSeek Harness）打开「📱 手机连接」面板\n扫描二维码或输入配对码即可接入",
+            s.noDevicesHint,
             color = HStudio.textMuted,
             fontSize = 11.sp,
             lineHeight = 17.sp,
@@ -1422,6 +1441,7 @@ private fun PairedDevicesSheet(
     onDismiss: () -> Unit,
     onRevoke: (MobilePairedDevice) -> Unit,
 ) {
+    val s = DshS
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         containerColor = HStudio.bgCard,
@@ -1443,10 +1463,10 @@ private fun PairedDevicesSheet(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("配对管理", fontSize = 16.sp, fontWeight = FontWeight(650), color = HStudio.textPrimary)
+                    Text(s.pairingManageTitle, fontSize = 16.sp, fontWeight = FontWeight(650), color = HStudio.textPrimary)
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        if (devices.isNotEmpty()) "共 ${devices.size} 台设备 · $hostName" else hostName,
+                        if (devices.isNotEmpty()) s.pairingManageCount.format(devices.size, hostName) else hostName,
                         fontSize = 11.sp,
                         color = HStudio.textMuted,
                         maxLines = 1,
@@ -1454,7 +1474,7 @@ private fun PairedDevicesSheet(
                     )
                 }
                 IconButton(onClick = onDismiss) {
-                    Icon(Icons.Default.Close, contentDescription = "关闭", tint = HStudio.textMuted)
+                    Icon(Icons.Default.Close, contentDescription = s.close, tint = HStudio.textMuted)
                 }
             }
             Spacer(Modifier.height(16.dp))
@@ -1470,10 +1490,10 @@ private fun PairedDevicesSheet(
                     }
                 }
                 error != null -> {
-                    Text("加载失败：$error", color = HStudio.error, fontSize = 12.sp, lineHeight = 18.sp)
+                    Text("${s.loadFailed}：$error", color = HStudio.error, fontSize = 12.sp, lineHeight = 18.sp)
                 }
                 devices.isEmpty() -> {
-                    Text("暂无已配对设备", color = HStudio.textMuted, fontSize = 12.sp)
+                    Text(s.noPairedDevices, color = HStudio.textMuted, fontSize = 12.sp)
                 }
                 else -> {
                     devices.forEach { device ->
@@ -1489,7 +1509,7 @@ private fun PairedDevicesSheet(
                             Column(modifier = Modifier.weight(1f)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text(
-                                        device.name.ifBlank { "未命名设备" },
+                                        device.name.ifBlank { s.unnamedDevice },
                                         fontSize = 13.sp,
                                         fontWeight = FontWeight(600),
                                         color = HStudio.textPrimary,
@@ -1498,13 +1518,13 @@ private fun PairedDevicesSheet(
                                     )
                                     if (isSelf) {
                                         Spacer(Modifier.width(6.dp))
-                                        HTag("本机", HStudio.blue, HStudio.blueBg, monospace = false)
+                                        HTag(s.thisDevice, HStudio.blue, HStudio.blueBg, monospace = false)
                                     }
                                 }
                                 if (device.lastSeenAt > 0L) {
                                     Spacer(Modifier.height(3.dp))
                                     Text(
-                                        "最近活跃 ${formatPairedDeviceTime(device.lastSeenAt)}",
+                                        formatPairedDeviceTime(device.lastSeenAt, s),
                                         fontSize = 10.sp,
                                         color = HStudio.textMuted,
                                     )
@@ -1513,7 +1533,7 @@ private fun PairedDevicesSheet(
                             if (!isSelf) {
                                 Spacer(Modifier.width(10.dp))
                                 Text(
-                                    "吊销",
+                                    s.revoke,
                                     color = HStudio.error,
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight(550),
@@ -1529,12 +1549,12 @@ private fun PairedDevicesSheet(
     }
 }
 
-private fun formatPairedDeviceTime(epochMs: Long): String {
+private fun formatPairedDeviceTime(epochMs: Long, s: DshStrings): String {
     val diff = System.currentTimeMillis() - epochMs
-    if (diff < 60_000) return "刚刚"
-    if (diff < 3_600_000) return "${diff / 60_000} 分钟前"
-    if (diff < 86_400_000) return "${diff / 3_600_000} 小时前"
-    return "${diff / 86_400_000} 天前"
+    if (diff < 60_000) return s.lastActiveJustNow
+    if (diff < 3_600_000) return s.lastActiveMinutes.format(diff / 60_000)
+    if (diff < 86_400_000) return s.lastActiveHours.format(diff / 3_600_000)
+    return s.lastActiveDays.format(diff / 86_400_000)
 }
 
 /** baseUrl → 展示名：去协议、去末尾斜杠。 */

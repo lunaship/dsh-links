@@ -3,6 +3,8 @@ import dev.dsh.mobile.core.persist
 import dev.dsh.mobile.core.Dsh
 import dev.dsh.mobile.core.Host
 import dev.dsh.mobile.core.PinnedSsl
+import dev.dsh.mobile.core.DshS
+import dev.dsh.mobile.core.LocaleManager
 import dev.dsh.mobile.core.ThemeManager
 import dev.dsh.mobile.native.MobileSession
 import dev.dsh.mobile.native.AppSettings
@@ -65,7 +67,7 @@ import kotlinx.coroutines.withContext
 
 /**
  * 设置页 —— 1:1 复刻 DeepSeek Harness Web UI 设置面板：
- * 通用设置（主题/权限/Enter 行为）、模型、插件、Agent 预设、关于。
+ * 通用设置（语言/主题/权限/Enter 行为）、模型、插件、Agent 预设、关于。
  */
 class SettingsActivity : ComponentActivity() {
 
@@ -94,12 +96,24 @@ class SettingsActivity : ComponentActivity() {
     }
 }
 
-private enum class SettingsTab(val title: String) {
-    GENERAL("通用设置"),
-    MODELS("模型"),
-    SESSIONS("会话"),
-    PLUGINS("插件"),
-    ABOUT("关于"),
+private enum class SettingsTab {
+    GENERAL,
+    MODELS,
+    SESSIONS,
+    PLUGINS,
+    ABOUT,
+}
+
+@Composable
+private fun SettingsTab.label(): String {
+    val s = DshS
+    return when (this) {
+        SettingsTab.GENERAL -> s.tabGeneral
+        SettingsTab.MODELS -> s.tabModels
+        SettingsTab.SESSIONS -> s.tabSessions
+        SettingsTab.PLUGINS -> s.tabPlugins
+        SettingsTab.ABOUT -> s.tabAbout
+    }
 }
 
 private val PERMISSION_PRESETS = listOf(
@@ -116,6 +130,7 @@ private fun SettingsScreen(
     onOpenDevices: () -> Unit,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val s = DshS
     val scope = rememberCoroutineScope()
     var tab by remember { mutableStateOf(SettingsTab.GENERAL) }
     var llmGroups by remember { mutableStateOf<List<MobileModelGroup>>(emptyList()) }
@@ -154,6 +169,7 @@ private fun SettingsScreen(
                     val loaded = AppSettings.fromServer(view.namespaces)
                     loaded.persist(context)
                     appSettings = loaded
+                    LocaleManager.setLanguage(context, loaded.language)
                     namespaceRevisions = view.namespaces.associate { it.ns to it.revision }
                     if (loaded.theme in setOf("light", "dark", "system")) {
                         ThemeManager.setThemeMode(context, loaded.theme)
@@ -169,7 +185,7 @@ private fun SettingsScreen(
     fun saveNamespace(ns: String, patch: org.json.JSONObject, onSuccess: () -> Unit = {}) {
         val h = host
         if (h == null) {
-            saveErrors = saveErrors + (ns to "未连接设备，无法保存")
+            saveErrors = saveErrors + (ns to s.notConnectedCannotSave)
             return
         }
         if (savingNs != null) return
@@ -185,7 +201,7 @@ private fun SettingsScreen(
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    saveErrors = saveErrors + (ns to (e.message ?: "保存失败，请重试"))
+                    saveErrors = saveErrors + (ns to (e.message ?: s.saveFailed))
                 }
             } finally {
                 withContext(Dispatchers.Main) { savingNs = null }
@@ -245,7 +261,7 @@ private fun SettingsScreen(
                     )
                 }
                 Spacer(Modifier.width(10.dp))
-                Text("设置", color = Dsh.labelPrimary, fontSize = 14.sp, fontWeight = FontWeight(500), lineHeight = 20.sp)
+                Text(s.settingsTitle, color = Dsh.labelPrimary, fontSize = 14.sp, fontWeight = FontWeight(500), lineHeight = 20.sp)
             }
             Spacer(Modifier.height(11.dp))
             Box(
@@ -285,7 +301,7 @@ private fun SettingsScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        t.title,
+                        t.label(),
                         color = if (selected) Dsh.labelPrimary else Dsh.labelSecondary,
                         fontSize = 13.sp,
                         fontWeight = FontWeight(500),
@@ -539,23 +555,24 @@ private fun GeneralSettings(
     onShowFullAccessConfirm: () -> Unit,
     onSave: (ns: String, patch: org.json.JSONObject, onSuccess: () -> Unit) -> Unit,
 ) {
+    val s = DshS
     // --- Agent 预设（agent-presets.default：新会话由创建参数真实使用） ---
-    SettingsSection("通用设置")
+    SettingsSection(s.sectionGeneral)
     SettingsSelectItem(
-        title = "Agent 预设",
-        description = "对此后新建的会话生效。运行中的会话保持它开始时的预设。",
+        title = s.agentPreset,
+        description = s.agentPresetDesc,
         value = when (appSettings.agentPreset) {
-            "standard" -> "标准模式"
-            "code" -> "PTC 模式"
-            "minimal" -> "极简模式"
-            "creator", "cordis" -> "创造模式"
+            "standard" -> s.presetStandard
+            "code" -> s.presetCode
+            "minimal" -> s.presetMinimal
+            "creator", "cordis" -> s.presetCreator
             else -> appSettings.agentPreset
         },
         options = listOf(
-            "标准模式" to "standard",
-            "PTC 模式" to "code",
-            "极简模式" to "minimal",
-            "创造模式" to "cordis",
+            s.presetStandard to "standard",
+            s.presetCode to "code",
+            s.presetMinimal to "minimal",
+            s.presetCreator to "cordis",
         ),
         selectedId = appSettings.agentPreset,
         saving = savingNs == "agent-presets",
@@ -569,17 +586,17 @@ private fun GeneralSettings(
 
     // --- 权限（permission.defaultPreset：DSH 服务端在新会话创建时应用） ---
     SettingsSelectItem(
-        title = "权限",
-        description = "选择新会话的默认权限模式",
+        title = s.permission,
+        description = s.permissionDesc,
         value = when (appSettings.permissionPreset) {
-            "read-only" -> "只读"
-            "danger-full-access" -> "Full access"
-            else -> "工作区写入"
+            "read-only" -> s.permReadOnly
+            "danger-full-access" -> s.permFullAccess
+            else -> s.permWorkspaceWrite
         },
         options = listOf(
-            "只读" to "read-only",
-            "工作区写入" to "workspace-write",
-            "Full access" to "danger-full-access",
+            s.permReadOnly to "read-only",
+            s.permWorkspaceWrite to "workspace-write",
+            s.permFullAccess to "danger-full-access",
         ),
         selectedId = appSettings.permissionPreset,
         saving = savingNs == "permission",
@@ -595,8 +612,25 @@ private fun GeneralSettings(
     )
     HorizontalDivider(color = Dsh.borderL1, modifier = Modifier.padding(vertical = 4.dp))
 
+    // --- 语言（locale.preference）—— App UI + Harness ---
+    SettingsSelectItem(
+        title = s.language,
+        description = s.languageDesc,
+        value = if (appSettings.language == "zh") s.langZh else s.langEn,
+        options = listOf(s.langZh to "zh", s.langEn to "en"),
+        selectedId = appSettings.language,
+        saving = savingNs == "locale",
+        error = saveErrors["locale"],
+        onRetry = { onSave("locale", org.json.JSONObject().put("preference", appSettings.language), {}) },
+        onSelect = { _, id ->
+            LocaleManager.setLanguage(context, id)
+            onSave("locale", org.json.JSONObject().put("preference", id), {})
+        }
+    )
+    HorizontalDivider(color = Dsh.borderL1, modifier = Modifier.padding(vertical = 4.dp))
+
     // --- 外观（本地 ThemeManager + 可选同步 ui-theme） ---
-    SettingsSection("外观")
+    SettingsSection(s.sectionAppearance)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -604,7 +638,7 @@ private fun GeneralSettings(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         ThemeCard(
-            label = "浅色",
+            label = s.themeLight,
             icon = Icons.Default.LightMode,
             selected = ThemeManager.currentThemeMode == "light",
             modifier = Modifier.weight(1f),
@@ -614,7 +648,7 @@ private fun GeneralSettings(
             },
         )
         ThemeCard(
-            label = "深色",
+            label = s.themeDark,
             icon = Icons.Default.DarkMode,
             selected = ThemeManager.currentThemeMode == "dark",
             modifier = Modifier.weight(1f),
@@ -624,7 +658,7 @@ private fun GeneralSettings(
             },
         )
         ThemeCard(
-            label = "跟随系统",
+            label = s.themeSystem,
             icon = Icons.Default.SettingsBrightness,
             selected = ThemeManager.currentThemeMode == "system",
             modifier = Modifier.weight(1f),
@@ -639,13 +673,17 @@ private fun GeneralSettings(
     // --- 繁忙时发送行为（ui-conversation.busyEnter） ---
     val busyEnterId = canonicalBusyEnter(appSettings.busyEnter)
     SettingsSelectItem(
-        title = "繁忙时发送行为",
-        description = "智能体仍在执行时，点发送按钮的行为",
-        value = busyEnterLabel(appSettings.busyEnter),
+        title = s.busyEnter,
+        description = s.busyEnterDesc,
+        value = when (busyEnterId) {
+            "send" -> s.busySend
+            "steer" -> s.busySteer
+            else -> s.busyQueue
+        },
         options = listOf(
-            "插话发送" to "send",
-            "引导发送" to "steer",
-            "排队发送" to "queue",
+            s.busySend to "send",
+            s.busySteer to "steer",
+            s.busyQueue to "queue",
         ),
         selectedId = busyEnterId,
         saving = savingNs == "ui-conversation",

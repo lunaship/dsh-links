@@ -1,5 +1,7 @@
 package dev.dsh.mobile.native
 
+import dev.dsh.mobile.core.L
+
 /**
  * UI 状态机：history 视图搜索状态。
  *  - Idle：未触发请求
@@ -96,11 +98,20 @@ enum class LocalKind {
 }
 
 /** Top-level group in the picker UI; mirrors the DSH commands/skills/subagents buckets. */
-enum class PaletteGroup(val displayName: String) {
-    COMMANDS("命令"),
-    SKILLS("技能"),
-    SUBAGENTS("子智能体"),
-    ACTIONS("快捷操作"),
+enum class PaletteGroup {
+    COMMANDS,
+    SKILLS,
+    SUBAGENTS,
+    ACTIONS,
+    ;
+
+    val displayName: String
+        get() = when (this) {
+            COMMANDS -> L.paletteCommands
+            SKILLS -> L.paletteSkills
+            SUBAGENTS -> L.paletteSubagents
+            ACTIONS -> L.paletteActions
+        }
 }
 
 /**
@@ -121,29 +132,30 @@ data class PaletteEntry(
  * uniform — the dispatcher only forwards text to the server for non-Local
  * entries.
  */
-val DSH_PALETTE: List<PaletteEntry> = listOf(
+val DSH_PALETTE: List<PaletteEntry>
+    get() = listOf(
     // ------- 服务端命令（直接发送） -------
-    PaletteEntry(PaletteCommand.Completable("/permission read-only", "设置只读权限"), PaletteGroup.COMMANDS),
-    PaletteEntry(PaletteCommand.Completable("/permission workspace-write", "设置工作区写入权限"), PaletteGroup.COMMANDS),
-    PaletteEntry(PaletteCommand.Completable("/permission danger-full-access", "设置完全访问权限"), PaletteGroup.COMMANDS),
-    PaletteEntry(PaletteCommand.Insertable("/plan", "生成执行计划"), PaletteGroup.COMMANDS),
-    PaletteEntry(PaletteCommand.Insertable("/goal", "设定持续执行目标"), PaletteGroup.COMMANDS),
-    PaletteEntry(PaletteCommand.Completable("/pause", "暂停当前任务"), PaletteGroup.COMMANDS),
-    PaletteEntry(PaletteCommand.Completable("/resume", "继续当前任务"), PaletteGroup.COMMANDS),
-    PaletteEntry(PaletteCommand.Completable("/clear", "清除上下文"), PaletteGroup.COMMANDS),
+    PaletteEntry(PaletteCommand.Completable("/permission read-only", L.palettePermissionReadOnly), PaletteGroup.COMMANDS),
+    PaletteEntry(PaletteCommand.Completable("/permission workspace-write", L.palettePermissionWorkspaceWrite), PaletteGroup.COMMANDS),
+    PaletteEntry(PaletteCommand.Completable("/permission danger-full-access", L.palettePermissionFullAccess), PaletteGroup.COMMANDS),
+    PaletteEntry(PaletteCommand.Insertable("/plan", L.palettePlan), PaletteGroup.COMMANDS),
+    PaletteEntry(PaletteCommand.Insertable("/goal", L.paletteGoal), PaletteGroup.COMMANDS),
+    PaletteEntry(PaletteCommand.Completable("/pause", L.palettePause), PaletteGroup.COMMANDS),
+    PaletteEntry(PaletteCommand.Completable("/resume", L.paletteResume), PaletteGroup.COMMANDS),
+    PaletteEntry(PaletteCommand.Completable("/clear", L.paletteClear), PaletteGroup.COMMANDS),
 
     // ------- 技能 / 子智能体（插入式） -------
-    PaletteEntry(PaletteCommand.Completable("/skills", "查看可用技能"), PaletteGroup.SKILLS),
-    PaletteEntry(PaletteCommand.Insertable("/subagent", "派生子智能体"), PaletteGroup.SUBAGENTS),
+    PaletteEntry(PaletteCommand.Completable("/skills", L.paletteSkillsList), PaletteGroup.SKILLS),
+    PaletteEntry(PaletteCommand.Insertable("/subagent", L.paletteSubagent), PaletteGroup.SUBAGENTS),
 
     // ------- 本地动作（直接生效，不走服务端） -------
-    PaletteEntry(PaletteCommand.Local("/search", "搜索会话", LocalKind.SEARCH_SESSIONS), PaletteGroup.ACTIONS),
-    PaletteEntry(PaletteCommand.Local("/new-session", "新建会话", LocalKind.NEW_SESSION), PaletteGroup.ACTIONS),
-    PaletteEntry(PaletteCommand.Local("/settings", "打开设置", LocalKind.OPEN_SETTINGS), PaletteGroup.ACTIONS),
-    PaletteEntry(PaletteCommand.Local("/chat", "切换到对话视图", LocalKind.SWITCH_CHAT), PaletteGroup.ACTIONS),
-    PaletteEntry(PaletteCommand.Local("/trace", "切换到轨迹视图", LocalKind.SWITCH_TRACE), PaletteGroup.ACTIONS),
-    PaletteEntry(PaletteCommand.Local("/model", "选择模型", LocalKind.OPEN_MODEL_PICKER), PaletteGroup.ACTIONS),
-    PaletteEntry(PaletteCommand.Local("/permission", "选择权限", LocalKind.OPEN_PERMISSION_PICKER), PaletteGroup.ACTIONS),
+    PaletteEntry(PaletteCommand.Local("/search", L.paletteSearchSessions, LocalKind.SEARCH_SESSIONS), PaletteGroup.ACTIONS),
+    PaletteEntry(PaletteCommand.Local("/new-session", L.paletteNewSession, LocalKind.NEW_SESSION), PaletteGroup.ACTIONS),
+    PaletteEntry(PaletteCommand.Local("/settings", L.paletteOpenSettings, LocalKind.OPEN_SETTINGS), PaletteGroup.ACTIONS),
+    PaletteEntry(PaletteCommand.Local("/chat", L.paletteSwitchChat, LocalKind.SWITCH_CHAT), PaletteGroup.ACTIONS),
+    PaletteEntry(PaletteCommand.Local("/trace", L.paletteSwitchTrace, LocalKind.SWITCH_TRACE), PaletteGroup.ACTIONS),
+    PaletteEntry(PaletteCommand.Local("/model", L.paletteSelectModel, LocalKind.OPEN_MODEL_PICKER), PaletteGroup.ACTIONS),
+    PaletteEntry(PaletteCommand.Local("/permission", L.paletteSelectPermission, LocalKind.OPEN_PERMISSION_PICKER), PaletteGroup.ACTIONS),
 )
 
 /**

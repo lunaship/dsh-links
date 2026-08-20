@@ -198,6 +198,7 @@ fun DshTheme(
     val context = LocalContext.current
     LaunchedEffect(Unit) {
         ThemeManager.init(context)
+        LocaleManager.init(context)
     }
 
     val systemDark = isSystemInDarkTheme()
@@ -208,6 +209,8 @@ fun DshTheme(
     }
 
     val colors = if (isDark) DarkDshColors else LightDshColors
+    val lang = LocaleManager.language
+    val strings = if (lang == "en") DshStringsEn else DshStringsZh
 
     // 系统栏图标亮暗随主题联动（背景保持透明，由 enableEdgeToEdge 设置）
     val view = LocalView.current
@@ -220,7 +223,10 @@ fun DshTheme(
         }
     }
 
-    CompositionLocalProvider(LocalDshColors provides colors) {
+    CompositionLocalProvider(
+        LocalDshColors provides colors,
+        LocalDshStrings provides strings,
+    ) {
         content()
     }
 }

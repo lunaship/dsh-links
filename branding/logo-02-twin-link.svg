@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none">
+  <defs>
+    <linearGradient id="link-left" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38BDF8"/>
+      <stop offset="100%" stop-color="#2563EB"/>
+    </linearGradient>
+    <linearGradient id="link-right" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#679EFE"/>
+      <stop offset="100%" stop-color="#7657A6"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Left Chain Link (Mobile End) -->
+  <path d="M 32 30 
+           L 46 30 
+           C 56 30 64 38 64 48 
+           L 64 52 
+           C 64 62 56 70 46 70 
+           L 32 70 
+           C 22 70 14 62 14 52 
+           L 14 48 
+           C 14 38 22 30 32 30 Z" 
+        stroke="url(#link-left)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+
+  <!-- Mobile Screen Home Indicator in Left Link -->
+  <rect x="22" y="48" width="5" height="4" rx="2" fill="#38BDF8"/>
+
+  <!-- Right Chain Link (DSH Agent End - Interlocking) -->
+  <!-- Back segment of Right Link (underneath left link's top bar) -->
+  <path d="M 54 30 
+           L 68 30 
+           C 78 30 86 38 86 48 
+           L 86 52 
+           C 86 62 78 70 68 70 
+           L 54 70" 
+        stroke="url(#link-right)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+
+  <!-- Front overlapping segment of Right Link (over left link's bottom bar) -->
+  <path d="M 54 70 
+           C 44 70 36 62 36 52 
+           L 36 48 
+           C 36 40 42 33 50 31" 
+        stroke="url(#link-right)" stroke-width="7" stroke-linecap="round" fill="none"/>
+
+  <!-- Whale Caudal Notch inside right ring -->
+  <path d="M 72 45 C 75 40 80 37 84 36 C 81 44 81 56 84 64 C 80 63 75 60 72 55 Z" 
+        fill="url(#link-right)" opacity="0.9"/>
+
+  <!-- Synchrony Core Spark -->
+  <circle cx="50" cy="50" r="3.5" fill="#FFFFFF"/>
+</svg>

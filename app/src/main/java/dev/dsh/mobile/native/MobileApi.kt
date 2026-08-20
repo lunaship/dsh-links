@@ -1,5 +1,6 @@
 package dev.dsh.mobile.native
 import dev.dsh.mobile.core.Host
+import dev.dsh.mobile.core.L
 import dev.dsh.mobile.core.PinnedSsl
 import dev.dsh.mobile.native.MobileSession
 import dev.dsh.mobile.native.MobileMessage
@@ -217,9 +218,9 @@ fun canonicalBusyEnter(value: String?): String = when (value) {
 }
 
 fun busyEnterLabel(value: String?): String = when (canonicalBusyEnter(value)) {
-    "send" -> "插话发送"
-    "steer" -> "引导发送"
-    else -> "排队发送"
+    "send" -> L.busySend
+    "steer" -> L.busySteer
+    else -> L.busyQueue
 }
 
 class MobileApiClient(private val host: Host) {
@@ -233,8 +234,8 @@ class MobileApiClient(private val host: Host) {
             val g = groupsArr.getJSONObject(i)
             val models = g.optJSONArray("models") ?: org.json.JSONArray()
             MobileModelGroup(
-                provider = g.optString("provider", "未知"),
-                displayName = g.optString("providerName").ifBlank { g.optString("provider", "未知") },
+                provider = g.optString("provider", L.unknownProvider),
+                displayName = g.optString("providerName").ifBlank { g.optString("provider", L.unknownProvider) },
                 models = (0 until models.length()).map { j ->
                     val m = models.getJSONObject(j)
                     MobileModelOption(
@@ -493,7 +494,7 @@ class MobileApiClient(private val host: Host) {
             val g = arr.getJSONObject(i)
             val models = g.optJSONArray("models") ?: org.json.JSONArray()
             MobileModelGroup(
-                provider = g.optString("provider", "未知"),
+                provider = g.optString("provider", L.unknownProvider),
                 models = (0 until models.length()).map { j ->
                     val m = models.getJSONObject(j)
                     MobileModelOption(
@@ -543,7 +544,7 @@ class MobileApiClient(private val host: Host) {
 
     private fun parseSession(json: JSONObject): MobileSession = MobileSession(
         sessionId = json.getString("sessionId"),
-        title = json.optString("title").ifBlank { "未命名会话" },
+        title = json.optString("title").ifBlank { L.untitledSession },
         updatedAt = json.optLong("updatedAt"),
         running = json.optBoolean("running"),
         blank = json.optBoolean("blank"),
