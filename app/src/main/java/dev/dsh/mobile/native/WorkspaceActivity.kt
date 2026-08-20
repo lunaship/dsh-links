@@ -1530,7 +1530,7 @@ fun WorkspaceScreen(
                                                     Row(
                                                         modifier = Modifier
                                                             .fillMaxWidth()
-                                                            .height(30.dp)
+                                                            .height(32.dp)
                                                             .padding(start = 12.dp, end = 6.dp)
                                                             .clip(RoundedCornerShape(DshRadius.md))
                                                             .clickable { expandedGroups = expandedGroups + cwd }
@@ -1831,6 +1831,33 @@ fun WorkspaceScreen(
                                     currentSession?.let { deleteSessionTarget = it }
                                 },
                             )
+                        )
+                    }
+                }
+
+                // Row 1.5: Harness 模式（对标 web 标题下 meta）
+                if (viewMode == "chat" && harnessLabel.isNotBlank()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 38.dp, top = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            AgentPresetOutline16,
+                            contentDescription = null,
+                            tint = Dsh.labelTertiary,
+                            modifier = Modifier.size(12.dp),
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            harnessLabel,
+                            color = Dsh.labelSecondary,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight(500),
+                            lineHeight = 18.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
                 }
@@ -4943,7 +4970,7 @@ private fun ComposerTopRow(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = COMPOSER_SIDE_CLEARANCE, vertical = 2.dp),
+            .padding(horizontal = COMPOSER_SIDE_CLEARANCE, vertical = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Row(
@@ -4953,33 +4980,37 @@ private fun ComposerTopRow(
                 .heightIn(min = 32.dp)
                 .padding(horizontal = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            val workspaceBg = when {
+                !workspaceEditable -> Dsh.bgNavActive
+                else -> Color.Transparent
+            }
             Row(
                 modifier = Modifier
-                    .weight(1f, fill = false)
+                    .weight(1f)
+                    .clip(RoundedCornerShape(DshRadius.md))
+                    .background(workspaceBg)
                     .then(
                         if (workspaceEditable) {
-                            Modifier
-                                .clip(RoundedCornerShape(DshRadius.md))
-                                .clickable { showPicker = true }
+                            Modifier.clickable { showPicker = true }
                         } else {
                             Modifier
                         },
                     )
-                    .padding(vertical = 4.dp),
+                    .padding(horizontal = if (!workspaceEditable) 8.dp else 0.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(
                     FolderOpenOutline16,
                     contentDescription = null,
-                    tint = Dsh.labelPrimary,
+                    tint = if (workspaceEditable) Dsh.labelPrimary else Dsh.labelSecondary,
                     modifier = Modifier.size(16.dp),
                 )
                 Spacer(Modifier.width(6.dp))
                 Text(
                     displayCwd?.substringAfterLast('/') ?: if (workspaceEditable) "选择工作区" else "未绑定工作区",
-                    color = Dsh.labelPrimary,
+                    color = if (workspaceEditable) Dsh.labelPrimary else Dsh.labelSecondary,
                     fontSize = 13.sp,
                     fontWeight = FontWeight(500),
                     lineHeight = 20.sp,
@@ -4999,41 +5030,44 @@ private fun ComposerTopRow(
 
             val harnessInteraction = remember { MutableInteractionSource() }
             val harnessPressed by harnessInteraction.collectIsPressedAsState()
+            val harnessBg = when {
+                !harnessEditable -> Dsh.bgNavActive
+                harnessPressed -> Dsh.hover
+                else -> Color.Transparent
+            }
             Row(
                 modifier = Modifier
                     .clip(RoundedCornerShape(DshRadius.md))
+                    .background(harnessBg)
                     .then(
                         if (harnessEditable && onOpenHarnessPicker != null) {
-                            Modifier
-                                .background(if (harnessPressed) Dsh.hover else Color.Transparent)
-                                .clickable(
-                                    interactionSource = harnessInteraction,
-                                    indication = null,
-                                    onClick = onOpenHarnessPicker,
-                                )
+                            Modifier.clickable(
+                                interactionSource = harnessInteraction,
+                                indication = null,
+                                onClick = onOpenHarnessPicker,
+                            )
                         } else {
                             Modifier
                         },
                     )
-                    .padding(vertical = 4.dp),
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(
                     AgentPresetOutline16,
                     contentDescription = null,
-                    tint = Dsh.labelPrimary,
+                    tint = if (harnessEditable) Dsh.labelPrimary else Dsh.labelSecondary,
                     modifier = Modifier.size(16.dp),
                 )
                 Spacer(Modifier.width(6.dp))
                 Text(
                     harnessLabel,
-                    color = Dsh.labelPrimary,
+                    color = if (harnessEditable) Dsh.labelPrimary else Dsh.labelSecondary,
                     fontSize = 13.sp,
                     fontWeight = FontWeight(500),
                     lineHeight = 20.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.widthIn(max = 140.dp),
                 )
                 if (harnessEditable && onOpenHarnessPicker != null) {
                     Spacer(Modifier.width(4.dp))
@@ -5122,8 +5156,11 @@ private fun AgentPresetPickerSheet(
             if (presets.isEmpty()) {
                 Text("加载预设中…", color = Dsh.labelTertiary, fontSize = 13.sp)
             } else {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    presets.forEach { preset ->
+                LazyColumn(
+                    modifier = Modifier.heightIn(max = 440.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    items(presets, key = { it.id }) { preset ->
                         val selected = preset.id == currentId
                         val title = preset.name.ifBlank { preset.id }
                         val desc = preset.description.ifBlank { "" }
@@ -5134,12 +5171,12 @@ private fun AgentPresetPickerSheet(
                                 .clip(RoundedCornerShape(DshRadius.md))
                                 .background(if (selected) Dsh.bgNavActive else Color.Transparent)
                                 .clickable { onSelect(preset.id) }
-                                .padding(horizontal = 12.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
+                                .padding(horizontal = 12.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.Top,
                         ) {
                             Column(
                                 modifier = Modifier.weight(1f),
-                                verticalArrangement = Arrangement.spacedBy(2.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
                             ) {
                                 Text(
                                     title,
@@ -5153,8 +5190,8 @@ private fun AgentPresetPickerSheet(
                                         desc,
                                         color = Dsh.labelTertiary,
                                         fontSize = 12.sp,
-                                        lineHeight = 16.sp,
-                                        maxLines = 2,
+                                        lineHeight = 17.sp,
+                                        maxLines = 3,
                                         overflow = TextOverflow.Ellipsis,
                                     )
                                 }
@@ -5165,7 +5202,9 @@ private fun AgentPresetPickerSheet(
                                     CheckOutline14,
                                     contentDescription = null,
                                     tint = Dsh.brand400,
-                                    modifier = Modifier.size(16.dp)
+                                    modifier = Modifier
+                                        .padding(top = 2.dp)
+                                        .size(16.dp),
                                 )
                             }
                         }
