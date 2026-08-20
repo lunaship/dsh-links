@@ -10,6 +10,8 @@ import androidx.compose.runtime.setValue
 /**
  * App 界面语言（与服务端 locale.preference 对齐：zh / en）。
  * 切换后立即刷新 Compose（CompositionLocal），并落盘本地缓存。
+ *
+ * 词条用 buildMap 承载，避免巨型构造/ mapOf 参数超过 ART 上限导致 VerifyError 闪退。
  */
 object LocaleManager {
     private const val PREFS = "dsh_settings"
@@ -45,960 +47,961 @@ val LocalDshStrings = compositionLocalOf { DshStringsZh }
 val DshS: DshStrings
     @Composable get() = LocalDshStrings.current
 
-data class DshStrings(
-    // Common
-    val cancel: String,
-    val save: String,
-    val close: String,
-    val delete: String,
-    val retry: String,
-    val confirm: String,
-    val loading: String,
-    val unknownError: String,
-    // Settings tabs
-    val settingsTitle: String,
-    val tabGeneral: String,
-    val tabModels: String,
-    val tabSessions: String,
-    val tabPlugins: String,
-    val tabAbout: String,
-    val sectionGeneral: String,
-    val sectionAppearance: String,
-    val agentPreset: String,
-    val agentPresetDesc: String,
-    val presetStandard: String,
-    val presetCode: String,
-    val presetMinimal: String,
-    val presetCreator: String,
-    val permission: String,
-    val permissionDesc: String,
-    val permReadOnly: String,
-    val permWorkspaceWrite: String,
-    val permFullAccess: String,
-    val language: String,
-    val languageDesc: String,
-    val langZh: String,
-    val langEn: String,
-    val themeLight: String,
-    val themeDark: String,
-    val themeSystem: String,
-    val busyEnter: String,
-    val busyEnterDesc: String,
-    val busySend: String,
-    val busySteer: String,
-    val busyQueue: String,
-    val notConnectedCannotSave: String,
-    val saveFailed: String,
-    // Devices
-    val manageYourLinks: String,
-    val deviceCount: String, // "%d" placeholder via format
-    val pairingManage: String,
-    val pairingManageTitle: String,
-    val pairingManageCount: String, // "%1$d · %2$s"
-    val deviceOfflineCannotManage: String,
-    val deviceCheckingTryLater: String,
-    val loadFailed: String,
-    val noPairedDevices: String,
-    val revokePairing: String,
-    val revokePairingContent: String, // "%s"
-    val revoke: String,
-    val revokeOk: String, // "%s"
-    val revokeFailed: String, // "%s"
-    val thisDevice: String,
-    val unnamedDevice: String,
-    val lastActiveJustNow: String,
-    val lastActiveMinutes: String, // "%d"
-    val lastActiveHours: String,
-    val lastActiveDays: String,
-    val allOffline: String,
-    val resync: String,
-    val cannotConnectHost: String, // "%s"
-    val credentialsUnreadable: String,
-    val noDevicesYet: String,
-    val noDevicesHint: String,
-    val addDevice: String,
-    val rename: String,
-    val deleteDevice: String,
-    val deleteDeviceContent: String, // "%s"
-    val statusChecking: String,
-    val statusOnline: String,
-    val statusOffline: String,
-    val statusConnecting: String,
-    val pairPanelTitle: String,
-    val pairChooseHint: String,
-    val pairManualHint: String,
-    val methodScan: String,
-    val methodScanDesc: String,
-    val methodManual: String,
-    val methodManualDesc: String,
-    val pairCodeLabel: String,
-    val pairAddressIncomplete: String,
-    // Workspace
-    val voicePermissionRequired: String,
-    val voiceListeningPrompt: String,
-    val voiceRecognitionRetry: String,
-    val imageTooLargeSkipped: String,
-    val readImageFailed: String,
-    val refreshSessionsFailed: String,
-    val archiveFailed: String,
-    val fallbackRetryLater: String,
-    val fullTextSearchUnavailable: String,
-    val searchFailed: String,
-    val approvalRequest: String,
-    val toolFallbackName: String,
-    val defaultHarnessPreset: String,
-    val sessionFallbackTitle: String,
-    val switchDevice: String,
-    val newSession: String,
-    val workspace: String,
-    val searchSessions: String,
-    val filterSessions: String,
-    val addWorkspace: String,
-    val searchSessionsPlaceholder: String,
-    val clearSearch: String,
-    val searching: String,
-    val noMatchingSessions: String,
-    val createSession: String,
-    val switchToLight: String,
-    val switchToDark: String,
-    val light: String,
-    val dark: String,
-    val sessionMenu: String,
-    val stop: String,
-    val closeToolSearch: String,
-    val searchToolCalls: String,
-    val moreActions: String,
-    val renameSession: String,
-    val forkSession: String,
-    val copySessionTitle: String,
-    val copied: String,
-    val archiveSession: String,
-    val exportConversation: String,
-    val exportFailed: String,
-    val deleteSession: String,
-    val tabChat: String,
-    val tabTrace: String,
-    val tabHistory: String,
-    val subagentCount: String,
-    val connecting: String,
-    val connectionFailedReconnecting: String,
-    val disconnectedReconnecting: String,
-    val disconnectedReconnectingContentDescription: String,
-    val toolSearchPlaceholder: String,
-    val approvalNotAccepted: String,
-    val approvalFailed: String,
-    val cannotFindUserMessageToRegenerate: String,
-    val regenerated: String,
-    val regenerateFailed: String,
-    val noMatchingToolCalls: String,
-    val commandSendFailed: String,
-    val scrollToBottom: String,
-    val agentStillRunning: String,
-    val sending: String,
-    val sendingBadge: String,
-    val interruptBadge: String,
-    val steerBadge: String,
-    val queueBadge: String,
-    val loadModelListFailed: String,
-    val interruptSent: String,
-    val steerSent: String,
-    val queuedSent: String,
-    val sendFailed: String,
-    val switchModelFailed: String,
-    val addWorkspaceDesc: String,
-    val workspacePathExample: String,
-    val add: String,
-    val deleteWorkspaceTitle: String,
-    val deleteWorkspaceMessage: String,
-    val deleteSessionTitle: String,
-    val deleteSessionMessage: String,
-    val subagents: String,
-    val noSubagentSessions: String,
-    val subagentSheetSummary: String,
-    val runningStatus: String,
-    val returnToParentSession: String,
-    val renameSessionDesc: String,
-    val chooseWorkspaceTitle: String,
-    val chooseWorkspaceDesc: String,
-    val searchWorkspace: String,
-    val ungrouped: String,
-    val noWorkspaceBinding: String,
-    val noMatchingWorkspace: String,
-    val enterWorkspacePath: String,
-    val create: String,
-    val selectModel: String,
-    val model: String,
-    val reasoningEffort: String,
-    val selectSessionModel: String,
-    val noneSelected: String,
-    val defaultLabel: String,
-    val searchModelProvider: String,
-    val loadingModelList: String,
-    val noAvailableModels: String,
-    val noMatchingModels: String,
-    val noAdjustableReasoningEffort: String,
-    val noAdapterRegistered: String,
-    val unsupportedReasoningEffort: String,
-    val modelUnavailable: String,
-    val modelApiFailed: String,
-    val contextUsed: String,
-    val systemPrompt: String,
-    val tools: String,
-    val chatMessages: String,
-    val waitingApproval: String,
-    val reject: String,
-    val processed: String,
-    val allowOnce: String,
-    val accessMode: String,
-    val currentSessionPermissionDesc: String,
-    val defaultPermissionDesc: String,
-    val readOnlyPermissionDesc: String,
-    val workspaceWritePermissionDesc: String,
-    val fullAccessPermissionDesc: String,
-    val saving: String,
-    val saveFailedWithMessage: String,
-    val confirmFullAccessTitle: String,
-    val confirmFullAccessMessage: String,
-    val enableFullAccess: String,
-    val processing: String,
-    val pendingImage: String,
-    val removeImage: String,
-    val listening: String,
-    val planPlaceholder: String,
-    val goalPlaceholder: String,
-    val chatPlaceholder: String,
-    val addAttachment: String,
-    val stopGenerating: String,
-    val sendMessage: String,
-    val expand: String,
-    val collapse: String,
-    val unsupportedMessageType: String,
-    val compressing: String,
-    val contextCompressed: String,
-    val contextInjection: String,
-    val collapseInjectionContent: String,
-    val expandInjectionContent: String,
-    val tasks: String,
-    val todoCompleted: String,
-    val loadHistory: String,
-    val loadOlder: String,
-    val interrupted: String,
-    val stopped: String,
-    val errorStopped: String,
-    val maxTokensReached: String,
-    val cancelled: String,
-    val timeoutStopped: String,
-    val thinking: String,
-    val justNowShort: String,
-    val minutesShort: String,
-    val hoursShort: String,
-    val daysShort: String,
-    val statsTurnsSteps: String,
-    val firstToken: String,
-    val cacheHit: String,
-    val inputOutputTokens: String,
-    val userRole: String,
-    val assistantRole: String,
-    val reasoningRole: String,
-    val toolCallRole: String,
-    val resultRole: String,
-    val approvalRole: String,
-    val taskRole: String,
-    val compactionRole: String,
-    val answerRole: String,
-    val noTrace: String,
-    val noTraceEmpty: String,
-    val noTraceFilterEmpty: String,
-    val turnsCount: String,
-    val stepsCount: String,
-    val stepType: String,
-    val todoUpdate: String,
-    val todoListUpdated: String,
-    val toolCallCount: String,
-    val executing: String,
-    val copy: String,
-    val quote: String,
-    val regenerate: String,
-    val loadEarlier: String,
-    val expandMoreSessions: String,
-    val historyOverflow: String,
-    val searchFailedWithMessage: String,
-    val allSessions: String,
-    val showAllSessions: String,
-    val onlyShowRunningSessions: String,
-    val onlyShowStoppedSessions: String,
-    val searchResults: String,
-    val noSessions: String,
-    val noSessionsHint: String,
-    val goalRole: String,
-    val executionResultRole: String,
-    val chooseAgentPresetDesc: String,
-    val loadingPresets: String,
-    val currentSessionPermissionUpdated: String,
-    val heroSlogan: String,
-    val back: String,
-    val selectWorkspaceShort: String,
-    val unboundWorkspace: String,
-    val noWorkbenchConnected: String,
-    val goToDeviceList: String,
-    val unknownProvider: String,
-    val untitledSession: String,
-    // Command palette
-    val paletteCommands: String,
-    val paletteSkills: String,
-    val paletteSubagents: String,
-    val paletteActions: String,
-    val palettePermissionReadOnly: String,
-    val palettePermissionWorkspaceWrite: String,
-    val palettePermissionFullAccess: String,
-    val palettePlan: String,
-    val paletteGoal: String,
-    val palettePause: String,
-    val paletteResume: String,
-    val paletteClear: String,
-    val paletteSkillsList: String,
-    val paletteSubagent: String,
-    val paletteSearchSessions: String,
-    val paletteNewSession: String,
-    val paletteOpenSettings: String,
-    val paletteSwitchChat: String,
-    val paletteSwitchTrace: String,
-    val paletteSelectModel: String,
-    val paletteSelectPermission: String,
-)
+class DshStrings(private val values: Map<String, String>) {
+    private fun t(key: String): String = values[key] ?: key
+
+    val cancel: String get() = t("cancel")
+    val save: String get() = t("save")
+    val close: String get() = t("close")
+    val delete: String get() = t("delete")
+    val retry: String get() = t("retry")
+    val confirm: String get() = t("confirm")
+    val loading: String get() = t("loading")
+    val unknownError: String get() = t("unknownError")
+    val settingsTitle: String get() = t("settingsTitle")
+    val tabGeneral: String get() = t("tabGeneral")
+    val tabModels: String get() = t("tabModels")
+    val tabSessions: String get() = t("tabSessions")
+    val tabPlugins: String get() = t("tabPlugins")
+    val tabAbout: String get() = t("tabAbout")
+    val sectionGeneral: String get() = t("sectionGeneral")
+    val sectionAppearance: String get() = t("sectionAppearance")
+    val agentPreset: String get() = t("agentPreset")
+    val agentPresetDesc: String get() = t("agentPresetDesc")
+    val presetStandard: String get() = t("presetStandard")
+    val presetCode: String get() = t("presetCode")
+    val presetMinimal: String get() = t("presetMinimal")
+    val presetCreator: String get() = t("presetCreator")
+    val permission: String get() = t("permission")
+    val permissionDesc: String get() = t("permissionDesc")
+    val permReadOnly: String get() = t("permReadOnly")
+    val permWorkspaceWrite: String get() = t("permWorkspaceWrite")
+    val permFullAccess: String get() = t("permFullAccess")
+    val language: String get() = t("language")
+    val languageDesc: String get() = t("languageDesc")
+    val langZh: String get() = t("langZh")
+    val langEn: String get() = t("langEn")
+    val themeLight: String get() = t("themeLight")
+    val themeDark: String get() = t("themeDark")
+    val themeSystem: String get() = t("themeSystem")
+    val busyEnter: String get() = t("busyEnter")
+    val busyEnterDesc: String get() = t("busyEnterDesc")
+    val busySend: String get() = t("busySend")
+    val busySteer: String get() = t("busySteer")
+    val busyQueue: String get() = t("busyQueue")
+    val notConnectedCannotSave: String get() = t("notConnectedCannotSave")
+    val saveFailed: String get() = t("saveFailed")
+    val manageYourLinks: String get() = t("manageYourLinks")
+    val deviceCount: String get() = t("deviceCount")
+    val pairingManage: String get() = t("pairingManage")
+    val pairingManageTitle: String get() = t("pairingManageTitle")
+    val pairingManageCount: String get() = t("pairingManageCount")
+    val deviceOfflineCannotManage: String get() = t("deviceOfflineCannotManage")
+    val deviceCheckingTryLater: String get() = t("deviceCheckingTryLater")
+    val loadFailed: String get() = t("loadFailed")
+    val noPairedDevices: String get() = t("noPairedDevices")
+    val revokePairing: String get() = t("revokePairing")
+    val revokePairingContent: String get() = t("revokePairingContent")
+    val revoke: String get() = t("revoke")
+    val revokeOk: String get() = t("revokeOk")
+    val revokeFailed: String get() = t("revokeFailed")
+    val thisDevice: String get() = t("thisDevice")
+    val unnamedDevice: String get() = t("unnamedDevice")
+    val lastActiveJustNow: String get() = t("lastActiveJustNow")
+    val lastActiveMinutes: String get() = t("lastActiveMinutes")
+    val lastActiveHours: String get() = t("lastActiveHours")
+    val lastActiveDays: String get() = t("lastActiveDays")
+    val allOffline: String get() = t("allOffline")
+    val resync: String get() = t("resync")
+    val cannotConnectHost: String get() = t("cannotConnectHost")
+    val credentialsUnreadable: String get() = t("credentialsUnreadable")
+    val noDevicesYet: String get() = t("noDevicesYet")
+    val noDevicesHint: String get() = t("noDevicesHint")
+    val addDevice: String get() = t("addDevice")
+    val rename: String get() = t("rename")
+    val deleteDevice: String get() = t("deleteDevice")
+    val deleteDeviceContent: String get() = t("deleteDeviceContent")
+    val statusChecking: String get() = t("statusChecking")
+    val statusOnline: String get() = t("statusOnline")
+    val statusOffline: String get() = t("statusOffline")
+    val statusConnecting: String get() = t("statusConnecting")
+    val pairPanelTitle: String get() = t("pairPanelTitle")
+    val pairChooseHint: String get() = t("pairChooseHint")
+    val pairManualHint: String get() = t("pairManualHint")
+    val methodScan: String get() = t("methodScan")
+    val methodScanDesc: String get() = t("methodScanDesc")
+    val methodManual: String get() = t("methodManual")
+    val methodManualDesc: String get() = t("methodManualDesc")
+    val pairCodeLabel: String get() = t("pairCodeLabel")
+    val pairAddressIncomplete: String get() = t("pairAddressIncomplete")
+    val voicePermissionRequired: String get() = t("voicePermissionRequired")
+    val voiceListeningPrompt: String get() = t("voiceListeningPrompt")
+    val voiceRecognitionRetry: String get() = t("voiceRecognitionRetry")
+    val imageTooLargeSkipped: String get() = t("imageTooLargeSkipped")
+    val readImageFailed: String get() = t("readImageFailed")
+    val refreshSessionsFailed: String get() = t("refreshSessionsFailed")
+    val archiveFailed: String get() = t("archiveFailed")
+    val fallbackRetryLater: String get() = t("fallbackRetryLater")
+    val fullTextSearchUnavailable: String get() = t("fullTextSearchUnavailable")
+    val searchFailed: String get() = t("searchFailed")
+    val approvalRequest: String get() = t("approvalRequest")
+    val toolFallbackName: String get() = t("toolFallbackName")
+    val defaultHarnessPreset: String get() = t("defaultHarnessPreset")
+    val sessionFallbackTitle: String get() = t("sessionFallbackTitle")
+    val switchDevice: String get() = t("switchDevice")
+    val newSession: String get() = t("newSession")
+    val workspace: String get() = t("workspace")
+    val searchSessions: String get() = t("searchSessions")
+    val filterSessions: String get() = t("filterSessions")
+    val addWorkspace: String get() = t("addWorkspace")
+    val searchSessionsPlaceholder: String get() = t("searchSessionsPlaceholder")
+    val clearSearch: String get() = t("clearSearch")
+    val searching: String get() = t("searching")
+    val noMatchingSessions: String get() = t("noMatchingSessions")
+    val createSession: String get() = t("createSession")
+    val switchToLight: String get() = t("switchToLight")
+    val switchToDark: String get() = t("switchToDark")
+    val light: String get() = t("light")
+    val dark: String get() = t("dark")
+    val sessionMenu: String get() = t("sessionMenu")
+    val stop: String get() = t("stop")
+    val closeToolSearch: String get() = t("closeToolSearch")
+    val searchToolCalls: String get() = t("searchToolCalls")
+    val moreActions: String get() = t("moreActions")
+    val renameSession: String get() = t("renameSession")
+    val forkSession: String get() = t("forkSession")
+    val copySessionTitle: String get() = t("copySessionTitle")
+    val copied: String get() = t("copied")
+    val archiveSession: String get() = t("archiveSession")
+    val exportConversation: String get() = t("exportConversation")
+    val exportFailed: String get() = t("exportFailed")
+    val deleteSession: String get() = t("deleteSession")
+    val tabChat: String get() = t("tabChat")
+    val tabTrace: String get() = t("tabTrace")
+    val tabHistory: String get() = t("tabHistory")
+    val subagentCount: String get() = t("subagentCount")
+    val connecting: String get() = t("connecting")
+    val connectionFailedReconnecting: String get() = t("connectionFailedReconnecting")
+    val disconnectedReconnecting: String get() = t("disconnectedReconnecting")
+    val disconnectedReconnectingContentDescription: String get() = t("disconnectedReconnectingContentDescription")
+    val toolSearchPlaceholder: String get() = t("toolSearchPlaceholder")
+    val approvalNotAccepted: String get() = t("approvalNotAccepted")
+    val approvalFailed: String get() = t("approvalFailed")
+    val cannotFindUserMessageToRegenerate: String get() = t("cannotFindUserMessageToRegenerate")
+    val regenerated: String get() = t("regenerated")
+    val regenerateFailed: String get() = t("regenerateFailed")
+    val noMatchingToolCalls: String get() = t("noMatchingToolCalls")
+    val commandSendFailed: String get() = t("commandSendFailed")
+    val scrollToBottom: String get() = t("scrollToBottom")
+    val agentStillRunning: String get() = t("agentStillRunning")
+    val sending: String get() = t("sending")
+    val sendingBadge: String get() = t("sendingBadge")
+    val interruptBadge: String get() = t("interruptBadge")
+    val steerBadge: String get() = t("steerBadge")
+    val queueBadge: String get() = t("queueBadge")
+    val loadModelListFailed: String get() = t("loadModelListFailed")
+    val interruptSent: String get() = t("interruptSent")
+    val steerSent: String get() = t("steerSent")
+    val queuedSent: String get() = t("queuedSent")
+    val sendFailed: String get() = t("sendFailed")
+    val switchModelFailed: String get() = t("switchModelFailed")
+    val addWorkspaceDesc: String get() = t("addWorkspaceDesc")
+    val workspacePathExample: String get() = t("workspacePathExample")
+    val add: String get() = t("add")
+    val deleteWorkspaceTitle: String get() = t("deleteWorkspaceTitle")
+    val deleteWorkspaceMessage: String get() = t("deleteWorkspaceMessage")
+    val deleteSessionTitle: String get() = t("deleteSessionTitle")
+    val deleteSessionMessage: String get() = t("deleteSessionMessage")
+    val subagents: String get() = t("subagents")
+    val noSubagentSessions: String get() = t("noSubagentSessions")
+    val subagentSheetSummary: String get() = t("subagentSheetSummary")
+    val runningStatus: String get() = t("runningStatus")
+    val returnToParentSession: String get() = t("returnToParentSession")
+    val renameSessionDesc: String get() = t("renameSessionDesc")
+    val chooseWorkspaceTitle: String get() = t("chooseWorkspaceTitle")
+    val chooseWorkspaceDesc: String get() = t("chooseWorkspaceDesc")
+    val searchWorkspace: String get() = t("searchWorkspace")
+    val ungrouped: String get() = t("ungrouped")
+    val noWorkspaceBinding: String get() = t("noWorkspaceBinding")
+    val noMatchingWorkspace: String get() = t("noMatchingWorkspace")
+    val enterWorkspacePath: String get() = t("enterWorkspacePath")
+    val create: String get() = t("create")
+    val selectModel: String get() = t("selectModel")
+    val model: String get() = t("model")
+    val reasoningEffort: String get() = t("reasoningEffort")
+    val selectSessionModel: String get() = t("selectSessionModel")
+    val noneSelected: String get() = t("noneSelected")
+    val defaultLabel: String get() = t("defaultLabel")
+    val searchModelProvider: String get() = t("searchModelProvider")
+    val loadingModelList: String get() = t("loadingModelList")
+    val noAvailableModels: String get() = t("noAvailableModels")
+    val noMatchingModels: String get() = t("noMatchingModels")
+    val noAdjustableReasoningEffort: String get() = t("noAdjustableReasoningEffort")
+    val noAdapterRegistered: String get() = t("noAdapterRegistered")
+    val unsupportedReasoningEffort: String get() = t("unsupportedReasoningEffort")
+    val modelUnavailable: String get() = t("modelUnavailable")
+    val modelApiFailed: String get() = t("modelApiFailed")
+    val contextUsed: String get() = t("contextUsed")
+    val systemPrompt: String get() = t("systemPrompt")
+    val tools: String get() = t("tools")
+    val chatMessages: String get() = t("chatMessages")
+    val waitingApproval: String get() = t("waitingApproval")
+    val reject: String get() = t("reject")
+    val processed: String get() = t("processed")
+    val allowOnce: String get() = t("allowOnce")
+    val accessMode: String get() = t("accessMode")
+    val currentSessionPermissionDesc: String get() = t("currentSessionPermissionDesc")
+    val defaultPermissionDesc: String get() = t("defaultPermissionDesc")
+    val readOnlyPermissionDesc: String get() = t("readOnlyPermissionDesc")
+    val workspaceWritePermissionDesc: String get() = t("workspaceWritePermissionDesc")
+    val fullAccessPermissionDesc: String get() = t("fullAccessPermissionDesc")
+    val saving: String get() = t("saving")
+    val saveFailedWithMessage: String get() = t("saveFailedWithMessage")
+    val confirmFullAccessTitle: String get() = t("confirmFullAccessTitle")
+    val confirmFullAccessMessage: String get() = t("confirmFullAccessMessage")
+    val enableFullAccess: String get() = t("enableFullAccess")
+    val processing: String get() = t("processing")
+    val pendingImage: String get() = t("pendingImage")
+    val removeImage: String get() = t("removeImage")
+    val listening: String get() = t("listening")
+    val planPlaceholder: String get() = t("planPlaceholder")
+    val goalPlaceholder: String get() = t("goalPlaceholder")
+    val chatPlaceholder: String get() = t("chatPlaceholder")
+    val addAttachment: String get() = t("addAttachment")
+    val stopGenerating: String get() = t("stopGenerating")
+    val sendMessage: String get() = t("sendMessage")
+    val expand: String get() = t("expand")
+    val collapse: String get() = t("collapse")
+    val unsupportedMessageType: String get() = t("unsupportedMessageType")
+    val compressing: String get() = t("compressing")
+    val contextCompressed: String get() = t("contextCompressed")
+    val contextInjection: String get() = t("contextInjection")
+    val collapseInjectionContent: String get() = t("collapseInjectionContent")
+    val expandInjectionContent: String get() = t("expandInjectionContent")
+    val tasks: String get() = t("tasks")
+    val todoCompleted: String get() = t("todoCompleted")
+    val loadHistory: String get() = t("loadHistory")
+    val loadOlder: String get() = t("loadOlder")
+    val interrupted: String get() = t("interrupted")
+    val stopped: String get() = t("stopped")
+    val errorStopped: String get() = t("errorStopped")
+    val maxTokensReached: String get() = t("maxTokensReached")
+    val cancelled: String get() = t("cancelled")
+    val timeoutStopped: String get() = t("timeoutStopped")
+    val thinking: String get() = t("thinking")
+    val justNowShort: String get() = t("justNowShort")
+    val minutesShort: String get() = t("minutesShort")
+    val hoursShort: String get() = t("hoursShort")
+    val daysShort: String get() = t("daysShort")
+    val statsTurnsSteps: String get() = t("statsTurnsSteps")
+    val firstToken: String get() = t("firstToken")
+    val cacheHit: String get() = t("cacheHit")
+    val inputOutputTokens: String get() = t("inputOutputTokens")
+    val userRole: String get() = t("userRole")
+    val assistantRole: String get() = t("assistantRole")
+    val reasoningRole: String get() = t("reasoningRole")
+    val toolCallRole: String get() = t("toolCallRole")
+    val resultRole: String get() = t("resultRole")
+    val approvalRole: String get() = t("approvalRole")
+    val taskRole: String get() = t("taskRole")
+    val compactionRole: String get() = t("compactionRole")
+    val answerRole: String get() = t("answerRole")
+    val noTrace: String get() = t("noTrace")
+    val noTraceEmpty: String get() = t("noTraceEmpty")
+    val noTraceFilterEmpty: String get() = t("noTraceFilterEmpty")
+    val turnsCount: String get() = t("turnsCount")
+    val stepsCount: String get() = t("stepsCount")
+    val stepType: String get() = t("stepType")
+    val todoUpdate: String get() = t("todoUpdate")
+    val todoListUpdated: String get() = t("todoListUpdated")
+    val toolCallCount: String get() = t("toolCallCount")
+    val executing: String get() = t("executing")
+    val copy: String get() = t("copy")
+    val quote: String get() = t("quote")
+    val regenerate: String get() = t("regenerate")
+    val loadEarlier: String get() = t("loadEarlier")
+    val expandMoreSessions: String get() = t("expandMoreSessions")
+    val historyOverflow: String get() = t("historyOverflow")
+    val searchFailedWithMessage: String get() = t("searchFailedWithMessage")
+    val allSessions: String get() = t("allSessions")
+    val showAllSessions: String get() = t("showAllSessions")
+    val onlyShowRunningSessions: String get() = t("onlyShowRunningSessions")
+    val onlyShowStoppedSessions: String get() = t("onlyShowStoppedSessions")
+    val searchResults: String get() = t("searchResults")
+    val noSessions: String get() = t("noSessions")
+    val noSessionsHint: String get() = t("noSessionsHint")
+    val goalRole: String get() = t("goalRole")
+    val executionResultRole: String get() = t("executionResultRole")
+    val chooseAgentPresetDesc: String get() = t("chooseAgentPresetDesc")
+    val loadingPresets: String get() = t("loadingPresets")
+    val currentSessionPermissionUpdated: String get() = t("currentSessionPermissionUpdated")
+    val heroSlogan: String get() = t("heroSlogan")
+    val back: String get() = t("back")
+    val selectWorkspaceShort: String get() = t("selectWorkspaceShort")
+    val unboundWorkspace: String get() = t("unboundWorkspace")
+    val noWorkbenchConnected: String get() = t("noWorkbenchConnected")
+    val goToDeviceList: String get() = t("goToDeviceList")
+    val unknownProvider: String get() = t("unknownProvider")
+    val untitledSession: String get() = t("untitledSession")
+    val paletteCommands: String get() = t("paletteCommands")
+    val paletteSkills: String get() = t("paletteSkills")
+    val paletteSubagents: String get() = t("paletteSubagents")
+    val paletteActions: String get() = t("paletteActions")
+    val palettePermissionReadOnly: String get() = t("palettePermissionReadOnly")
+    val palettePermissionWorkspaceWrite: String get() = t("palettePermissionWorkspaceWrite")
+    val palettePermissionFullAccess: String get() = t("palettePermissionFullAccess")
+    val palettePlan: String get() = t("palettePlan")
+    val paletteGoal: String get() = t("paletteGoal")
+    val palettePause: String get() = t("palettePause")
+    val paletteResume: String get() = t("paletteResume")
+    val paletteClear: String get() = t("paletteClear")
+    val paletteSkillsList: String get() = t("paletteSkillsList")
+    val paletteSubagent: String get() = t("paletteSubagent")
+    val paletteSearchSessions: String get() = t("paletteSearchSessions")
+    val paletteNewSession: String get() = t("paletteNewSession")
+    val paletteOpenSettings: String get() = t("paletteOpenSettings")
+    val paletteSwitchChat: String get() = t("paletteSwitchChat")
+    val paletteSwitchTrace: String get() = t("paletteSwitchTrace")
+    val paletteSelectModel: String get() = t("paletteSelectModel")
+    val paletteSelectPermission: String get() = t("paletteSelectPermission")
+}
 
 val DshStringsZh = DshStrings(
-    cancel = "取消",
-    save = "保存",
-    close = "关闭",
-    delete = "删除",
-    retry = "重试",
-    confirm = "确认",
-    loading = "加载中…",
-    unknownError = "未知错误",
-    settingsTitle = "设置",
-    tabGeneral = "通用设置",
-    tabModels = "模型",
-    tabSessions = "会话",
-    tabPlugins = "插件",
-    tabAbout = "关于",
-    sectionGeneral = "通用设置",
-    sectionAppearance = "外观",
-    agentPreset = "Agent 预设",
-    agentPresetDesc = "对此后新建的会话生效。运行中的会话保持它开始时的预设。",
-    presetStandard = "标准模式",
-    presetCode = "PTC 模式",
-    presetMinimal = "极简模式",
-    presetCreator = "创造模式",
-    permission = "权限",
-    permissionDesc = "选择新会话的默认权限模式",
-    permReadOnly = "只读",
-    permWorkspaceWrite = "工作区写入",
-    permFullAccess = "Full access",
-    language = "语言",
-    languageDesc = "同时切换手机 App 与 Harness 界面语言",
-    langZh = "中文",
-    langEn = "English",
-    themeLight = "浅色",
-    themeDark = "深色",
-    themeSystem = "跟随系统",
-    busyEnter = "繁忙时发送行为",
-    busyEnterDesc = "智能体运行中再次发送时的默认行为",
-    busySend = "插话发送",
-    busySteer = "引导发送",
-    busyQueue = "排队发送",
-    notConnectedCannotSave = "未连接设备，无法保存",
-    saveFailed = "保存失败，请重试",
-    manageYourLinks = "管理你的 DSH Links",
-    deviceCount = "%d",
-    pairingManage = "配对管理",
-    pairingManageTitle = "配对管理",
-    pairingManageCount = "共 %1\$d 台设备 · %2\$s",
-    deviceOfflineCannotManage = "设备离线，无法管理配对。请确认电脑端 dsh 已启动。",
-    deviceCheckingTryLater = "正在检测在线状态，请稍候再试",
-    loadFailed = "加载失败",
-    noPairedDevices = "暂无已配对设备",
-    revokePairing = "吊销配对",
-    revokePairingContent = "吊销设备“%s”？该设备将无法再连接此电脑。",
-    revoke = "吊销",
-    revokeOk = "已吊销「%s」",
-    revokeFailed = "吊销失败：%s",
-    thisDevice = "本机",
-    unnamedDevice = "未命名设备",
-    lastActiveJustNow = "刚刚",
-    lastActiveMinutes = "%d 分钟前",
-    lastActiveHours = "%d 小时前",
-    lastActiveDays = "%d 天前",
-    allOffline = "所有设备均离线。请确认电脑端 dsh 已启动，且本机与电脑在同一局域网（或已配置远程隧道）。",
-    resync = "重新同步",
-    cannotConnectHost = "无法连接「%s」。请确认电脑在线，且 18640 端口可访问。",
-    credentialsUnreadable = "凭据无法读取，请重新配对",
-    noDevicesYet = "还没有配对任何设备",
-    noDevicesHint = "在电脑端 dsh（DeepSeek Harness）打开「手机连接」面板\n扫描二维码或输入配对码即可接入",
-    addDevice = "添加设备",
-    rename = "修改名称",
-    deleteDevice = "删除设备",
-    deleteDeviceContent = "删除设备“%s”？将同时从电脑端吊销本机配对并移除本机记录。",
-    statusChecking = "检测中",
-    statusOnline = "在线",
-    statusOffline = "离线",
-    statusConnecting = "连接中",
-    pairPanelTitle = "添加设备",
-    pairChooseHint = "选择一种设备连接方式。",
-    pairManualHint = "输入局域网地址和配对码",
-    methodScan = "扫码添加",
-    methodScanDesc = "扫描电脑网页面板上的二维码",
-    methodManual = "手动添加",
-    methodManualDesc = "输入局域网地址和配对码",
-    pairCodeLabel = "6 位配对码",
-    pairAddressIncomplete = "请完整输入设备连接地址与配对码",
-    voicePermissionRequired = "需要录音权限才能进行语音输入",
-    voiceListeningPrompt = "正在倾听...",
-    voiceRecognitionRetry = "语音识别未听清，请重试",
-    imageTooLargeSkipped = "图片超过 8MB，已跳过",
-    readImageFailed = "无法读取图片：%s",
-    refreshSessionsFailed = "刷新会话失败：%s",
-    archiveFailed = "归档失败：%s",
-    fallbackRetryLater = "请稍后重试",
-    fullTextSearchUnavailable = "全文检索不可用，已按标题匹配",
-    searchFailed = "搜索失败",
-    approvalRequest = "请求授权执行 %s",
-    toolFallbackName = "工具",
-    defaultHarnessPreset = "标准模式",
-    sessionFallbackTitle = "会话",
-    switchDevice = "切换设备",
-    newSession = "新会话",
-    workspace = "工作区",
-    searchSessions = "搜索会话",
-    filterSessions = "筛选会话",
-    addWorkspace = "添加工作区",
-    searchSessionsPlaceholder = "搜索会话…",
-    clearSearch = "清除搜索",
-    searching = "搜索中…",
-    noMatchingSessions = "无匹配会话",
-    createSession = "新建会话",
-    switchToLight = "切换为浅色",
-    switchToDark = "切换为深色",
-    light = "浅色",
-    dark = "深色",
-    sessionMenu = "会话菜单",
-    stop = "停止",
-    closeToolSearch = "关闭工具搜索",
-    searchToolCalls = "搜索工具调用",
-    moreActions = "更多操作",
-    renameSession = "重命名会话",
-    forkSession = "分叉会话",
-    copySessionTitle = "复制会话标题",
-    copied = "已复制",
-    archiveSession = "归档会话",
-    exportConversation = "导出对话",
-    exportFailed = "导出失败：%s",
-    deleteSession = "删除会话",
-    tabChat = "对话",
-    tabTrace = "轨迹",
-    tabHistory = "历史",
-    subagentCount = "%d 个子代理",
-    connecting = "正在连接…",
-    connectionFailedReconnecting = "连接失败，正在重连…",
-    disconnectedReconnecting = "连接已断开，正在重连…",
-    disconnectedReconnectingContentDescription = "连接已断开，正在自动重连",
-    toolSearchPlaceholder = "搜索工具调用（名称 / 参数 / 结果）",
-    approvalNotAccepted = "审批未被接受",
-    approvalFailed = "审批失败：%s",
-    cannotFindUserMessageToRegenerate = "找不到可重新生成的用户消息",
-    regenerated = "已重新生成",
-    regenerateFailed = "重新生成失败：%s",
-    noMatchingToolCalls = "无匹配工具调用",
-    commandSendFailed = "命令发送失败：%s",
-    scrollToBottom = "回到底部",
-    agentStillRunning = "智能体仍在执行…",
-    sending = "正在发送…",
-    sendingBadge = "发送中",
-    interruptBadge = "插话",
-    steerBadge = "引导",
-    queueBadge = "排队",
-    loadModelListFailed = "加载模型列表失败",
-    interruptSent = "已插话发送",
-    steerSent = "已引导发送",
-    queuedSent = "已加入排队",
-    sendFailed = "发送失败：%s",
-    switchModelFailed = "切换模型失败：%s",
-    addWorkspaceDesc = "输入文件夹路径，将其注册为工作区",
-    workspacePathExample = "例如 /Users/me/projects/my-app",
-    add = "添加",
-    deleteWorkspaceTitle = "删除工作区？",
-    deleteWorkspaceMessage = "将移除「%s」及其中所有会话。",
-    deleteSessionTitle = "删除会话？",
-    deleteSessionMessage = "将归档到电脑端并从本机列表移除「%s」。与「归档」效果相同。",
-    subagents = "子代理",
-    noSubagentSessions = "暂无子代理会话",
-    subagentSheetSummary = "共 %d 个 · 点选可切换",
-    runningStatus = "运行中",
-    returnToParentSession = "返回父会话",
-    renameSessionDesc = "设置一个方便识别的会话名称。",
-    chooseWorkspaceTitle = "选择一个工作区开始",
-    chooseWorkspaceDesc = "会话将保存在所选工作区",
-    searchWorkspace = "搜索工作区",
-    ungrouped = "未分组",
-    noWorkspaceBinding = "不绑定工作区",
-    noMatchingWorkspace = "没有匹配「%s」的工作区",
-    enterWorkspacePath = "输入工作区目录路径",
-    create = "创建",
-    selectModel = "选择模型",
-    model = "模型",
-    reasoningEffort = "推理等级",
-    selectSessionModel = "选择本会话使用的模型",
-    noneSelected = "未选择",
-    defaultLabel = "默认",
-    searchModelProvider = "搜索模型或供应商",
-    loadingModelList = "正在加载模型列表…",
-    noAvailableModels = "没有可用的模型。",
-    noMatchingModels = "没有匹配「%s」的模型",
-    noAdjustableReasoningEffort = "当前模型没有可调推理等级。",
-    noAdapterRegistered = "找不到该模型供应商，请确认电脑端已启用对应插件",
-    unsupportedReasoningEffort = "该模型不支持当前推理等级",
-    modelUnavailable = "该模型当前不可用",
-    modelApiFailed = "电脑端调用模型接口失败，请检查 DeepSeek 密钥后重载插件",
-    contextUsed = "上下文已用",
-    systemPrompt = "系统提示词",
-    tools = "工具",
-    chatMessages = "对话消息",
-    waitingApproval = "等待审批",
-    reject = "拒绝",
-    processed = "已处理",
-    allowOnce = "允许一次",
-    accessMode = "访问模式",
-    currentSessionPermissionDesc = "仅影响当前会话的权限预设",
-    defaultPermissionDesc = "选择新会话的默认权限模式",
-    readOnlyPermissionDesc = "agent 只读，所有写入操作需确认",
-    workspaceWritePermissionDesc = "允许 agent 在工作区内修改文件",
-    fullAccessPermissionDesc = "减少确认步骤，可执行敏感操作与外部命令",
-    saving = "保存中…",
-    saveFailedWithMessage = "保存失败：%s",
-    confirmFullAccessTitle = "确认启用 Full access？",
-    confirmFullAccessMessage = "启用 Full access 后，agent 将减少确认步骤，并且可以直接执行更多操作，包括敏感操作、文件修改或外部命令。仅建议在你信任当前任务时使用。",
-    enableFullAccess = "启用 Full access",
-    processing = "处理中",
-    pendingImage = "待发送图片",
-    removeImage = "移除图片",
-    listening = "正在倾听…",
-    planPlaceholder = "描述你的任务以生成计划",
-    goalPlaceholder = "当前目标进行中。可输入 edit 修改 / pause 暂停 / resume 继续 / clear 清除",
-    chatPlaceholder = "给智能体发消息",
-    addAttachment = "添加附件",
-    stopGenerating = "停止生成",
-    sendMessage = "发送消息",
-    expand = "展开",
-    collapse = "收起",
-    unsupportedMessageType = "未支持的消息类型：%s",
-    compressing = "正在压缩…",
-    contextCompressed = "上下文已压缩",
-    contextInjection = "上下文注入",
-    collapseInjectionContent = "收起注入内容",
-    expandInjectionContent = "展开注入内容",
-    tasks = "任务",
-    todoCompleted = "%1\$d/%2\$d 已完成",
-    loadHistory = "载入历史…",
-    loadOlder = "加载更早",
-    interrupted = "已中断",
-    stopped = "已停止",
-    errorStopped = "出错停止",
-    maxTokensReached = "达到 token 上限",
-    cancelled = "已取消",
-    timeoutStopped = "超时停止",
-    thinking = "思考",
-    justNowShort = "刚刚",
-    minutesShort = "%d分钟",
-    hoursShort = "%d小时",
-    daysShort = "%d天",
-    statsTurnsSteps = "%1\$d 轮 · %2\$d 步",
-    firstToken = "首 token %s",
-    cacheHit = "缓存命中 %d%%",
-    inputOutputTokens = "输入 %1\$s tok · 输出 %2\$s tok",
-    userRole = "用户",
-    assistantRole = "助手",
-    reasoningRole = "思考",
-    toolCallRole = "工具调用",
-    resultRole = "结果",
-    approvalRole = "授权",
-    taskRole = "任务",
-    compactionRole = "压缩",
-    answerRole = "回答",
-    noTrace = "暂无轨迹",
-    noTraceEmpty = "开始一段对话后，思考、工具调用、结果与回答会按步骤记录在这里。",
-    noTraceFilterEmpty = "当前筛选下没有步骤，试试「全部」。",
-    turnsCount = "%d 轮",
-    stepsCount = "%d 步",
-    stepType = "步骤类型：%s",
-    todoUpdate = "任务清单更新 · %1\$d/%2\$d 已完成",
-    todoListUpdated = "任务清单已更新",
-    toolCallCount = "%d 个工具调用",
-    executing = "执行中…",
-    copy = "复制",
-    quote = "引用",
-    regenerate = "重新生成",
-    loadEarlier = "加载更早",
-    expandMoreSessions = "展开其余 %d 个会话",
-    historyOverflow = "已显示前 %1\$d 条，共 %2\$d 条",
-    searchFailedWithMessage = "搜索失败：%s",
-    allSessions = "全部",
-    showAllSessions = "显示所有会话",
-    onlyShowRunningSessions = "仅显示正在执行的会话",
-    onlyShowStoppedSessions = "仅显示已停止的会话",
-    searchResults = "搜索结果",
-    noSessions = "暂无会话",
-    noSessionsHint = "新建一段对话后会出现在这里",
-    goalRole = "目标",
-    executionResultRole = "执行结果",
-    chooseAgentPresetDesc = "选择新会话使用的模式（Agent preset）",
-    loadingPresets = "加载预设中…",
-    currentSessionPermissionUpdated = "已更新当前会话权限",
-    heroSlogan = "探索未至之境",
-    back = "返回",
-    selectWorkspaceShort = "选择工作区",
-    unboundWorkspace = "未绑定工作区",
-    noWorkbenchConnected = "未连接工作台，请先添加设备",
-    goToDeviceList = "去设备列表",
-    unknownProvider = "未知",
-    untitledSession = "未命名会话",
-    paletteCommands = "命令",
-    paletteSkills = "技能",
-    paletteSubagents = "子智能体",
-    paletteActions = "快捷操作",
-    palettePermissionReadOnly = "设置只读权限",
-    palettePermissionWorkspaceWrite = "设置工作区写入权限",
-    palettePermissionFullAccess = "设置完全访问权限",
-    palettePlan = "生成执行计划",
-    paletteGoal = "设定持续执行目标",
-    palettePause = "暂停当前任务",
-    paletteResume = "继续当前任务",
-    paletteClear = "清除上下文",
-    paletteSkillsList = "查看可用技能",
-    paletteSubagent = "派生子智能体",
-    paletteSearchSessions = "搜索会话",
-    paletteNewSession = "新建会话",
-    paletteOpenSettings = "打开设置",
-    paletteSwitchChat = "切换到对话视图",
-    paletteSwitchTrace = "切换到轨迹视图",
-    paletteSelectModel = "选择模型",
-    paletteSelectPermission = "选择权限",
+    buildMap {
+        put("cancel", "取消")
+        put("save", "保存")
+        put("close", "关闭")
+        put("delete", "删除")
+        put("retry", "重试")
+        put("confirm", "确认")
+        put("loading", "加载中…")
+        put("unknownError", "未知错误")
+        put("settingsTitle", "设置")
+        put("tabGeneral", "通用设置")
+        put("tabModels", "模型")
+        put("tabSessions", "会话")
+        put("tabPlugins", "插件")
+        put("tabAbout", "关于")
+        put("sectionGeneral", "通用设置")
+        put("sectionAppearance", "外观")
+        put("agentPreset", "Agent 预设")
+        put("agentPresetDesc", "对此后新建的会话生效。运行中的会话保持它开始时的预设。")
+        put("presetStandard", "标准模式")
+        put("presetCode", "PTC 模式")
+        put("presetMinimal", "极简模式")
+        put("presetCreator", "创造模式")
+        put("permission", "权限")
+        put("permissionDesc", "选择新会话的默认权限模式")
+        put("permReadOnly", "只读")
+        put("permWorkspaceWrite", "工作区写入")
+        put("permFullAccess", "Full access")
+        put("language", "语言")
+        put("languageDesc", "同时切换手机 App 与 Harness 界面语言")
+        put("langZh", "中文")
+        put("langEn", "English")
+        put("themeLight", "浅色")
+        put("themeDark", "深色")
+        put("themeSystem", "跟随系统")
+        put("busyEnter", "繁忙时发送行为")
+        put("busyEnterDesc", "智能体运行中再次发送时的默认行为")
+        put("busySend", "插话发送")
+        put("busySteer", "引导发送")
+        put("busyQueue", "排队发送")
+        put("notConnectedCannotSave", "未连接设备，无法保存")
+        put("saveFailed", "保存失败，请重试")
+        put("manageYourLinks", "管理你的 DSH Links")
+        put("deviceCount", "%d")
+        put("pairingManage", "配对管理")
+        put("pairingManageTitle", "配对管理")
+        put("pairingManageCount", "共 %1\$d 台设备 · %2\$s")
+        put("deviceOfflineCannotManage", "设备离线，无法管理配对。请确认电脑端 dsh 已启动。")
+        put("deviceCheckingTryLater", "正在检测在线状态，请稍候再试")
+        put("loadFailed", "加载失败")
+        put("noPairedDevices", "暂无已配对设备")
+        put("revokePairing", "吊销配对")
+        put("revokePairingContent", "吊销设备“%s”？该设备将无法再连接此电脑。")
+        put("revoke", "吊销")
+        put("revokeOk", "已吊销「%s」")
+        put("revokeFailed", "吊销失败：%s")
+        put("thisDevice", "本机")
+        put("unnamedDevice", "未命名设备")
+        put("lastActiveJustNow", "刚刚")
+        put("lastActiveMinutes", "%d 分钟前")
+        put("lastActiveHours", "%d 小时前")
+        put("lastActiveDays", "%d 天前")
+        put("allOffline", "所有设备均离线。请确认电脑端 dsh 已启动，且本机与电脑在同一局域网（或已配置远程隧道）。")
+        put("resync", "重新同步")
+        put("cannotConnectHost", "无法连接「%s」。请确认电脑在线，且 18640 端口可访问。")
+        put("credentialsUnreadable", "凭据无法读取，请重新配对")
+        put("noDevicesYet", "还没有配对任何设备")
+        put("noDevicesHint", "在电脑端 dsh（DeepSeek Harness）打开「手机连接」面板\\n扫描二维码或输入配对码即可接入")
+        put("addDevice", "添加设备")
+        put("rename", "修改名称")
+        put("deleteDevice", "删除设备")
+        put("deleteDeviceContent", "删除设备“%s”？将同时从电脑端吊销本机配对并移除本机记录。")
+        put("statusChecking", "检测中")
+        put("statusOnline", "在线")
+        put("statusOffline", "离线")
+        put("statusConnecting", "连接中")
+        put("pairPanelTitle", "添加设备")
+        put("pairChooseHint", "选择一种设备连接方式。")
+        put("pairManualHint", "输入局域网地址和配对码")
+        put("methodScan", "扫码添加")
+        put("methodScanDesc", "扫描电脑网页面板上的二维码")
+        put("methodManual", "手动添加")
+        put("methodManualDesc", "输入局域网地址和配对码")
+        put("pairCodeLabel", "6 位配对码")
+        put("pairAddressIncomplete", "请完整输入设备连接地址与配对码")
+        put("voicePermissionRequired", "需要录音权限才能进行语音输入")
+        put("voiceListeningPrompt", "正在倾听...")
+        put("voiceRecognitionRetry", "语音识别未听清，请重试")
+        put("imageTooLargeSkipped", "图片超过 8MB，已跳过")
+        put("readImageFailed", "无法读取图片：%s")
+        put("refreshSessionsFailed", "刷新会话失败：%s")
+        put("archiveFailed", "归档失败：%s")
+        put("fallbackRetryLater", "请稍后重试")
+        put("fullTextSearchUnavailable", "全文检索不可用，已按标题匹配")
+        put("searchFailed", "搜索失败")
+        put("approvalRequest", "请求授权执行 %s")
+        put("toolFallbackName", "工具")
+        put("defaultHarnessPreset", "标准模式")
+        put("sessionFallbackTitle", "会话")
+        put("switchDevice", "切换设备")
+        put("newSession", "新会话")
+        put("workspace", "工作区")
+        put("searchSessions", "搜索会话")
+        put("filterSessions", "筛选会话")
+        put("addWorkspace", "添加工作区")
+        put("searchSessionsPlaceholder", "搜索会话…")
+        put("clearSearch", "清除搜索")
+        put("searching", "搜索中…")
+        put("noMatchingSessions", "无匹配会话")
+        put("createSession", "新建会话")
+        put("switchToLight", "切换为浅色")
+        put("switchToDark", "切换为深色")
+        put("light", "浅色")
+        put("dark", "深色")
+        put("sessionMenu", "会话菜单")
+        put("stop", "停止")
+        put("closeToolSearch", "关闭工具搜索")
+        put("searchToolCalls", "搜索工具调用")
+        put("moreActions", "更多操作")
+        put("renameSession", "重命名会话")
+        put("forkSession", "分叉会话")
+        put("copySessionTitle", "复制会话标题")
+        put("copied", "已复制")
+        put("archiveSession", "归档会话")
+        put("exportConversation", "导出对话")
+        put("exportFailed", "导出失败：%s")
+        put("deleteSession", "删除会话")
+        put("tabChat", "对话")
+        put("tabTrace", "轨迹")
+        put("tabHistory", "历史")
+        put("subagentCount", "%d 个子代理")
+        put("connecting", "正在连接…")
+        put("connectionFailedReconnecting", "连接失败，正在重连…")
+        put("disconnectedReconnecting", "连接已断开，正在重连…")
+        put("disconnectedReconnectingContentDescription", "连接已断开，正在自动重连")
+        put("toolSearchPlaceholder", "搜索工具调用（名称 / 参数 / 结果）")
+        put("approvalNotAccepted", "审批未被接受")
+        put("approvalFailed", "审批失败：%s")
+        put("cannotFindUserMessageToRegenerate", "找不到可重新生成的用户消息")
+        put("regenerated", "已重新生成")
+        put("regenerateFailed", "重新生成失败：%s")
+        put("noMatchingToolCalls", "无匹配工具调用")
+        put("commandSendFailed", "命令发送失败：%s")
+        put("scrollToBottom", "回到底部")
+        put("agentStillRunning", "智能体仍在执行…")
+        put("sending", "正在发送…")
+        put("sendingBadge", "发送中")
+        put("interruptBadge", "插话")
+        put("steerBadge", "引导")
+        put("queueBadge", "排队")
+        put("loadModelListFailed", "加载模型列表失败")
+        put("interruptSent", "已插话发送")
+        put("steerSent", "已引导发送")
+        put("queuedSent", "已加入排队")
+        put("sendFailed", "发送失败：%s")
+        put("switchModelFailed", "切换模型失败：%s")
+        put("addWorkspaceDesc", "输入文件夹路径，将其注册为工作区")
+        put("workspacePathExample", "例如 /Users/me/projects/my-app")
+        put("add", "添加")
+        put("deleteWorkspaceTitle", "删除工作区？")
+        put("deleteWorkspaceMessage", "将移除「%s」及其中所有会话。")
+        put("deleteSessionTitle", "删除会话？")
+        put("deleteSessionMessage", "将归档到电脑端并从本机列表移除「%s」。与「归档」效果相同。")
+        put("subagents", "子代理")
+        put("noSubagentSessions", "暂无子代理会话")
+        put("subagentSheetSummary", "共 %d 个 · 点选可切换")
+        put("runningStatus", "运行中")
+        put("returnToParentSession", "返回父会话")
+        put("renameSessionDesc", "设置一个方便识别的会话名称。")
+        put("chooseWorkspaceTitle", "选择一个工作区开始")
+        put("chooseWorkspaceDesc", "会话将保存在所选工作区")
+        put("searchWorkspace", "搜索工作区")
+        put("ungrouped", "未分组")
+        put("noWorkspaceBinding", "不绑定工作区")
+        put("noMatchingWorkspace", "没有匹配「%s」的工作区")
+        put("enterWorkspacePath", "输入工作区目录路径")
+        put("create", "创建")
+        put("selectModel", "选择模型")
+        put("model", "模型")
+        put("reasoningEffort", "推理等级")
+        put("selectSessionModel", "选择本会话使用的模型")
+        put("noneSelected", "未选择")
+        put("defaultLabel", "默认")
+        put("searchModelProvider", "搜索模型或供应商")
+        put("loadingModelList", "正在加载模型列表…")
+        put("noAvailableModels", "没有可用的模型。")
+        put("noMatchingModels", "没有匹配「%s」的模型")
+        put("noAdjustableReasoningEffort", "当前模型没有可调推理等级。")
+        put("noAdapterRegistered", "找不到该模型供应商，请确认电脑端已启用对应插件")
+        put("unsupportedReasoningEffort", "该模型不支持当前推理等级")
+        put("modelUnavailable", "该模型当前不可用")
+        put("modelApiFailed", "电脑端调用模型接口失败，请检查 DeepSeek 密钥后重载插件")
+        put("contextUsed", "上下文已用")
+        put("systemPrompt", "系统提示词")
+        put("tools", "工具")
+        put("chatMessages", "对话消息")
+        put("waitingApproval", "等待审批")
+        put("reject", "拒绝")
+        put("processed", "已处理")
+        put("allowOnce", "允许一次")
+        put("accessMode", "访问模式")
+        put("currentSessionPermissionDesc", "仅影响当前会话的权限预设")
+        put("defaultPermissionDesc", "选择新会话的默认权限模式")
+        put("readOnlyPermissionDesc", "agent 只读，所有写入操作需确认")
+        put("workspaceWritePermissionDesc", "允许 agent 在工作区内修改文件")
+        put("fullAccessPermissionDesc", "减少确认步骤，可执行敏感操作与外部命令")
+        put("saving", "保存中…")
+        put("saveFailedWithMessage", "保存失败：%s")
+        put("confirmFullAccessTitle", "确认启用 Full access？")
+        put("confirmFullAccessMessage", "启用 Full access 后，agent 将减少确认步骤，并且可以直接执行更多操作，包括敏感操作、文件修改或外部命令。仅建议在你信任当前任务时使用。")
+        put("enableFullAccess", "启用 Full access")
+        put("processing", "处理中")
+        put("pendingImage", "待发送图片")
+        put("removeImage", "移除图片")
+        put("listening", "正在倾听…")
+        put("planPlaceholder", "描述你的任务以生成计划")
+        put("goalPlaceholder", "当前目标进行中。可输入 edit 修改 / pause 暂停 / resume 继续 / clear 清除")
+        put("chatPlaceholder", "给智能体发消息")
+        put("addAttachment", "添加附件")
+        put("stopGenerating", "停止生成")
+        put("sendMessage", "发送消息")
+        put("expand", "展开")
+        put("collapse", "收起")
+        put("unsupportedMessageType", "未支持的消息类型：%s")
+        put("compressing", "正在压缩…")
+        put("contextCompressed", "上下文已压缩")
+        put("contextInjection", "上下文注入")
+        put("collapseInjectionContent", "收起注入内容")
+        put("expandInjectionContent", "展开注入内容")
+        put("tasks", "任务")
+        put("todoCompleted", "%1\$d/%2\$d 已完成")
+        put("loadHistory", "载入历史…")
+        put("loadOlder", "加载更早")
+        put("interrupted", "已中断")
+        put("stopped", "已停止")
+        put("errorStopped", "出错停止")
+        put("maxTokensReached", "达到 token 上限")
+        put("cancelled", "已取消")
+        put("timeoutStopped", "超时停止")
+        put("thinking", "思考")
+        put("justNowShort", "刚刚")
+        put("minutesShort", "%d分钟")
+        put("hoursShort", "%d小时")
+        put("daysShort", "%d天")
+        put("statsTurnsSteps", "%1\$d 轮 · %2\$d 步")
+        put("firstToken", "首 token %s")
+        put("cacheHit", "缓存命中 %d%%")
+        put("inputOutputTokens", "输入 %1\$s tok · 输出 %2\$s tok")
+        put("userRole", "用户")
+        put("assistantRole", "助手")
+        put("reasoningRole", "思考")
+        put("toolCallRole", "工具调用")
+        put("resultRole", "结果")
+        put("approvalRole", "授权")
+        put("taskRole", "任务")
+        put("compactionRole", "压缩")
+        put("answerRole", "回答")
+        put("noTrace", "暂无轨迹")
+        put("noTraceEmpty", "开始一段对话后，思考、工具调用、结果与回答会按步骤记录在这里。")
+        put("noTraceFilterEmpty", "当前筛选下没有步骤，试试「全部」。")
+        put("turnsCount", "%d 轮")
+        put("stepsCount", "%d 步")
+        put("stepType", "步骤类型：%s")
+        put("todoUpdate", "任务清单更新 · %1\$d/%2\$d 已完成")
+        put("todoListUpdated", "任务清单已更新")
+        put("toolCallCount", "%d 个工具调用")
+        put("executing", "执行中…")
+        put("copy", "复制")
+        put("quote", "引用")
+        put("regenerate", "重新生成")
+        put("loadEarlier", "加载更早")
+        put("expandMoreSessions", "展开其余 %d 个会话")
+        put("historyOverflow", "已显示前 %1\$d 条，共 %2\$d 条")
+        put("searchFailedWithMessage", "搜索失败：%s")
+        put("allSessions", "全部")
+        put("showAllSessions", "显示所有会话")
+        put("onlyShowRunningSessions", "仅显示正在执行的会话")
+        put("onlyShowStoppedSessions", "仅显示已停止的会话")
+        put("searchResults", "搜索结果")
+        put("noSessions", "暂无会话")
+        put("noSessionsHint", "新建一段对话后会出现在这里")
+        put("goalRole", "目标")
+        put("executionResultRole", "执行结果")
+        put("chooseAgentPresetDesc", "选择新会话使用的模式（Agent preset）")
+        put("loadingPresets", "加载预设中…")
+        put("currentSessionPermissionUpdated", "已更新当前会话权限")
+        put("heroSlogan", "探索未至之境")
+        put("back", "返回")
+        put("selectWorkspaceShort", "选择工作区")
+        put("unboundWorkspace", "未绑定工作区")
+        put("noWorkbenchConnected", "未连接工作台，请先添加设备")
+        put("goToDeviceList", "去设备列表")
+        put("unknownProvider", "未知")
+        put("untitledSession", "未命名会话")
+        put("paletteCommands", "命令")
+        put("paletteSkills", "技能")
+        put("paletteSubagents", "子智能体")
+        put("paletteActions", "快捷操作")
+        put("palettePermissionReadOnly", "设置只读权限")
+        put("palettePermissionWorkspaceWrite", "设置工作区写入权限")
+        put("palettePermissionFullAccess", "设置完全访问权限")
+        put("palettePlan", "生成执行计划")
+        put("paletteGoal", "设定持续执行目标")
+        put("palettePause", "暂停当前任务")
+        put("paletteResume", "继续当前任务")
+        put("paletteClear", "清除上下文")
+        put("paletteSkillsList", "查看可用技能")
+        put("paletteSubagent", "派生子智能体")
+        put("paletteSearchSessions", "搜索会话")
+        put("paletteNewSession", "新建会话")
+        put("paletteOpenSettings", "打开设置")
+        put("paletteSwitchChat", "切换到对话视图")
+        put("paletteSwitchTrace", "切换到轨迹视图")
+        put("paletteSelectModel", "选择模型")
+        put("paletteSelectPermission", "选择权限")
+    }
 )
 
 val DshStringsEn = DshStrings(
-    cancel = "Cancel",
-    save = "Save",
-    close = "Close",
-    delete = "Delete",
-    retry = "Retry",
-    confirm = "Confirm",
-    loading = "Loading…",
-    unknownError = "Unknown error",
-    settingsTitle = "Settings",
-    tabGeneral = "General",
-    tabModels = "Models",
-    tabSessions = "Sessions",
-    tabPlugins = "Plugins",
-    tabAbout = "About",
-    sectionGeneral = "General",
-    sectionAppearance = "Appearance",
-    agentPreset = "Agent preset",
-    agentPresetDesc = "Applies to newly created sessions. Running sessions keep their original preset.",
-    presetStandard = "Standard",
-    presetCode = "PTC",
-    presetMinimal = "Minimal",
-    presetCreator = "Creator",
-    permission = "Permissions",
-    permissionDesc = "Default permission mode for new sessions",
-    permReadOnly = "Read-only",
-    permWorkspaceWrite = "Workspace write",
-    permFullAccess = "Full access",
-    language = "Language",
-    languageDesc = "Switches both the phone app and Harness UI language",
-    langZh = "中文",
-    langEn = "English",
-    themeLight = "Light",
-    themeDark = "Dark",
-    themeSystem = "System",
-    busyEnter = "When busy",
-    busyEnterDesc = "Default behavior when sending while the agent is running",
-    busySend = "Interrupt",
-    busySteer = "Steer",
-    busyQueue = "Queue",
-    notConnectedCannotSave = "Not connected — cannot save",
-    saveFailed = "Save failed, please retry",
-    manageYourLinks = "Manage your DSH Links",
-    deviceCount = "%d",
-    pairingManage = "Paired devices",
-    pairingManageTitle = "Paired devices",
-    pairingManageCount = "%1\$d devices · %2\$s",
-    deviceOfflineCannotManage = "Device is offline. Start dsh on the computer first.",
-    deviceCheckingTryLater = "Checking connectivity — try again in a moment",
-    loadFailed = "Failed to load",
-    noPairedDevices = "No paired devices yet",
-    revokePairing = "Revoke pairing",
-    revokePairingContent = "Revoke “%s”? It will no longer be able to connect to this computer.",
-    revoke = "Revoke",
-    revokeOk = "Revoked “%s”",
-    revokeFailed = "Revoke failed: %s",
-    thisDevice = "This phone",
-    unnamedDevice = "Unnamed device",
-    lastActiveJustNow = "Just now",
-    lastActiveMinutes = "%d min ago",
-    lastActiveHours = "%d h ago",
-    lastActiveDays = "%d d ago",
-    allOffline = "All devices are offline. Make sure dsh is running and you’re on the same LAN (or a remote tunnel).",
-    resync = "Refresh",
-    cannotConnectHost = "Can’t reach “%s”. Confirm the computer is online and port 18640 is reachable.",
-    credentialsUnreadable = "Credentials unreadable — please pair again",
-    noDevicesYet = "No devices paired yet",
-    noDevicesHint = "On the computer, open the dsh “Phone link” panel\nScan the QR code or enter the pairing code",
-    addDevice = "Add device",
-    rename = "Rename",
-    deleteDevice = "Remove device",
-    deleteDeviceContent = "Remove “%s”? This also revokes the pairing on the computer and deletes the local record.",
-    statusChecking = "Checking",
-    statusOnline = "Online",
-    statusOffline = "Offline",
-    statusConnecting = "Connecting",
-    pairPanelTitle = "Add device",
-    pairChooseHint = "Choose how to connect.",
-    pairManualHint = "Enter LAN address and pairing code",
-    methodScan = "Scan QR",
-    methodScanDesc = "Scan the QR code on the computer web panel",
-    methodManual = "Manual",
-    methodManualDesc = "Enter address and pairing code",
-    pairCodeLabel = "6-digit code",
-    pairAddressIncomplete = "Enter both the address and pairing code",
-    voicePermissionRequired = "Microphone permission is required for voice input",
-    voiceListeningPrompt = "Listening...",
-    voiceRecognitionRetry = "Voice recognition did not catch that. Please try again",
-    imageTooLargeSkipped = "Image is over 8 MB and was skipped",
-    readImageFailed = "Could not read image: %s",
-    refreshSessionsFailed = "Failed to refresh sessions: %s",
-    archiveFailed = "Archive failed: %s",
-    fallbackRetryLater = "Please try again later",
-    fullTextSearchUnavailable = "Full-text search is unavailable. Matched titles instead",
-    searchFailed = "Search failed",
-    approvalRequest = "Requesting approval to run %s",
-    toolFallbackName = "tool",
-    defaultHarnessPreset = "Standard",
-    sessionFallbackTitle = "Session",
-    switchDevice = "Switch device",
-    newSession = "New session",
-    workspace = "Workspace",
-    searchSessions = "Search sessions",
-    filterSessions = "Filter sessions",
-    addWorkspace = "Add workspace",
-    searchSessionsPlaceholder = "Search sessions...",
-    clearSearch = "Clear search",
-    searching = "Searching...",
-    noMatchingSessions = "No matching sessions",
-    createSession = "Create session",
-    switchToLight = "Switch to light",
-    switchToDark = "Switch to dark",
-    light = "Light",
-    dark = "Dark",
-    sessionMenu = "Session menu",
-    stop = "Stop",
-    closeToolSearch = "Close tool search",
-    searchToolCalls = "Search tool calls",
-    moreActions = "More actions",
-    renameSession = "Rename session",
-    forkSession = "Fork session",
-    copySessionTitle = "Copy session title",
-    copied = "Copied",
-    archiveSession = "Archive session",
-    exportConversation = "Export conversation",
-    exportFailed = "Export failed: %s",
-    deleteSession = "Delete session",
-    tabChat = "Chat",
-    tabTrace = "Trace",
-    tabHistory = "History",
-    subagentCount = "%d subagents",
-    connecting = "Connecting...",
-    connectionFailedReconnecting = "Connection failed. Reconnecting...",
-    disconnectedReconnecting = "Disconnected. Reconnecting...",
-    disconnectedReconnectingContentDescription = "Disconnected and reconnecting automatically",
-    toolSearchPlaceholder = "Search tool calls (name / arguments / result)",
-    approvalNotAccepted = "Approval was not accepted",
-    approvalFailed = "Approval failed: %s",
-    cannotFindUserMessageToRegenerate = "Could not find a user message to regenerate",
-    regenerated = "Regenerated",
-    regenerateFailed = "Regenerate failed: %s",
-    noMatchingToolCalls = "No matching tool calls",
-    commandSendFailed = "Command failed to send: %s",
-    scrollToBottom = "Scroll to bottom",
-    agentStillRunning = "Agent is still running...",
-    sending = "Sending...",
-    sendingBadge = "Sending",
-    interruptBadge = "Interrupt",
-    steerBadge = "Steer",
-    queueBadge = "Queue",
-    loadModelListFailed = "Failed to load model list",
-    interruptSent = "Sent as interrupt",
-    steerSent = "Sent as steer",
-    queuedSent = "Added to queue",
-    sendFailed = "Send failed: %s",
-    switchModelFailed = "Failed to switch model: %s",
-    addWorkspaceDesc = "Enter a folder path to register it as a workspace",
-    workspacePathExample = "Example: /Users/me/projects/my-app",
-    add = "Add",
-    deleteWorkspaceTitle = "Delete workspace?",
-    deleteWorkspaceMessage = "Remove \"%s\" and all sessions inside it.",
-    deleteSessionTitle = "Delete session?",
-    deleteSessionMessage = "Archive \"%s\" on the computer and remove it from this phone. This is the same as Archive.",
-    subagents = "Subagents",
-    noSubagentSessions = "No subagent sessions yet",
-    subagentSheetSummary = "%d total · tap to switch",
-    runningStatus = "Running",
-    returnToParentSession = "Return to parent session",
-    renameSessionDesc = "Set a name that is easy to recognize.",
-    chooseWorkspaceTitle = "Choose a workspace to start",
-    chooseWorkspaceDesc = "Sessions will be saved in the selected workspace",
-    searchWorkspace = "Search workspaces",
-    ungrouped = "Ungrouped",
-    noWorkspaceBinding = "No workspace binding",
-    noMatchingWorkspace = "No workspace matches \"%s\"",
-    enterWorkspacePath = "Enter workspace directory path",
-    create = "Create",
-    selectModel = "Select model",
-    model = "Model",
-    reasoningEffort = "Reasoning effort",
-    selectSessionModel = "Select the model for this session",
-    noneSelected = "None selected",
-    defaultLabel = "Default",
-    searchModelProvider = "Search models or providers",
-    loadingModelList = "Loading model list...",
-    noAvailableModels = "No models available.",
-    noMatchingModels = "No model matches \"%s\"",
-    noAdjustableReasoningEffort = "This model has no adjustable reasoning effort.",
-    noAdapterRegistered = "No adapter is registered for this model provider. Enable the corresponding plugin on the computer.",
-    unsupportedReasoningEffort = "This model does not support the selected reasoning effort",
-    modelUnavailable = "This model is currently unavailable",
-    modelApiFailed = "The computer failed to call the model API. Check the DeepSeek key and reload the plugin.",
-    contextUsed = "Context used",
-    systemPrompt = "System prompt",
-    tools = "Tools",
-    chatMessages = "Chat messages",
-    waitingApproval = "Waiting for approval",
-    reject = "Reject",
-    processed = "Processed",
-    allowOnce = "Allow once",
-    accessMode = "Access mode",
-    currentSessionPermissionDesc = "Only affects the permission preset for this session",
-    defaultPermissionDesc = "Choose the default permission mode for new sessions",
-    readOnlyPermissionDesc = "The agent is read-only. All write operations require confirmation.",
-    workspaceWritePermissionDesc = "Allow the agent to modify files in the workspace",
-    fullAccessPermissionDesc = "Reduce confirmations and allow sensitive actions and external commands",
-    saving = "Saving...",
-    saveFailedWithMessage = "Save failed: %s",
-    confirmFullAccessTitle = "Enable Full access?",
-    confirmFullAccessMessage = "With Full access enabled, the agent will need fewer confirmations and can run more actions directly, including sensitive operations, file changes, and external commands. Use it only when you trust the current task.",
-    enableFullAccess = "Enable Full access",
-    processing = "Processing",
-    pendingImage = "Image to send",
-    removeImage = "Remove image",
-    listening = "Listening...",
-    planPlaceholder = "Describe your task to generate a plan",
-    goalPlaceholder = "Goal is active. Type edit to change it / pause to pause / resume to continue / clear to clear",
-    chatPlaceholder = "Message the agent",
-    addAttachment = "Add attachment",
-    stopGenerating = "Stop generating",
-    sendMessage = "Send message",
-    expand = "Expand",
-    collapse = "Collapse",
-    unsupportedMessageType = "Unsupported message type: %s",
-    compressing = "Compressing...",
-    contextCompressed = "Context compressed",
-    contextInjection = "Context injection",
-    collapseInjectionContent = "Collapse injected content",
-    expandInjectionContent = "Expand injected content",
-    tasks = "Tasks",
-    todoCompleted = "%1\$d/%2\$d completed",
-    loadHistory = "Loading history...",
-    loadOlder = "Load older",
-    interrupted = "Interrupted",
-    stopped = "Stopped",
-    errorStopped = "Stopped by error",
-    maxTokensReached = "Token limit reached",
-    cancelled = "Cancelled",
-    timeoutStopped = "Timed out",
-    thinking = "Thinking",
-    justNowShort = "Just now",
-    minutesShort = "%dm",
-    hoursShort = "%dh",
-    daysShort = "%dd",
-    statsTurnsSteps = "%1\$d turns · %2\$d steps",
-    firstToken = "First token %s",
-    cacheHit = "Cache hit %d%%",
-    inputOutputTokens = "Input %1\$s tok · output %2\$s tok",
-    userRole = "User",
-    assistantRole = "Assistant",
-    reasoningRole = "Thinking",
-    toolCallRole = "Tool call",
-    resultRole = "Result",
-    approvalRole = "Approval",
-    taskRole = "Task",
-    compactionRole = "Compaction",
-    answerRole = "Answer",
-    noTrace = "No trace yet",
-    noTraceEmpty = "Start a conversation and thinking, tool calls, results, and answers will be recorded here step by step.",
-    noTraceFilterEmpty = "No steps match the current filter. Try \"All\".",
-    turnsCount = "%d turns",
-    stepsCount = "%d steps",
-    stepType = "Step type: %s",
-    todoUpdate = "Todo list updated · %1\$d/%2\$d completed",
-    todoListUpdated = "Todo list updated",
-    toolCallCount = "%d tool calls",
-    executing = "Running...",
-    copy = "Copy",
-    quote = "Quote",
-    regenerate = "Regenerate",
-    loadEarlier = "Load older",
-    expandMoreSessions = "Expand %d more sessions",
-    historyOverflow = "Showing first %1\$d of %2\$d",
-    searchFailedWithMessage = "Search failed: %s",
-    allSessions = "All",
-    showAllSessions = "Show all sessions",
-    onlyShowRunningSessions = "Only show running sessions",
-    onlyShowStoppedSessions = "Only show stopped sessions",
-    searchResults = "Search results",
-    noSessions = "No sessions yet",
-    noSessionsHint = "New conversations will appear here",
-    goalRole = "Goal",
-    executionResultRole = "Execution result",
-    chooseAgentPresetDesc = "Choose the mode (Agent preset) for new sessions",
-    loadingPresets = "Loading presets...",
-    currentSessionPermissionUpdated = "Updated current session permissions",
-    heroSlogan = "Explore what is next",
-    back = "Back",
-    selectWorkspaceShort = "Choose workspace",
-    unboundWorkspace = "No workspace bound",
-    noWorkbenchConnected = "No workspace connected. Add a device first.",
-    goToDeviceList = "Go to devices",
-    unknownProvider = "Unknown",
-    untitledSession = "Untitled session",
-    paletteCommands = "Commands",
-    paletteSkills = "Skills",
-    paletteSubagents = "Subagents",
-    paletteActions = "Shortcuts",
-    palettePermissionReadOnly = "Set read-only permissions",
-    palettePermissionWorkspaceWrite = "Set workspace-write permissions",
-    palettePermissionFullAccess = "Set full-access permissions",
-    palettePlan = "Generate an execution plan",
-    paletteGoal = "Set a continuous execution goal",
-    palettePause = "Pause the current task",
-    paletteResume = "Resume the current task",
-    paletteClear = "Clear context",
-    paletteSkillsList = "View available skills",
-    paletteSubagent = "Spawn a subagent",
-    paletteSearchSessions = "Search sessions",
-    paletteNewSession = "Create a new session",
-    paletteOpenSettings = "Open settings",
-    paletteSwitchChat = "Switch to chat view",
-    paletteSwitchTrace = "Switch to trace view",
-    paletteSelectModel = "Select model",
-    paletteSelectPermission = "Select permissions",
+    buildMap {
+        put("cancel", "Cancel")
+        put("save", "Save")
+        put("close", "Close")
+        put("delete", "Delete")
+        put("retry", "Retry")
+        put("confirm", "Confirm")
+        put("loading", "Loading…")
+        put("unknownError", "Unknown error")
+        put("settingsTitle", "Settings")
+        put("tabGeneral", "General")
+        put("tabModels", "Models")
+        put("tabSessions", "Sessions")
+        put("tabPlugins", "Plugins")
+        put("tabAbout", "About")
+        put("sectionGeneral", "General")
+        put("sectionAppearance", "Appearance")
+        put("agentPreset", "Agent preset")
+        put("agentPresetDesc", "Applies to newly created sessions. Running sessions keep their original preset.")
+        put("presetStandard", "Standard")
+        put("presetCode", "PTC")
+        put("presetMinimal", "Minimal")
+        put("presetCreator", "Creator")
+        put("permission", "Permissions")
+        put("permissionDesc", "Default permission mode for new sessions")
+        put("permReadOnly", "Read-only")
+        put("permWorkspaceWrite", "Workspace write")
+        put("permFullAccess", "Full access")
+        put("language", "Language")
+        put("languageDesc", "Switches both the phone app and Harness UI language")
+        put("langZh", "中文")
+        put("langEn", "English")
+        put("themeLight", "Light")
+        put("themeDark", "Dark")
+        put("themeSystem", "System")
+        put("busyEnter", "When busy")
+        put("busyEnterDesc", "Default behavior when sending while the agent is running")
+        put("busySend", "Interrupt")
+        put("busySteer", "Steer")
+        put("busyQueue", "Queue")
+        put("notConnectedCannotSave", "Not connected — cannot save")
+        put("saveFailed", "Save failed, please retry")
+        put("manageYourLinks", "Manage your DSH Links")
+        put("deviceCount", "%d")
+        put("pairingManage", "Paired devices")
+        put("pairingManageTitle", "Paired devices")
+        put("pairingManageCount", "%1\$d devices · %2\$s")
+        put("deviceOfflineCannotManage", "Device is offline. Start dsh on the computer first.")
+        put("deviceCheckingTryLater", "Checking connectivity — try again in a moment")
+        put("loadFailed", "Failed to load")
+        put("noPairedDevices", "No paired devices yet")
+        put("revokePairing", "Revoke pairing")
+        put("revokePairingContent", "Revoke “%s”? It will no longer be able to connect to this computer.")
+        put("revoke", "Revoke")
+        put("revokeOk", "Revoked “%s”")
+        put("revokeFailed", "Revoke failed: %s")
+        put("thisDevice", "This phone")
+        put("unnamedDevice", "Unnamed device")
+        put("lastActiveJustNow", "Just now")
+        put("lastActiveMinutes", "%d min ago")
+        put("lastActiveHours", "%d h ago")
+        put("lastActiveDays", "%d d ago")
+        put("allOffline", "All devices are offline. Make sure dsh is running and you’re on the same LAN (or a remote tunnel).")
+        put("resync", "Refresh")
+        put("cannotConnectHost", "Can’t reach “%s”. Confirm the computer is online and port 18640 is reachable.")
+        put("credentialsUnreadable", "Credentials unreadable — please pair again")
+        put("noDevicesYet", "No devices paired yet")
+        put("noDevicesHint", "On the computer, open the dsh “Phone link” panel\\nScan the QR code or enter the pairing code")
+        put("addDevice", "Add device")
+        put("rename", "Rename")
+        put("deleteDevice", "Remove device")
+        put("deleteDeviceContent", "Remove “%s”? This also revokes the pairing on the computer and deletes the local record.")
+        put("statusChecking", "Checking")
+        put("statusOnline", "Online")
+        put("statusOffline", "Offline")
+        put("statusConnecting", "Connecting")
+        put("pairPanelTitle", "Add device")
+        put("pairChooseHint", "Choose how to connect.")
+        put("pairManualHint", "Enter LAN address and pairing code")
+        put("methodScan", "Scan QR")
+        put("methodScanDesc", "Scan the QR code on the computer web panel")
+        put("methodManual", "Manual")
+        put("methodManualDesc", "Enter address and pairing code")
+        put("pairCodeLabel", "6-digit code")
+        put("pairAddressIncomplete", "Enter both the address and pairing code")
+        put("voicePermissionRequired", "Microphone permission is required for voice input")
+        put("voiceListeningPrompt", "Listening...")
+        put("voiceRecognitionRetry", "Voice recognition did not catch that. Please try again")
+        put("imageTooLargeSkipped", "Image is over 8 MB and was skipped")
+        put("readImageFailed", "Could not read image: %s")
+        put("refreshSessionsFailed", "Failed to refresh sessions: %s")
+        put("archiveFailed", "Archive failed: %s")
+        put("fallbackRetryLater", "Please try again later")
+        put("fullTextSearchUnavailable", "Full-text search is unavailable. Matched titles instead")
+        put("searchFailed", "Search failed")
+        put("approvalRequest", "Requesting approval to run %s")
+        put("toolFallbackName", "tool")
+        put("defaultHarnessPreset", "Standard")
+        put("sessionFallbackTitle", "Session")
+        put("switchDevice", "Switch device")
+        put("newSession", "New session")
+        put("workspace", "Workspace")
+        put("searchSessions", "Search sessions")
+        put("filterSessions", "Filter sessions")
+        put("addWorkspace", "Add workspace")
+        put("searchSessionsPlaceholder", "Search sessions...")
+        put("clearSearch", "Clear search")
+        put("searching", "Searching...")
+        put("noMatchingSessions", "No matching sessions")
+        put("createSession", "Create session")
+        put("switchToLight", "Switch to light")
+        put("switchToDark", "Switch to dark")
+        put("light", "Light")
+        put("dark", "Dark")
+        put("sessionMenu", "Session menu")
+        put("stop", "Stop")
+        put("closeToolSearch", "Close tool search")
+        put("searchToolCalls", "Search tool calls")
+        put("moreActions", "More actions")
+        put("renameSession", "Rename session")
+        put("forkSession", "Fork session")
+        put("copySessionTitle", "Copy session title")
+        put("copied", "Copied")
+        put("archiveSession", "Archive session")
+        put("exportConversation", "Export conversation")
+        put("exportFailed", "Export failed: %s")
+        put("deleteSession", "Delete session")
+        put("tabChat", "Chat")
+        put("tabTrace", "Trace")
+        put("tabHistory", "History")
+        put("subagentCount", "%d subagents")
+        put("connecting", "Connecting...")
+        put("connectionFailedReconnecting", "Connection failed. Reconnecting...")
+        put("disconnectedReconnecting", "Disconnected. Reconnecting...")
+        put("disconnectedReconnectingContentDescription", "Disconnected and reconnecting automatically")
+        put("toolSearchPlaceholder", "Search tool calls (name / arguments / result)")
+        put("approvalNotAccepted", "Approval was not accepted")
+        put("approvalFailed", "Approval failed: %s")
+        put("cannotFindUserMessageToRegenerate", "Could not find a user message to regenerate")
+        put("regenerated", "Regenerated")
+        put("regenerateFailed", "Regenerate failed: %s")
+        put("noMatchingToolCalls", "No matching tool calls")
+        put("commandSendFailed", "Command failed to send: %s")
+        put("scrollToBottom", "Scroll to bottom")
+        put("agentStillRunning", "Agent is still running...")
+        put("sending", "Sending...")
+        put("sendingBadge", "Sending")
+        put("interruptBadge", "Interrupt")
+        put("steerBadge", "Steer")
+        put("queueBadge", "Queue")
+        put("loadModelListFailed", "Failed to load model list")
+        put("interruptSent", "Sent as interrupt")
+        put("steerSent", "Sent as steer")
+        put("queuedSent", "Added to queue")
+        put("sendFailed", "Send failed: %s")
+        put("switchModelFailed", "Failed to switch model: %s")
+        put("addWorkspaceDesc", "Enter a folder path to register it as a workspace")
+        put("workspacePathExample", "Example: /Users/me/projects/my-app")
+        put("add", "Add")
+        put("deleteWorkspaceTitle", "Delete workspace?")
+        put("deleteWorkspaceMessage", "Remove \"%s\" and all sessions inside it.")
+        put("deleteSessionTitle", "Delete session?")
+        put("deleteSessionMessage", "Archive \"%s\" on the computer and remove it from this phone. This is the same as Archive.")
+        put("subagents", "Subagents")
+        put("noSubagentSessions", "No subagent sessions yet")
+        put("subagentSheetSummary", "%d total · tap to switch")
+        put("runningStatus", "Running")
+        put("returnToParentSession", "Return to parent session")
+        put("renameSessionDesc", "Set a name that is easy to recognize.")
+        put("chooseWorkspaceTitle", "Choose a workspace to start")
+        put("chooseWorkspaceDesc", "Sessions will be saved in the selected workspace")
+        put("searchWorkspace", "Search workspaces")
+        put("ungrouped", "Ungrouped")
+        put("noWorkspaceBinding", "No workspace binding")
+        put("noMatchingWorkspace", "No workspace matches \"%s\"")
+        put("enterWorkspacePath", "Enter workspace directory path")
+        put("create", "Create")
+        put("selectModel", "Select model")
+        put("model", "Model")
+        put("reasoningEffort", "Reasoning effort")
+        put("selectSessionModel", "Select the model for this session")
+        put("noneSelected", "None selected")
+        put("defaultLabel", "Default")
+        put("searchModelProvider", "Search models or providers")
+        put("loadingModelList", "Loading model list...")
+        put("noAvailableModels", "No models available.")
+        put("noMatchingModels", "No model matches \"%s\"")
+        put("noAdjustableReasoningEffort", "This model has no adjustable reasoning effort.")
+        put("noAdapterRegistered", "No adapter is registered for this model provider. Enable the corresponding plugin on the computer.")
+        put("unsupportedReasoningEffort", "This model does not support the selected reasoning effort")
+        put("modelUnavailable", "This model is currently unavailable")
+        put("modelApiFailed", "The computer failed to call the model API. Check the DeepSeek key and reload the plugin.")
+        put("contextUsed", "Context used")
+        put("systemPrompt", "System prompt")
+        put("tools", "Tools")
+        put("chatMessages", "Chat messages")
+        put("waitingApproval", "Waiting for approval")
+        put("reject", "Reject")
+        put("processed", "Processed")
+        put("allowOnce", "Allow once")
+        put("accessMode", "Access mode")
+        put("currentSessionPermissionDesc", "Only affects the permission preset for this session")
+        put("defaultPermissionDesc", "Choose the default permission mode for new sessions")
+        put("readOnlyPermissionDesc", "The agent is read-only. All write operations require confirmation.")
+        put("workspaceWritePermissionDesc", "Allow the agent to modify files in the workspace")
+        put("fullAccessPermissionDesc", "Reduce confirmations and allow sensitive actions and external commands")
+        put("saving", "Saving...")
+        put("saveFailedWithMessage", "Save failed: %s")
+        put("confirmFullAccessTitle", "Enable Full access?")
+        put("confirmFullAccessMessage", "With Full access enabled, the agent will need fewer confirmations and can run more actions directly, including sensitive operations, file changes, and external commands. Use it only when you trust the current task.")
+        put("enableFullAccess", "Enable Full access")
+        put("processing", "Processing")
+        put("pendingImage", "Image to send")
+        put("removeImage", "Remove image")
+        put("listening", "Listening...")
+        put("planPlaceholder", "Describe your task to generate a plan")
+        put("goalPlaceholder", "Goal is active. Type edit to change it / pause to pause / resume to continue / clear to clear")
+        put("chatPlaceholder", "Message the agent")
+        put("addAttachment", "Add attachment")
+        put("stopGenerating", "Stop generating")
+        put("sendMessage", "Send message")
+        put("expand", "Expand")
+        put("collapse", "Collapse")
+        put("unsupportedMessageType", "Unsupported message type: %s")
+        put("compressing", "Compressing...")
+        put("contextCompressed", "Context compressed")
+        put("contextInjection", "Context injection")
+        put("collapseInjectionContent", "Collapse injected content")
+        put("expandInjectionContent", "Expand injected content")
+        put("tasks", "Tasks")
+        put("todoCompleted", "%1\$d/%2\$d completed")
+        put("loadHistory", "Loading history...")
+        put("loadOlder", "Load older")
+        put("interrupted", "Interrupted")
+        put("stopped", "Stopped")
+        put("errorStopped", "Stopped by error")
+        put("maxTokensReached", "Token limit reached")
+        put("cancelled", "Cancelled")
+        put("timeoutStopped", "Timed out")
+        put("thinking", "Thinking")
+        put("justNowShort", "Just now")
+        put("minutesShort", "%dm")
+        put("hoursShort", "%dh")
+        put("daysShort", "%dd")
+        put("statsTurnsSteps", "%1\$d turns · %2\$d steps")
+        put("firstToken", "First token %s")
+        put("cacheHit", "Cache hit %d%%")
+        put("inputOutputTokens", "Input %1\$s tok · output %2\$s tok")
+        put("userRole", "User")
+        put("assistantRole", "Assistant")
+        put("reasoningRole", "Thinking")
+        put("toolCallRole", "Tool call")
+        put("resultRole", "Result")
+        put("approvalRole", "Approval")
+        put("taskRole", "Task")
+        put("compactionRole", "Compaction")
+        put("answerRole", "Answer")
+        put("noTrace", "No trace yet")
+        put("noTraceEmpty", "Start a conversation and thinking, tool calls, results, and answers will be recorded here step by step.")
+        put("noTraceFilterEmpty", "No steps match the current filter. Try \"All\".")
+        put("turnsCount", "%d turns")
+        put("stepsCount", "%d steps")
+        put("stepType", "Step type: %s")
+        put("todoUpdate", "Todo list updated · %1\$d/%2\$d completed")
+        put("todoListUpdated", "Todo list updated")
+        put("toolCallCount", "%d tool calls")
+        put("executing", "Running...")
+        put("copy", "Copy")
+        put("quote", "Quote")
+        put("regenerate", "Regenerate")
+        put("loadEarlier", "Load older")
+        put("expandMoreSessions", "Expand %d more sessions")
+        put("historyOverflow", "Showing first %1\$d of %2\$d")
+        put("searchFailedWithMessage", "Search failed: %s")
+        put("allSessions", "All")
+        put("showAllSessions", "Show all sessions")
+        put("onlyShowRunningSessions", "Only show running sessions")
+        put("onlyShowStoppedSessions", "Only show stopped sessions")
+        put("searchResults", "Search results")
+        put("noSessions", "No sessions yet")
+        put("noSessionsHint", "New conversations will appear here")
+        put("goalRole", "Goal")
+        put("executionResultRole", "Execution result")
+        put("chooseAgentPresetDesc", "Choose the mode (Agent preset) for new sessions")
+        put("loadingPresets", "Loading presets...")
+        put("currentSessionPermissionUpdated", "Updated current session permissions")
+        put("heroSlogan", "Explore what is next")
+        put("back", "Back")
+        put("selectWorkspaceShort", "Choose workspace")
+        put("unboundWorkspace", "No workspace bound")
+        put("noWorkbenchConnected", "No workspace connected. Add a device first.")
+        put("goToDeviceList", "Go to devices")
+        put("unknownProvider", "Unknown")
+        put("untitledSession", "Untitled session")
+        put("paletteCommands", "Commands")
+        put("paletteSkills", "Skills")
+        put("paletteSubagents", "Subagents")
+        put("paletteActions", "Shortcuts")
+        put("palettePermissionReadOnly", "Set read-only permissions")
+        put("palettePermissionWorkspaceWrite", "Set workspace-write permissions")
+        put("palettePermissionFullAccess", "Set full-access permissions")
+        put("palettePlan", "Generate an execution plan")
+        put("paletteGoal", "Set a continuous execution goal")
+        put("palettePause", "Pause the current task")
+        put("paletteResume", "Resume the current task")
+        put("paletteClear", "Clear context")
+        put("paletteSkillsList", "View available skills")
+        put("paletteSubagent", "Spawn a subagent")
+        put("paletteSearchSessions", "Search sessions")
+        put("paletteNewSession", "Create a new session")
+        put("paletteOpenSettings", "Open settings")
+        put("paletteSwitchChat", "Switch to chat view")
+        put("paletteSwitchTrace", "Switch to trace view")
+        put("paletteSelectModel", "Select model")
+        put("paletteSelectPermission", "Select permissions")
+    }
 )
 
 /** Non-composable access; reading this observes LocaleManager.language. */
