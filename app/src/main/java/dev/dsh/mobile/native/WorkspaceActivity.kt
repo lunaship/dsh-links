@@ -593,7 +593,10 @@ fun WorkspaceScreen(
                     if (olderMessages.isEmpty()) {
                         nextBeforeSeq = result.nextBeforeSeq
                     }
-                    stoppedReason = result.stoppedReason
+                    // 发送中/执行中不覆盖：旧 turn 的 stoppedReason 会误显示成「已停止」
+                    if (!liveRunning && !isSending) {
+                        stoppedReason = result.stoppedReason
+                    }
                     // 登记本页最新事件 seq，作为 SSE 增量去重基线（缺 maxSeq 也必须 seed）
                     val seed = historySeedSeq(result.maxSeq, msgs.map { it.seq })
                     seedMaxSeq = maxOf(seedMaxSeq, seed)
@@ -899,6 +902,8 @@ fun WorkspaceScreen(
             }
             "turn/end" -> {
                 liveRunning = false
+                // 定稿在途消息的 running，避免历史合并后长期卡住导致复制按钮不出现
+                messages = messages.map { if (it.running == true) it.copy(running = false) else it }
                 val kind = data.optJSONObject("reason")?.optString("kind")
                 stoppedReason = if (!kind.isNullOrBlank() && kind != "completed") kind else null
                 scope.launch(Dispatchers.IO) {
@@ -1910,28 +1915,55 @@ fun WorkspaceScreen(
                     }
                 }
 
-                // Row 1.5: Harness 模式 + 子代理（对标 web 标题下 meta）
-                if (viewMode == "chat" && (harnessLabel.isNotBlank() || activeSubagentCount > 0)) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(start = 38.dp, top = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
+                // Row 2: 对话 / 轨迹 / 历史 tabs；已开聊时 Harness 模式显示在「历史」旁
+                Spacer(Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    listOf("chat" to "对话", "trace" to "轨迹", "history" to "历史").forEach { (id, label) ->
+                        val selected = viewMode == id
+                        val vInteraction = remember { MutableInteractionSource() }
+                        val vPressed by vInteraction.collectIsPressedAsState()
+                        Box(
+                            modifier = Modifier
+                                .height(26.dp)
+                                .clip(RoundedCornerShape(DshRadius.full))
+                                .background(
+                                    when {
+                                        selected -> Dsh.bgNavActive
+                                        vPressed -> Dsh.hover
+                                        else -> Color.Transparent
+                                    }
+                                )
+                                .clickable(interactionSource = vInteraction, indication = null) {
+                                    selectViewMode(id)
+                                    if (id == "history") runSearchDebounced(searchQuery)
+                                }
+                                .padding(horizontal = 12.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                label,
+                                color = if (selected) Dsh.labelPrimary else Dsh.labelSecondary,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight(500),
+                                lineHeight = 18.sp
+                            )
+                        }
+                    }
+                    // 已有会话：模式放在历史旁（只读展示，点模式不误开新会话）
+                    val showHeaderHarness = currentSessionId != null &&
+                        (harnessLabel.isNotBlank() || activeSubagentCount > 0)
+                    if (showHeaderHarness) {
+                        Spacer(Modifier.width(6.dp))
                         if (harnessLabel.isNotBlank()) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.clickable {
-                                    if (currentSessionId == null) {
-                                        showAgentPresetPicker = true
-                                    } else {
-                                        val preset = currentSession?.agentPreset?.takeIf { it.isNotBlank() }
-                                            ?: appSettings.agentPreset
-                                        startComposeSession(currentSession?.cwd)
-                                        pendingAgentPreset = preset
-                                        Toast.makeText(context, "已按「$harnessLabel」开新会话，发送即可开始", Toast.LENGTH_SHORT).show()
-                                    }
-                                },
+                                modifier = Modifier
+                                    .height(26.dp)
+                                    .padding(horizontal = 8.dp),
                             ) {
                                 Icon(
                                     AgentPresetOutline16,
@@ -1967,45 +1999,6 @@ fun WorkspaceScreen(
                                 fontWeight = FontWeight(500),
                                 lineHeight = 18.sp,
                                 modifier = Modifier.clickable { showSubagentSheet = true },
-                            )
-                        }
-                    }
-                }
-
-                // Row 2: 对话 / 轨迹 / 历史 tabs
-                Spacer(Modifier.height(6.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    listOf("chat" to "对话", "trace" to "轨迹", "history" to "历史").forEach { (id, label) ->
-                        val selected = viewMode == id
-                        val vInteraction = remember { MutableInteractionSource() }
-                        val vPressed by vInteraction.collectIsPressedAsState()
-                        Box(
-                            modifier = Modifier
-                                .height(26.dp)
-                                .clip(RoundedCornerShape(DshRadius.full))
-                                .background(
-                                    when {
-                                        selected -> Dsh.bgNavActive
-                                        vPressed -> Dsh.hover
-                                        else -> Color.Transparent
-                                    }
-                                )
-                                .clickable(interactionSource = vInteraction, indication = null) {
-                                    selectViewMode(id)
-                                    if (id == "history") runSearchDebounced(searchQuery)
-                                }
-                                .padding(horizontal = 12.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                label,
-                                color = if (selected) Dsh.labelPrimary else Dsh.labelSecondary,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight(500),
-                                lineHeight = 18.sp
                             )
                         }
                     }
@@ -2192,36 +2185,17 @@ fun WorkspaceScreen(
                         }
                     } else {
                     item {
-                        HeroShell(
-                            sessions = sessions,
-                            mode = heroMode,
-                            onModeChange = { heroMode = it },
-                            onStartSession = { cwd ->
-                                pendingSessionCwd = cwd
-                                if (cwd != null) workspacePrefs.lastSelectedWorkspace = cwd
-                            },
-                            composeHint = currentSessionId == null,
-                            harnessLabel = harnessLabel,
-                            workspaceLabel = pendingSessionCwd
-                                ?: workspacePrefs.lastSelectedWorkspace
-                                ?: "默认工作区",
-                        )
+                        HeroShell()
                     } // 闭合 item（HeroShell）
                 } // 闭合骨架 if 的 else 分支
             } else { // 闭合 if (messages.isEmpty())，打开 else 分支
-                // 加载更早（DSH chat.loadOlder：hasMore 时显示在消息流顶部，点击向前翻页）
+                    // 加载更早（DSH chat.loadOlder：hasMore 时显示在消息流顶部，点击向前翻页）
                     if (hasMoreMessages) {
                         item(key = "load-older") {
                             LoadOlderRow(
                                 loading = isLoadingOlder,
                                 onClick = { loadOlderMessages() }
                             )
-                        }
-                    }
-                    // 正在执行状态行（品牌蓝 shimmer）
-                    if (running) {
-                        item(key = "turn-status") {
-                            TurnStatusRow(elapsedSec)
                         }
                     }
                     // 正在执行的最后一条工具/思考消息带扫光（DSH command/reasoning sweep）
@@ -2312,12 +2286,6 @@ fun WorkspaceScreen(
                                             }
                                         }
                                     }} else null,
-                                    onLike = {
-                                        Toast.makeText(context, "已记录喜欢（本地）", Toast.LENGTH_SHORT).show()
-                                    },
-                                    onDislike = {
-                                        Toast.makeText(context, "已记录不喜欢（本地）", Toast.LENGTH_SHORT).show()
-                                    },
                                 )
                                 is MessageGroup.ToolGroup -> ToolGroupHeader(
                                     group = group,
@@ -2341,8 +2309,14 @@ fun WorkspaceScreen(
                             )
                         }
                     }
-                    // 已停止标记（DSH message.stopped：会话非正常结束时显示在流尾部）
-                    if (stoppedReason != null) {
+                    // 等待/执行中：流尾部显示品牌蓝 shimmer（对齐 web Deep diving…）
+                    if (running || isSending) {
+                        item(key = "turn-status") {
+                            TurnStatusRow(elapsedSec)
+                        }
+                    }
+                    // 已停止标记：仅在非执行态展示，避免等待新回复时误显示旧 turn 的停止态
+                    if (stoppedReason != null && !running && !isSending) {
                         item(key = "stopped-badge") {
                             StoppedBadge(reason = stoppedReason!!)
                         }
@@ -2411,16 +2385,21 @@ fun WorkspaceScreen(
                     .padding(bottom = 8.dp)
             ) {
                 // 工作区 + Harness 模式（对标 web，置于输入卡上方）
+                // 新会话：模式仅在此处；已开聊：模式移到顶部「历史」旁，此处只保留工作区
                 if (viewMode == "chat") {
                     ComposerTopRow(
                         sessions = sessions,
+                        deletedWorkspaces = deletedWorkspaces,
                         currentCwd = if (currentSessionId == null) {
-                            pendingSessionCwd ?: currentSession?.cwd
+                            pendingSessionCwd?.takeUnless { it in deletedWorkspaces }
+                                ?: currentSession?.cwd?.takeUnless { it in deletedWorkspaces }
                         } else {
-                            currentSession?.cwd
+                            currentSession?.cwd?.takeUnless { it in deletedWorkspaces }
                         },
-                        lastCwd = workspacePrefs.lastSelectedWorkspace,
+                        lastCwd = workspacePrefs.lastSelectedWorkspace
+                            ?.takeUnless { it in deletedWorkspaces },
                         harnessLabel = harnessLabel,
+                        showHarness = currentSessionId == null,
                         workspaceEditable = currentSessionId == null,
                         harnessEditable = currentSessionId == null,
                         onOpenHarnessPicker = if (currentSessionId == null) {
@@ -2563,6 +2542,8 @@ fun WorkspaceScreen(
                             HeroMode.CHAT -> rawText
                         }
                         isSending = true
+                        stoppedReason = null
+                        liveRunning = true
                         inputText = ""
                         pendingImages = emptyList()
                         if (textToSend.isNotBlank()) {
@@ -2622,6 +2603,8 @@ fun WorkspaceScreen(
                             } catch (e: Exception) {
                                 withContext(Dispatchers.Main) {
                                     messages = messages.filterNot { it.id == "local-pending" }
+                                    // 发送失败：若尚未真正进入 turn，收回乐观 running
+                                    if (currentSession?.running != true) liveRunning = false
                                     Toast.makeText(context, "发送失败：${e.message ?: "未知错误"}", Toast.LENGTH_SHORT).show()
                                 }
                             } finally {
@@ -2811,6 +2794,10 @@ fun WorkspaceScreen(
             onConfirm = {
                 deleteWorkspaceTarget = null
                 setDeletedWorkspace(path)
+                if (pendingSessionCwd == path) pendingSessionCwd = null
+                if (workspacePrefs.lastSelectedWorkspace == path) {
+                    workspacePrefs.lastSelectedWorkspace = null
+                }
                 val sessionsInWs = sessions.filter { it.cwd == path }
                 sessionsInWs.forEach { setDeleted(it.sessionId) }
                 refreshSessions()
@@ -3082,7 +3069,7 @@ private fun DshConfirmDialog(
     }
 }
 
-// ---------- 新会话 Hero（HeroShell：logo + 口号 + 模式/权限/工作区选择） ----------
+// ---------- 新会话 Hero（仅口号；工作区/模式在输入区顶栏） ----------
 
 private enum class HeroMode(val label: String, val placeholder: String) {
     CHAT("对话", "描述你想要构建的内容"),
@@ -3090,125 +3077,21 @@ private enum class HeroMode(val label: String, val placeholder: String) {
     GOAL("目标", "输入目标，智能体将持续执行"),
 }
 
-private val HERO_PERMISSIONS = listOf(
-    "read-only" to "只读",
-    "workspace-write" to "工作区写入",
-    "danger-full-access" to "完全访问",
-)
-
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun HeroShell(
-    sessions: List<MobileSession>,
-    mode: HeroMode,
-    onModeChange: (HeroMode) -> Unit,
-    onStartSession: (String?) -> Unit,
-    composeHint: Boolean = false,
-    harnessLabel: String = "",
-    workspaceLabel: String = "",
-) {
-    var showWorkspacePicker by remember { mutableStateOf(false) }
-
+private fun HeroShell() {
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(top = 64.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // 口号（DSH hero.headline：探索未至之境 26px/500 + 预览版 badge）
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center
-        ) {
-            Text(
-                "探索未至之境",
-                color = Dsh.labelPrimary,
-                fontSize = 26.sp,
-                fontWeight = FontWeight(500),
-                lineHeight = 32.sp,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                "预览版",
-                color = Dsh.labelPrimary.copy(alpha = 0.9f),
-                fontSize = 12.sp,
-                lineHeight = 18.sp,
-                fontWeight = FontWeight(500),
-                modifier = Modifier
-                    .clip(RoundedCornerShape(DshRadius.xl))
-                    .border(1.dp, Dsh.hover, RoundedCornerShape(DshRadius.xl))
-                    .background(Dsh.brand400.copy(alpha = 0.12f))
-                    .padding(horizontal = 7.dp, vertical = 1.dp)
-            )
-        }
-        Spacer(Modifier.height(20.dp))
-
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            HeroMode.entries.forEach { m ->
-                ModeChip(
-                    label = m.label,
-                    selected = mode == m,
-                    onClick = { onModeChange(m) },
-                )
-            }
-        }
-
-        if (composeHint) {
-            Spacer(Modifier.height(18.dp))
-            Text(
-                "直接输入即可开聊 · 可先选工作区与 Harness 模式",
-                color = Dsh.labelTertiary,
-                fontSize = 12.sp,
-                lineHeight = 18.sp,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-            )
-            Spacer(Modifier.height(8.dp))
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    if (workspaceLabel.isNotBlank()) "工作区 · $workspaceLabel" else "工作区 · 默认",
-                    color = Dsh.labelSecondary,
-                    fontSize = 11.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(DshRadius.full))
-                        .background(Dsh.bgLayer1)
-                        .clickable { showWorkspacePicker = true }
-                        .padding(horizontal = 10.dp, vertical = 5.dp),
-                )
-                if (harnessLabel.isNotBlank()) {
-                    Text(
-                        "模式 · $harnessLabel",
-                        color = Dsh.labelSecondary,
-                        fontSize = 11.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(DshRadius.full))
-                            .background(Dsh.bgLayer1)
-                            .padding(horizontal = 10.dp, vertical = 5.dp),
-                    )
-                }
-            }
-        }
-    }
-
-    // 工作区选择弹层（从输入区工作区行触发）
-    if (showWorkspacePicker) {
-        WorkspacePickerSheet(
-            sessions = sessions,
-            onDismiss = { showWorkspacePicker = false },
-            onPick = { cwd ->
-                showWorkspacePicker = false
-                onStartSession(cwd)
-            }
+        Text(
+            "探索未至之境",
+            color = Dsh.labelPrimary,
+            fontSize = 26.sp,
+            fontWeight = FontWeight(500),
+            lineHeight = 32.sp,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center
         )
     }
 }
@@ -3237,12 +3120,13 @@ private fun SheetGrabber() {
 @Composable
 private fun WorkspacePickerSheet(
     sessions: List<MobileSession>,
+    deletedWorkspaces: Set<String> = emptySet(),
     selectedPath: String? = null,
     onDismiss: () -> Unit,
     onPick: (String?) -> Unit,
 ) {
-    val workspaces = remember(sessions) {
-        sessions.mapNotNull { it.cwd }.distinct().filter { isUserWorkspace(it) }.sorted()
+    val workspaces = remember(sessions, deletedWorkspaces) {
+        visibleUserWorkspaces(sessions, deletedWorkspaces)
     }
     var query by remember { mutableStateOf("") }
     val filtered = remember(workspaces, query) {
@@ -3522,6 +3406,7 @@ private fun AddWorkspaceRow(onCreate: (String) -> Unit) {
 
 @Composable
 private fun TurnStatusRow(elapsedSec: Long) {
+    val statusLabel = "Deep diving…"
     Row(
         modifier = Modifier
             .height(26.dp)
@@ -3531,7 +3416,7 @@ private fun TurnStatusRow(elapsedSec: Long) {
         if (isReduceMotionEnabled()) {
             // reduce-motion：静态品牌蓝文本（Web prefers-reduced-motion 语义）
             Text(
-                "正在执行…",
+                statusLabel,
                 fontSize = 14.sp,
                 fontWeight = FontWeight(500),
                 color = Dsh.brand400
@@ -3551,9 +3436,9 @@ private fun TurnStatusRow(elapsedSec: Long) {
             val textMeasurer = rememberTextMeasurer()
             val brand400 = Dsh.brand400
             val brand200 = Dsh.brand200
-            val textLayout = remember {
+            val textLayout = remember(statusLabel) {
                 textMeasurer.measure(
-                    "正在执行…",
+                    statusLabel,
                     TextStyle(fontSize = 14.sp, fontWeight = FontWeight(500))
                 )
             }
@@ -3581,18 +3466,6 @@ private fun TurnStatusRow(elapsedSec: Long) {
             fontFamily = FontFamily.Monospace
         )
     }
-}
-
-// ---------- ModeChip：对话/计划/目标分段胶囊（复用 DshFilterChip，无计数） ----------
-
-@Composable
-private fun ModeChip(label: String, selected: Boolean, onClick: () -> Unit) {
-    DshFilterChip(
-        label = label,
-        selected = selected,
-        onClick = onClick,
-        contentDescription = label,
-    )
 }
 
 // ---------- 侧栏工具 ----------
@@ -3765,28 +3638,26 @@ private fun StatsLine(stats: MobileSessionStats?) {
         }
     }
     if (parts.isEmpty()) return
-    Row(
+    // 移动端两行固定展示，避免横向滑动与系统左右切应用手势冲突
+    val splitAt = (parts.size + 1) / 2
+    val rows = listOf(parts.take(splitAt), parts.drop(splitAt)).filter { it.isNotEmpty() }
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = COMPOSER_SIDE_CLEARANCE, end = COMPOSER_SIDE_CLEARANCE, top = 6.dp)
-            .horizontalScroll(rememberScrollState()),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(start = COMPOSER_SIDE_CLEARANCE, end = COMPOSER_SIDE_CLEARANCE, top = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        parts.forEachIndexed { index, part ->
-            if (index > 0) {
-                Text(
-                    "  |  ",
-                    color = Dsh.labelCaption.copy(alpha = 0.7f),
-                    fontSize = 11.sp,
-                    lineHeight = 16.sp
-                )
-            }
+        rows.forEach { rowParts ->
             Text(
-                part,
+                rowParts.joinToString("  |  "),
                 color = Dsh.labelTertiary,
-                fontSize = 11.sp,
-                lineHeight = 16.sp,
-                maxLines = 1
+                fontSize = 10.sp,
+                lineHeight = 14.sp,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth(),
             )
         }
     }
@@ -5018,6 +4889,7 @@ private fun traceRoleVisual(role: String): TraceRoleVisual = when (role) {
     else -> TraceRoleVisual("回答", Dsh.brand400, Sparkle16)
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun TrajectoryView(
     messages: List<MobileMessage>,
@@ -5053,11 +4925,11 @@ private fun TrajectoryView(
             .padding(horizontal = 20.dp, vertical = 16.dp)
     ) {
         if (messages.isNotEmpty()) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
+            // 自动换行，避免横向滑动与系统切应用手势冲突
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 filterOptions.forEach { (id, label) ->
                     val selected = roleFilter == id
@@ -5351,20 +5223,26 @@ private fun TraceExpandableText(text: String, maxLines: Int = 4, mono: Boolean =
 @Composable
 private fun ComposerTopRow(
     sessions: List<MobileSession>,
+    deletedWorkspaces: Set<String> = emptySet(),
     currentCwd: String?,
     lastCwd: String?,
     harnessLabel: String,
+    showHarness: Boolean = true,
     workspaceEditable: Boolean = true,
     harnessEditable: Boolean = true,
     onOpenHarnessPicker: (() -> Unit)? = null,
     onStartSession: (String?) -> Unit,
 ) {
-    val workspaces = remember(sessions) {
-        sessions.mapNotNull { it.cwd }.distinct().filter { isUserWorkspace(it) }.sorted()
+    val workspaces = remember(sessions, deletedWorkspaces) {
+        visibleUserWorkspaces(sessions, deletedWorkspaces)
     }
     var showPicker by remember { mutableStateOf(false) }
-    var pickedCwd by remember { mutableStateOf<String?>(null) }
-    val displayCwd = pickedCwd ?: currentCwd ?: lastCwd?.takeIf { it in workspaces }
+    var pickedCwd by remember(deletedWorkspaces) {
+        mutableStateOf<String?>(null)
+    }
+    // 已删工作区不再作为展示/候选
+    val safePicked = pickedCwd?.takeUnless { it in deletedWorkspaces }
+    val displayCwd = safePicked ?: currentCwd ?: lastCwd?.takeIf { it in workspaces }
 
     Column(
         modifier = Modifier
@@ -5381,15 +5259,10 @@ private fun ComposerTopRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            val workspaceBg = when {
-                !workspaceEditable -> Dsh.bgNavActive
-                else -> Color.Transparent
-            }
             Row(
                 modifier = Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(DshRadius.md))
-                    .background(workspaceBg)
                     .then(
                         if (workspaceEditable) {
                             Modifier.clickable { showPicker = true }
@@ -5397,7 +5270,7 @@ private fun ComposerTopRow(
                             Modifier
                         },
                     )
-                    .padding(horizontal = if (!workspaceEditable) 8.dp else 0.dp, vertical = 6.dp),
+                    .padding(vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(
@@ -5427,55 +5300,56 @@ private fun ComposerTopRow(
                 }
             }
 
-            val harnessInteraction = remember { MutableInteractionSource() }
-            val harnessPressed by harnessInteraction.collectIsPressedAsState()
-            val harnessBg = when {
-                !harnessEditable -> Dsh.bgNavActive
-                harnessPressed -> Dsh.hover
-                else -> Color.Transparent
-            }
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(DshRadius.md))
-                    .background(harnessBg)
-                    .then(
-                        if (harnessEditable && onOpenHarnessPicker != null) {
-                            Modifier.clickable(
-                                interactionSource = harnessInteraction,
-                                indication = null,
-                                onClick = onOpenHarnessPicker,
-                            )
-                        } else {
-                            Modifier
-                        },
-                    )
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(
-                    AgentPresetOutline16,
-                    contentDescription = null,
-                    tint = if (harnessEditable) Dsh.labelPrimary else Dsh.labelSecondary,
-                    modifier = Modifier.size(16.dp),
-                )
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    harnessLabel,
-                    color = if (harnessEditable) Dsh.labelPrimary else Dsh.labelSecondary,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight(500),
-                    lineHeight = 20.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                if (harnessEditable && onOpenHarnessPicker != null) {
-                    Spacer(Modifier.width(4.dp))
+            if (showHarness && harnessLabel.isNotBlank()) {
+                val harnessInteraction = remember { MutableInteractionSource() }
+                val harnessPressed by harnessInteraction.collectIsPressedAsState()
+                val harnessBg = when {
+                    harnessPressed -> Dsh.hover
+                    else -> Color.Transparent
+                }
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(DshRadius.md))
+                        .background(harnessBg)
+                        .then(
+                            if (harnessEditable && onOpenHarnessPicker != null) {
+                                Modifier.clickable(
+                                    interactionSource = harnessInteraction,
+                                    indication = null,
+                                    onClick = onOpenHarnessPicker,
+                                )
+                            } else {
+                                Modifier
+                            },
+                        )
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     Icon(
-                        ChevronDownOutline14,
+                        AgentPresetOutline16,
                         contentDescription = null,
-                        tint = Dsh.labelCaption,
-                        modifier = Modifier.size(14.dp),
+                        tint = if (harnessEditable) Dsh.labelPrimary else Dsh.labelSecondary,
+                        modifier = Modifier.size(16.dp),
                     )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        harnessLabel,
+                        color = if (harnessEditable) Dsh.labelPrimary else Dsh.labelSecondary,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight(500),
+                        lineHeight = 20.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (harnessEditable && onOpenHarnessPicker != null) {
+                        Spacer(Modifier.width(4.dp))
+                        Icon(
+                            ChevronDownOutline14,
+                            contentDescription = null,
+                            tint = Dsh.labelCaption,
+                            modifier = Modifier.size(14.dp),
+                        )
+                    }
                 }
             }
         }
@@ -5484,6 +5358,7 @@ private fun ComposerTopRow(
     if (showPicker) {
         WorkspacePickerSheet(
             sessions = sessions,
+            deletedWorkspaces = deletedWorkspaces,
             selectedPath = displayCwd,
             onDismiss = { showPicker = false },
             onPick = { cwd ->
@@ -6382,8 +6257,6 @@ fun MessageItem(
     onQuote: () -> Unit = {},
     onFork: () -> Unit = {},
     onRegenerate: (() -> Unit)? = null,
-    onLike: (() -> Unit)? = null,
-    onDislike: (() -> Unit)? = null,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     // 文本消息支持长按操作菜单（工具卡/思考行保持自身交互）
@@ -6401,7 +6274,20 @@ fun MessageItem(
     Box {
         when {
             msg.role == "context_injection" || isContextInjectionText(msg.text) -> ContextInjectionRow(msg.text)
-            msg.role == "user" -> UserBubble(msg.text, longPressModifier)
+            msg.role == "user" -> {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.End,
+                ) {
+                    UserBubble(msg.text, longPressModifier)
+                    Spacer(Modifier.height(4.dp))
+                    MessageActionRow(
+                        onCopy = onCopy,
+                        onFork = null,
+                        onRegenerate = null,
+                    )
+                }
+            }
             msg.role == "reasoning" -> ReasoningRow(msg.text, running)
             msg.role == "approval" -> ApprovalCard(
                 msg = msg,
@@ -6419,16 +6305,27 @@ fun MessageItem(
             msg.role == "compaction" -> CompactionRow(msg.text, msg.running ?: false)
             msg.role == "todo" -> TodoPanel(msg.todos)
             else -> {
-                if (isRawFallback(msg)) {
-                    // 降级中心：无文本内容的未知消息类型（多为 dsh 新增的结构化类型）
-                    // 渲染为可折叠原始 JSON，避免空白/崩溃，便于排查与按需补洞。
-                    RawMessageCard(msg)
-                } else {
-                    AssistantMarkdown(
-                        text = msg.text,
-                        longPress = longPressModifier,
-                        streaming = msg.running == true,
-                    )
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    if (isRawFallback(msg)) {
+                        // 降级中心：无文本内容的未知消息类型（多为 dsh 新增的结构化类型）
+                        // 渲染为可折叠原始 JSON，避免空白/崩溃，便于排查与按需补洞。
+                        RawMessageCard(msg)
+                    } else {
+                        AssistantMarkdown(
+                            text = msg.text,
+                            longPress = longPressModifier,
+                            streaming = msg.running == true,
+                        )
+                    }
+                    // 助手消息底部：复制 / 分叉 / 重新生成
+                    if (msg.role == "assistant") {
+                        Spacer(Modifier.height(8.dp))
+                        MessageActionRow(
+                            onCopy = onCopy,
+                            onFork = onFork,
+                            onRegenerate = onRegenerate,
+                        )
+                    }
                 }
             }
         }
@@ -6455,19 +6352,65 @@ fun MessageItem(
                         onRegenerate()
                     })
                 }
-                if (onLike != null) {
-                    add(DshMenuItem(LikeOutline16, "喜欢") {
-                        menuOpen = false
-                        onLike()
-                    })
-                }
-                if (onDislike != null) {
-                    add(DshMenuItem(DislikeOutline16, "不喜欢") {
-                        menuOpen = false
-                        onDislike()
-                    })
-                }
             }
+        )
+    }
+}
+
+/** 消息底栏：复制 / 分叉 / 重新生成（按需显示） */
+@Composable
+private fun MessageActionRow(
+    onCopy: () -> Unit,
+    onFork: (() -> Unit)? = null,
+    onRegenerate: (() -> Unit)? = null,
+) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        MessageActionIcon(
+            icon = CopyOutline16,
+            contentDescription = "复制",
+            onClick = onCopy,
+        )
+        if (onFork != null) {
+            MessageActionIcon(
+                icon = BranchOutline16,
+                contentDescription = "分叉会话",
+                onClick = onFork,
+            )
+        }
+        if (onRegenerate != null) {
+            MessageActionIcon(
+                icon = RefreshOutline16,
+                contentDescription = "重新生成",
+                onClick = onRegenerate,
+            )
+        }
+    }
+}
+
+@Composable
+private fun MessageActionIcon(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    Box(
+        modifier = Modifier
+            .size(32.dp)
+            .clip(RoundedCornerShape(DshRadius.sm))
+            .background(if (pressed) Dsh.hover else Color.Transparent)
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            icon,
+            contentDescription = contentDescription,
+            tint = Dsh.labelSecondary,
+            modifier = Modifier.size(16.dp),
         )
     }
 }
@@ -6820,15 +6763,26 @@ private fun LoadOlderRow(loading: Boolean, onClick: () -> Unit) {
     }
 }
 
-// 已停止标记（DSH message.stopped：会话非正常结束的角标；复用 DshTag 语义标签）
+// 已停止标记（按 turn/end reason 显示具体原因）
+private fun stoppedReasonLabel(reason: String): String = when (reason.lowercase()) {
+    "interrupted" -> "已中断"
+    "stopped" -> "已停止"
+    "error" -> "出错停止"
+    "maxtokens", "max_tokens" -> "达到 token 上限"
+    "aborted" -> "已取消"
+    "timeout" -> "超时停止"
+    else -> if (reason.isBlank()) "已停止" else reason
+}
+
 @Composable
 private fun StoppedBadge(reason: String) {
+    val label = stoppedReasonLabel(reason)
     Row(modifier = Modifier.fillMaxWidth()) {
         DshTag(
-            text = "已停止",
+            text = label,
             color = Dsh.hover,
             contentColor = Dsh.labelTertiary,
-            contentDescription = reason.ifBlank { "已停止" },
+            contentDescription = label,
         )
     }
 }
@@ -6932,6 +6886,16 @@ private fun isUserWorkspace(cwd: String?): Boolean {
             part == "private"
     }
 }
+
+/** 侧边栏与会话页共用的可见工作区列表（排除本地已删）。 */
+private fun visibleUserWorkspaces(
+    sessions: List<MobileSession>,
+    deletedWorkspaces: Set<String>,
+): List<String> = sessions
+    .mapNotNull { it.cwd }
+    .distinct()
+    .filter { isUserWorkspace(it) && it !in deletedWorkspaces }
+    .sorted()
 
 // 用户消息：右对齐气泡（max-width min(525px,82%), radius 22, bg #2C2C2E）
 @Composable

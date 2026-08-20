@@ -65,8 +65,7 @@ import kotlinx.coroutines.withContext
 
 /**
  * 设置页 —— 1:1 复刻 DeepSeek Harness Web UI 设置面板：
- * 通用设置（语言/主题/权限/Enter 行为）、模型（供应商折叠 + 添加模型）、
- * 插件（配置与查看）、Agent 预设（选项化）、关于。
+ * 通用设置（主题/权限/Enter 行为）、模型、插件、Agent 预设、关于。
  */
 class SettingsActivity : ComponentActivity() {
 
@@ -194,9 +193,9 @@ private fun SettingsScreen(
         }
     }
 
-    // 模型目录（llm.models）—— 模型 Tab 与通用设置默认模型共用
+    // 模型目录（llm.models）—— 模型 Tab 浏览用
     LaunchedEffect(tab, host) {
-        if ((tab == SettingsTab.MODELS || tab == SettingsTab.GENERAL) && host != null) {
+        if (tab == SettingsTab.MODELS && host != null) {
             withContext(Dispatchers.IO) {
                 try {
                     val groups = MobileApiClient(host).getLlmModels()
@@ -313,12 +312,9 @@ private fun SettingsScreen(
             when (tab) {
                 SettingsTab.GENERAL -> GeneralSettings(
                     context = context,
-                    host = host,
                     appSettings = appSettings,
-                    llmGroups = llmGroups,
                     savingNs = savingNs,
                     saveErrors = saveErrors,
-                    onOpenDevices = onOpenDevices,
                     onShowFullAccessConfirm = { showFullAccessConfirm = true },
                     onSave = { ns, patch, onSuccess -> saveNamespace(ns, patch, onSuccess) },
                 )
@@ -537,12 +533,9 @@ private fun SettingsScreen(
 @Composable
 private fun GeneralSettings(
     context: Context,
-    host: Host?,
     appSettings: AppSettings,
-    llmGroups: List<MobileModelGroup>,
     savingNs: String?,
     saveErrors: Map<String, String>,
-    onOpenDevices: () -> Unit,
     onShowFullAccessConfirm: () -> Unit,
     onSave: (ns: String, patch: org.json.JSONObject, onSuccess: () -> Unit) -> Unit,
 ) {
@@ -574,124 +567,6 @@ private fun GeneralSettings(
     )
     HorizontalDivider(color = Dsh.borderL1, modifier = Modifier.padding(vertical = 4.dp))
 
-    // --- 默认模型（agent-default-model：新会话 create 后 selectModel） ---
-    val providerOptions = remember(llmGroups) {
-        llmGroups.map { (it.displayName.ifBlank { it.provider }) to it.provider }
-    }
-    val selectedProvider = appSettings.defaultModelProvider
-    val selectedModel = appSettings.defaultModel
-    val modelOptions = remember(llmGroups, selectedProvider) {
-        llmGroups.find { it.provider == selectedProvider }?.models.orEmpty()
-            .map { (it.name?.ifBlank { it.id } ?: it.id) to it.id }
-    }
-    val defaultModelLabel = remember(appSettings, llmGroups) {
-        val provider = appSettings.defaultModelProvider
-        val modelId = appSettings.defaultModel
-        when {
-            provider.isNullOrBlank() -> "未设置"
-            modelId.isNullOrBlank() -> "未选择模型"
-            else -> llmGroups.find { it.provider == provider }?.models?.find { it.id == modelId }?.name?.ifBlank { modelId }
-                ?: modelId
-        }
-    }
-    if (providerOptions.isNotEmpty()) {
-        SettingsSelectItem(
-            title = "默认模型供应商",
-            description = "新会话创建后自动选用的模型供应商",
-            value = providerOptions.find { it.second == selectedProvider }?.first ?: "未设置",
-            options = providerOptions,
-            selectedId = selectedProvider ?: "",
-            saving = savingNs == "agent-default-model",
-            error = saveErrors["agent-default-model"],
-            onRetry = {
-                onSave(
-                    "agent-default-model",
-                    org.json.JSONObject()
-                        .put("provider", appSettings.defaultModelProvider ?: "")
-                        .put("model", appSettings.defaultModel ?: org.json.JSONObject.NULL)
-                        .put("reasoningEffort", appSettings.defaultReasoningEffort ?: org.json.JSONObject.NULL),
-                    {},
-                )
-            },
-            onSelect = { _, providerId ->
-                onSave(
-                    "agent-default-model",
-                    org.json.JSONObject()
-                        .put("provider", providerId)
-                        .put("model", org.json.JSONObject.NULL)
-                        .put("reasoningEffort", org.json.JSONObject.NULL),
-                    {},
-                )
-            },
-        )
-    } else if (host != null) {
-        Text(
-            "正在加载模型列表…",
-            color = Dsh.labelTertiary,
-            fontSize = 12.sp,
-            lineHeight = 18.sp,
-            modifier = Modifier.padding(start = 4.dp, bottom = 8.dp),
-        )
-    }
-    SettingsSelectItem(
-        title = "默认模型",
-        description = "新会话创建后自动选用的模型（可在会话内随时切换）",
-        value = defaultModelLabel,
-        options = when {
-            selectedProvider.isNullOrBlank() -> listOf("请先选择供应商" to "")
-            modelOptions.isEmpty() -> listOf("无可用模型" to "")
-            else -> modelOptions
-        },
-        selectedId = selectedModel ?: "",
-        saving = savingNs == "agent-default-model",
-        error = null,
-        onRetry = null,
-        onSelect = { _, modelId ->
-            val provider = selectedProvider
-            if (provider.isNullOrBlank() || modelId.isBlank()) return@SettingsSelectItem
-            onSave(
-                "agent-default-model",
-                org.json.JSONObject()
-                    .put("provider", provider)
-                    .put("model", modelId)
-                    .put("reasoningEffort", appSettings.defaultReasoningEffort ?: org.json.JSONObject.NULL),
-                {},
-            )
-        },
-    )
-    val effortOptions = remember(llmGroups, selectedProvider, selectedModel) {
-        llmGroups.find { it.provider == selectedProvider }
-            ?.models?.find { it.id == selectedModel }
-            ?.reasoningEfforts
-            .orEmpty()
-            .map { it to it }
-    }
-    if (effortOptions.isNotEmpty()) {
-        SettingsSelectItem(
-            title = "默认推理强度",
-            description = "部分模型支持；未设置时使用模型默认值",
-            value = appSettings.defaultReasoningEffort ?: "默认",
-            options = listOf("默认" to "") + effortOptions,
-            selectedId = appSettings.defaultReasoningEffort ?: "",
-            saving = savingNs == "agent-default-model",
-            error = null,
-            onSelect = { _, effortId ->
-                val provider = selectedProvider
-                val model = selectedModel
-                if (provider.isNullOrBlank() || model.isNullOrBlank()) return@SettingsSelectItem
-                onSave(
-                    "agent-default-model",
-                    org.json.JSONObject()
-                        .put("provider", provider)
-                        .put("model", model)
-                        .put("reasoningEffort", effortId.ifBlank { org.json.JSONObject.NULL }),
-                    {},
-                )
-            },
-        )
-    }
-    HorizontalDivider(color = Dsh.borderL1, modifier = Modifier.padding(vertical = 4.dp))
-
     // --- 权限（permission.defaultPreset：DSH 服务端在新会话创建时应用） ---
     SettingsSelectItem(
         title = "权限",
@@ -716,22 +591,6 @@ private fun GeneralSettings(
             } else {
                 onSave("permission", org.json.JSONObject().put("defaultPreset", id), {})
             }
-        }
-    )
-    HorizontalDivider(color = Dsh.borderL1, modifier = Modifier.padding(vertical = 4.dp))
-
-    // --- 语言（locale.preference） ---
-    SettingsSelectItem(
-        title = "语言",
-        description = "作用于 Harness 界面语言",
-        value = if (appSettings.language == "zh") "中文" else "English",
-        options = listOf("中文" to "zh", "English" to "en"),
-        selectedId = appSettings.language,
-        saving = savingNs == "locale",
-        error = saveErrors["locale"],
-        onRetry = { onSave("locale", org.json.JSONObject().put("preference", appSettings.language), {}) },
-        onSelect = { _, id ->
-            onSave("locale", org.json.JSONObject().put("preference", id), {})
         }
     )
     HorizontalDivider(color = Dsh.borderL1, modifier = Modifier.padding(vertical = 4.dp))
