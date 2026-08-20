@@ -259,6 +259,43 @@ test("带 token 的 GET/POST revoke、devices → 404", async () => {
   }
 })
 
+test("mobile GET /devices 列出已配对设备", async () => {
+  const token = globalThis.__testDevice.token
+  const r = await proxyFetch(`/dsh-link/mobile/devices`, {
+    headers: tokenHeaders(token),
+  })
+  assert.equal(r.status, 200)
+  const body = await r.json()
+  assert.ok(Array.isArray(body.devices))
+  assert.ok(body.devices.some((d) => d.deviceId === globalThis.__testDevice.deviceId))
+})
+
+test("mobile POST /revoke 可吊销其他设备", async () => {
+  const info = await callRoute(pairInfoRoute())
+  const code = info.body.pairingCode
+  const pair = await proxyFetch(`/dsh-link/pair`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code, deviceName: "测试机-吊销" }),
+  })
+  assert.equal(pair.status, 200)
+  const extra = await pair.json()
+
+  const revoke = await proxyFetch(`/dsh-link/mobile/revoke`, {
+    method: "POST",
+    headers: tokenHeaders(globalThis.__testDevice.token),
+    body: JSON.stringify({ deviceId: extra.deviceId }),
+  })
+  assert.equal(revoke.status, 200)
+
+  const list = await proxyFetch(`/dsh-link/mobile/devices`, {
+    headers: tokenHeaders(globalThis.__testDevice.token),
+  })
+  const body = await list.json()
+  assert.ok(!body.devices.some((d) => d.deviceId === extra.deviceId))
+  assert.ok(body.devices.some((d) => d.deviceId === globalThis.__testDevice.deviceId))
+})
+
 test("带 token 的未知路径 → 404（catch-all 已删）", async () => {
   const r = await proxyFetch(`/api/session.prompt`, {
     method: "POST",

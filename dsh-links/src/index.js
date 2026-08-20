@@ -776,6 +776,13 @@ function mobileSessionSummary(item) {
   const title = typeof projections.title === "string" && projections.title.trim()
     ? projections.title.trim()
     : "未命名会话"
+  const parentSessionId = item.parentSessionId
+    ?? item.parentSession?.sessionId
+    ?? item.parentSession?.id
+    ?? item.spawn?.parentSessionId
+    ?? null
+  const subagentCountRaw = item.subagentCount ?? item.activeSubagentCount
+    ?? (Array.isArray(item.subagents) ? item.subagents.length : null)
   return {
     sessionId: item.sessionId,
     title,
@@ -785,10 +792,25 @@ function mobileSessionSummary(item) {
     cwd: item.cwd ?? null,
     agentPreset: item.agentPreset ?? null,
     origin: item.origin ?? null,
+    parentSessionId: parentSessionId ?? null,
+    subagentCount: Number.isFinite(subagentCountRaw) ? subagentCountRaw : null,
   }
 }
 
-async function handleMobileApi(req, res, targetPort, state, device, pathname, rt) {
+function revokeDeviceEntry(state, stateFile, rt, { name, deviceId }) {
+  const targetName = String(name ?? "").trim()
+  const targetId = String(deviceId ?? "").trim()
+  if (!targetName && !targetId) return { status: 400, body: { error: "缺少设备名或 deviceId" } }
+  const target = (state.devices ?? []).find((d) => d.name === targetName || d.deviceId === targetId)
+  if (!target) return { status: 404, body: { error: "设备不存在" } }
+  state.devices = (state.devices ?? []).filter((d) => d.deviceId !== target.deviceId)
+  revokeDevice(null, target.deviceId)
+  closeSseForDevice(rt, target.deviceId)
+  saveState(stateFile, state)
+  return { status: 200, body: { ok: true, removed: 1, deviceId: target.deviceId } }
+}
+
+async function handleMobileApi(req, res, targetPort, state, stateFile, device, pathname, rt) {
   try {
     if (req.method !== "GET" && req.method !== "HEAD") {
       if (!requireJsonWrite(req, res)) return
@@ -969,6 +991,31 @@ async function handleMobileApi(req, res, targetPort, state, device, pathname, rt
           isDefault: Boolean(p.isDefault),
         })),
       })
+    }
+
+    if (req.method === "GET" && pathname === "/dsh-link/mobile/devices") {
+      const devices = [...(state.devices ?? [])]
+        .sort((a, b) => (b.lastSeenAt ?? 0) - (a.lastSeenAt ?? 0))
+        .map(({ deviceId, name, createdAt, lastSeenAt }) => ({
+          deviceId,
+          name,
+          createdAt,
+          lastSeenAt,
+        }))
+      return json(res, 200, {
+        version: 1,
+        devices,
+      })
+    }
+
+    if (req.method === "POST" && pathname === "/dsh-link/mobile/revoke") {
+      const body = await readJson(req, res)
+      if (!body) return
+      const result = revokeDeviceEntry(state, stateFile, rt, {
+        name: body.name,
+        deviceId: body.deviceId,
+      })
+      return json(res, result.status, result.body)
     }
 
     const renameMatch = pathname.match(/^\/dsh-link\/mobile\/sessions\/([^/]+)\/rename$/)
@@ -1179,13 +1226,8 @@ export function apply(ctx, config) {
         const targetName = String(body.name ?? "").trim()
         const targetId = String(body.deviceId ?? "").trim()
         if (!targetName && !targetId) return json(res, 400, { error: "缺少设备名或 deviceId" })
-        const target = (state.devices ?? []).find((d) => d.name === targetName || d.deviceId === targetId)
-        if (!target) return json(res, 404, { error: "设备不存在" })
-        state.devices = (state.devices ?? []).filter((d) => d.deviceId !== target.deviceId)
-        revokeDevice(null, target.deviceId)
-        closeSseForDevice(rt, target.deviceId)
-        saveState(stateFile, state)
-        json(res, 200, { ok: true, removed: 1, deviceId: target.deviceId })
+        const result = revokeDeviceEntry(state, stateFile, rt, { name: targetName, deviceId: targetId })
+        json(res, result.status, result.body)
       },
     }),
     web.register({
@@ -1281,7 +1323,7 @@ export function apply(ctx, config) {
         if (req.method === "GET" && streamMatch) {
           return handleStreamRoute(decodeURIComponent(streamMatch[1]), res, targetPort, config, req, rt, device)
         }
-        return handleMobileApi(req, res, targetPort, state, device, pathname, rt)
+        return handleMobileApi(req, res, targetPort, state, stateFile, device, pathname, rt)
       }
       return json(res, 404, { error: "not found" })
     } catch (err) {

@@ -1127,6 +1127,11 @@ fun WorkspaceScreen(
         pendingModel?.second ?: modelChipLabel(modelCatalog)
     }
     val inputModelLabel = if (currentSessionId == null) composeModelLabel else modelChipLabel(modelCatalog)
+    val activeSubagentCount = remember(sessions, currentSessionId, currentSession) {
+        val sid = currentSessionId ?: return@remember 0
+        currentSession?.subagentCount?.takeIf { it > 0 }
+            ?: sessions.count { it.origin == "subagent" && it.parentSessionId == sid }
+    }
 
     // 会话结束通知（仅后台；正常完成 → 任务完成，非正常 → 已停止）
     var wasRunning by remember { mutableStateOf(false) }
@@ -1835,30 +1840,49 @@ fun WorkspaceScreen(
                     }
                 }
 
-                // Row 1.5: Harness 模式（对标 web 标题下 meta）
-                if (viewMode == "chat" && harnessLabel.isNotBlank()) {
+                // Row 1.5: Harness 模式 + 子代理（对标 web 标题下 meta）
+                if (viewMode == "chat" && (harnessLabel.isNotBlank() || activeSubagentCount > 0)) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(start = 38.dp, top = 2.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Icon(
-                            AgentPresetOutline16,
-                            contentDescription = null,
-                            tint = Dsh.labelTertiary,
-                            modifier = Modifier.size(12.dp),
-                        )
-                        Spacer(Modifier.width(4.dp))
-                        Text(
-                            harnessLabel,
-                            color = Dsh.labelSecondary,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight(500),
-                            lineHeight = 18.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                        if (harnessLabel.isNotBlank()) {
+                            Icon(
+                                AgentPresetOutline16,
+                                contentDescription = null,
+                                tint = Dsh.labelTertiary,
+                                modifier = Modifier.size(12.dp),
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                harnessLabel,
+                                color = Dsh.labelSecondary,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight(500),
+                                lineHeight = 18.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        if (harnessLabel.isNotBlank() && activeSubagentCount > 0) {
+                            Text(
+                                " · ",
+                                color = Dsh.labelCaption,
+                                fontSize = 12.sp,
+                                lineHeight = 18.sp,
+                            )
+                        }
+                        if (activeSubagentCount > 0) {
+                            Text(
+                                "$activeSubagentCount 个子代理",
+                                color = Dsh.labelSecondary,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight(500),
+                                lineHeight = 18.sp,
+                            )
+                        }
                     }
                 }
 
@@ -2205,7 +2229,11 @@ fun WorkspaceScreen(
                                 val sid = currentSessionId ?: return@CommandSuggestions
                                 scope.launch(Dispatchers.IO) {
                                     try {
-                                        client.sendPrompt(sid, picked.trigger)
+                                        client.sendPrompt(
+                                            sid,
+                                            picked.trigger,
+                                            mode = resolvePromptMode(running, appSettings.busyEnter),
+                                        )
                                         withContext(Dispatchers.Main) {
                                             refreshSessions()
                                             if (streamClient?.isConnected != true) {
@@ -2393,6 +2421,7 @@ fun WorkspaceScreen(
                         scope.launch(Dispatchers.IO) {
                             try {
                                 var sid = currentSessionId
+                                val createdNow = sid == null
                                 if (sid == null) {
                                     sid = client.createSession(
                                         agentPreset = pendingAgentPreset,
@@ -2400,15 +2429,23 @@ fun WorkspaceScreen(
                                     )
                                     pendingModel?.let { (provider, model, effort) ->
                                         client.selectModel(sid, provider, model, effort)
+                                    } ?: run {
+                                        val provider = appSettings.defaultModelProvider
+                                        val model = appSettings.defaultModel
+                                        if (!provider.isNullOrBlank() && !model.isNullOrBlank()) {
+                                            client.selectModel(sid, provider, model, appSettings.defaultReasoningEffort)
+                                        }
                                     }
                                     withContext(Dispatchers.Main) {
                                         composeNewSession = false
                                         preserveMessagesSessionId = sid
                                         currentSessionId = sid
                                         refreshSessions()
+                                        refreshModels()
                                     }
                                 }
-                                client.sendPrompt(sid!!, textToSend, images = images)
+                                val promptMode = resolvePromptMode(!createdNow && running, appSettings.busyEnter)
+                                client.sendPrompt(sid!!, textToSend, mode = promptMode, images = images)
                                 withContext(Dispatchers.Main) {
                                     refreshSessions()
                                     refreshMessages(autoScroll = true)

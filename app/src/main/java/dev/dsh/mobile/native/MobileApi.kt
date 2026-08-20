@@ -47,6 +47,15 @@ data class MobileSession(
     val cwd: String?,
     val agentPreset: String?,
     val origin: String? = null, // "subagent" = 子智能体会话（侧边栏隐藏，对齐 Web UI rowVisible）
+    val parentSessionId: String? = null,
+    val subagentCount: Int? = null,
+)
+
+data class MobilePairedDevice(
+    val deviceId: String,
+    val name: String,
+    val createdAt: Long = 0L,
+    val lastSeenAt: Long = 0L,
 )
 
 data class MobileSearchResult(val sessionId: String, val snippet: String)
@@ -183,6 +192,29 @@ fun parseMobileSessionStats(stats: org.json.JSONObject?): MobileSessionStats {
         toolsTokens = breakdown?.optLong("toolsTokens", 0L) ?: 0L,
         messageTokens = breakdown?.optLong("messageTokens", 0L) ?: 0L,
     )
+}
+
+/** 智能体运行中时，按 ui-conversation.busyEnter 决定 prompt mode（对标 web）。 */
+fun resolvePromptMode(running: Boolean, busyEnter: String): String {
+    if (!running) return "queue"
+    return when (busyEnter) {
+        "send", "steer" -> busyEnter
+        "queue", "newline" -> "queue"
+        else -> "queue"
+    }
+}
+
+/** 将服务端 busyEnter 规范化为设置 UI 可选 id（兼容历史 newline 与 web steer）。 */
+fun canonicalBusyEnter(value: String?): String = when (value) {
+    "send", "steer", "queue" -> value!!
+    "newline" -> "queue"
+    else -> "queue"
+}
+
+fun busyEnterLabel(value: String?): String = when (canonicalBusyEnter(value)) {
+    "send" -> "插话发送"
+    "steer" -> "引导发送"
+    else -> "排队发送"
 }
 
 class MobileApiClient(private val host: Host) {
@@ -467,6 +499,29 @@ class MobileApiClient(private val host: Host) {
         )
     }
 
+    /** 已配对到此电脑端的设备列表（对标 web /dsh-link/devices）。 */
+    fun getPairedDevices(): List<MobilePairedDevice> {
+        val root = request("GET", "/dsh-link/mobile/devices")
+        val arr = root.optJSONArray("devices") ?: org.json.JSONArray()
+        return (0 until arr.length()).map { i ->
+            val d = arr.getJSONObject(i)
+            MobilePairedDevice(
+                deviceId = d.optString("deviceId", ""),
+                name = d.optString("name", ""),
+                createdAt = d.optLong("createdAt", 0L),
+                lastSeenAt = d.optLong("lastSeenAt", 0L),
+            )
+        }.filter { it.deviceId.isNotBlank() }
+    }
+
+    /** 吊销电脑端已配对设备（对标 web POST /dsh-link/revoke）。 */
+    fun revokePairedDevice(deviceId: String? = null, name: String? = null) {
+        val body = JSONObject()
+        if (!deviceId.isNullOrBlank()) body.put("deviceId", deviceId)
+        if (!name.isNullOrBlank()) body.put("name", name)
+        request("POST", "/dsh-link/mobile/revoke", body)
+    }
+
     private fun parseSession(json: JSONObject): MobileSession = MobileSession(
         sessionId = json.getString("sessionId"),
         title = json.optString("title").ifBlank { "未命名会话" },
@@ -476,6 +531,8 @@ class MobileApiClient(private val host: Host) {
         cwd = json.optString("cwd").takeIf { it.isNotBlank() },
         agentPreset = json.optString("agentPreset").takeIf { it.isNotBlank() },
         origin = json.optString("origin").takeIf { it.isNotBlank() },
+        parentSessionId = json.optString("parentSessionId").takeIf { it.isNotBlank() },
+        subagentCount = json.optInt("subagentCount", -1).takeIf { it >= 0 },
     )
 
     private fun request(method: String, path: String, body: JSONObject? = null): JSONObject {

@@ -191,9 +191,9 @@ private fun SettingsScreen(
         }
     }
 
-    // 模型目录（llm.models）
+    // 模型目录（llm.models）—— 模型 Tab 与通用设置默认模型共用
     LaunchedEffect(tab, host) {
-        if (tab == SettingsTab.MODELS && host != null) {
+        if ((tab == SettingsTab.MODELS || tab == SettingsTab.GENERAL) && host != null) {
             withContext(Dispatchers.IO) {
                 try {
                     val groups = MobileApiClient(host).getLlmModels()
@@ -312,6 +312,7 @@ private fun SettingsScreen(
                     context = context,
                     host = host,
                     appSettings = appSettings,
+                    llmGroups = llmGroups,
                     savingNs = savingNs,
                     saveErrors = saveErrors,
                     onOpenDevices = onOpenDevices,
@@ -535,6 +536,7 @@ private fun GeneralSettings(
     context: Context,
     host: Host?,
     appSettings: AppSettings,
+    llmGroups: List<MobileModelGroup>,
     savingNs: String?,
     saveErrors: Map<String, String>,
     onOpenDevices: () -> Unit,
@@ -566,6 +568,92 @@ private fun GeneralSettings(
         onSelect = { _, id ->
             onSave("agent-presets", org.json.JSONObject().put("default", id), {})
         }
+    )
+    HorizontalDivider(color = Dsh.borderL1, modifier = Modifier.padding(vertical = 4.dp))
+
+    // --- 默认模型（agent-default-model：新会话 create 后 selectModel） ---
+    val providerOptions = remember(llmGroups) {
+        llmGroups.map { (it.displayName.ifBlank { it.provider }) to it.provider }
+    }
+    val selectedProvider = appSettings.defaultModelProvider
+    val selectedModel = appSettings.defaultModel
+    val modelOptions = remember(llmGroups, selectedProvider) {
+        llmGroups.find { it.provider == selectedProvider }?.models.orEmpty()
+            .map { (it.name?.ifBlank { it.id } ?: it.id) to it.id }
+    }
+    val defaultModelLabel = remember(appSettings, llmGroups) {
+        val provider = appSettings.defaultModelProvider
+        val modelId = appSettings.defaultModel
+        when {
+            provider.isNullOrBlank() -> "未设置"
+            modelId.isNullOrBlank() -> "未选择模型"
+            else -> llmGroups.find { it.provider == provider }?.models?.find { it.id == modelId }?.name?.ifBlank { modelId }
+                ?: modelId
+        }
+    }
+    if (providerOptions.isNotEmpty()) {
+        SettingsSelectItem(
+            title = "默认模型供应商",
+            description = "新会话创建后自动选用的模型供应商",
+            value = providerOptions.find { it.second == selectedProvider }?.first ?: "未设置",
+            options = providerOptions,
+            selectedId = selectedProvider ?: "",
+            saving = savingNs == "agent-default-model",
+            error = saveErrors["agent-default-model"],
+            onRetry = {
+                onSave(
+                    "agent-default-model",
+                    org.json.JSONObject()
+                        .put("provider", appSettings.defaultModelProvider ?: "")
+                        .put("model", appSettings.defaultModel ?: org.json.JSONObject.NULL)
+                        .put("reasoningEffort", appSettings.defaultReasoningEffort ?: org.json.JSONObject.NULL),
+                    {},
+                )
+            },
+            onSelect = { _, providerId ->
+                onSave(
+                    "agent-default-model",
+                    org.json.JSONObject()
+                        .put("provider", providerId)
+                        .put("model", org.json.JSONObject.NULL)
+                        .put("reasoningEffort", org.json.JSONObject.NULL),
+                    {},
+                )
+            },
+        )
+    } else if (host != null) {
+        Text(
+            "正在加载模型列表…",
+            color = Dsh.labelTertiary,
+            fontSize = 12.sp,
+            lineHeight = 18.sp,
+            modifier = Modifier.padding(start = 4.dp, bottom = 8.dp),
+        )
+    }
+    SettingsSelectItem(
+        title = "默认模型",
+        description = "新会话创建后自动选用的模型（可在会话内随时切换）",
+        value = defaultModelLabel,
+        options = when {
+            selectedProvider.isNullOrBlank() -> listOf("请先选择供应商" to "")
+            modelOptions.isEmpty() -> listOf("无可用模型" to "")
+            else -> modelOptions
+        },
+        selectedId = selectedModel ?: "",
+        saving = savingNs == "agent-default-model",
+        error = null,
+        onRetry = null,
+        onSelect = { _, modelId ->
+            val provider = selectedProvider
+            if (provider.isNullOrBlank() || modelId.isBlank()) return@SettingsSelectItem
+            onSave(
+                "agent-default-model",
+                org.json.JSONObject()
+                    .put("provider", provider)
+                    .put("model", modelId),
+                {},
+            )
+        },
     )
     HorizontalDivider(color = Dsh.borderL1, modifier = Modifier.padding(vertical = 4.dp))
 
@@ -614,16 +702,21 @@ private fun GeneralSettings(
     HorizontalDivider(color = Dsh.borderL1, modifier = Modifier.padding(vertical = 4.dp))
 
 
-    // --- 繁忙时 Enter 键行为（ui-conversation.busyEnter） ---
+    // --- 繁忙时发送行为（ui-conversation.busyEnter） ---
+    val busyEnterId = canonicalBusyEnter(appSettings.busyEnter)
     SettingsSelectItem(
-        title = "繁忙时 Enter 键行为",
-        description = "仅在智能体运行时生效；Cmd/Ctrl+Enter 使用另一行为",
-        value = if (appSettings.busyEnter == "send") "插话发送" else "换行",
-        options = listOf("插话发送" to "send", "换行" to "newline"),
-        selectedId = appSettings.busyEnter,
+        title = "繁忙时发送行为",
+        description = "智能体仍在执行时，点发送按钮的行为",
+        value = busyEnterLabel(appSettings.busyEnter),
+        options = listOf(
+            "插话发送" to "send",
+            "引导发送" to "steer",
+            "排队发送" to "queue",
+        ),
+        selectedId = busyEnterId,
         saving = savingNs == "ui-conversation",
         error = saveErrors["ui-conversation"],
-        onRetry = { onSave("ui-conversation", org.json.JSONObject().put("busyEnter", appSettings.busyEnter), {}) },
+        onRetry = { onSave("ui-conversation", org.json.JSONObject().put("busyEnter", busyEnterId), {}) },
         onSelect = { _, id ->
             onSave("ui-conversation", org.json.JSONObject().put("busyEnter", id), {})
         }

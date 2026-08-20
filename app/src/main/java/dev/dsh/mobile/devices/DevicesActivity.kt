@@ -11,6 +11,8 @@ import dev.dsh.mobile.core.HostLoadResult
 import dev.dsh.mobile.core.HostStore
 import dev.dsh.mobile.core.PairClient
 import dev.dsh.mobile.core.PinnedSsl
+import dev.dsh.mobile.native.MobileApiClient
+import dev.dsh.mobile.native.MobilePairedDevice
 
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
@@ -247,6 +249,11 @@ fun DevicesScreen(
     var showPairingPanel by remember { mutableStateOf(false) }
     var renameTarget by remember { mutableStateOf<Host?>(null) }
     var deleteTarget by remember { mutableStateOf<Host?>(null) }
+    var pairedDevicesHost by remember { mutableStateOf<Host?>(null) }
+    var pairedDevices by remember { mutableStateOf<List<MobilePairedDevice>>(emptyList()) }
+    var pairedDevicesLoading by remember { mutableStateOf(false) }
+    var pairedDevicesError by remember { mutableStateOf<String?>(null) }
+    var revokeTarget by remember { mutableStateOf<MobilePairedDevice?>(null) }
     var allOfflineError by remember { mutableStateOf<String?>(null) }
 
     val scope = rememberCoroutineScope()
@@ -304,6 +311,27 @@ fun DevicesScreen(
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    LaunchedEffect(pairedDevicesHost) {
+        val host = pairedDevicesHost ?: return@LaunchedEffect
+        pairedDevicesLoading = true
+        pairedDevicesError = null
+        pairedDevices = withContext(Dispatchers.IO) {
+            try {
+                MobileApiClient(host).getPairedDevices()
+                    .sortedWith(
+                        compareByDescending<MobilePairedDevice> { it.deviceId == host.deviceId }
+                            .thenByDescending { it.lastSeenAt },
+                    )
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    pairedDevicesError = e.message ?: "加载失败"
+                }
+                emptyList()
+            }
+        }
+        pairedDevicesLoading = false
     }
 
     LaunchedEffect(Unit) { reload() }
@@ -408,6 +436,13 @@ fun DevicesScreen(
                             },
                             onRename = { renameTarget = device.host },
                             onDelete = { deleteTarget = device.host },
+                            onManagePairing = {
+                                if (device.state != DeviceState.ONLINE) {
+                                    Toast.makeText(context, "设备离线，无法管理配对", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    pairedDevicesHost = device.host
+                                }
+                            },
                         )
                     }
                     item(key = "add-device") {
@@ -460,15 +495,75 @@ fun DevicesScreen(
     deleteTarget?.let { target ->
         HStudioConfirmDialog(
             title = "删除设备",
-            content = "删除设备“${target.name}”？此操作仅移除本机记录，不影响电脑端。",
+            content = "删除设备“${target.name}”？将同时从电脑端吊销本机配对并移除本机记录。",
             confirmText = "删除",
             danger = true,
             onConfirm = {
-                HostStore.remove(context, target.name)
-                deleteTarget = null
-                reload()
+                scope.launch(Dispatchers.IO) {
+                    if (target.deviceId.isNotBlank()) {
+                        try {
+                            MobileApiClient(target).revokePairedDevice(deviceId = target.deviceId)
+                        } catch (_: Exception) {}
+                    }
+                    withContext(Dispatchers.Main) {
+                        HostStore.remove(context, target.name)
+                        deleteTarget = null
+                        reload()
+                    }
+                }
             },
             onDismiss = { deleteTarget = null }
+        )
+    }
+
+    pairedDevicesHost?.let { host ->
+        PairedDevicesSheet(
+            hostName = host.name,
+            loading = pairedDevicesLoading,
+            error = pairedDevicesError,
+            devices = pairedDevices,
+            selfDeviceId = host.deviceId,
+            onDismiss = {
+                pairedDevicesHost = null
+                pairedDevices = emptyList()
+                pairedDevicesError = null
+            },
+            onRevoke = { device -> revokeTarget = device },
+        )
+    }
+
+    revokeTarget?.let { target ->
+        HStudioConfirmDialog(
+            title = "吊销配对",
+            content = "吊销设备“${target.name}”？该设备将无法再连接此电脑。",
+            confirmText = "吊销",
+            danger = true,
+            onConfirm = {
+                val host = pairedDevicesHost
+                if (host != null) {
+                    scope.launch(Dispatchers.IO) {
+                        try {
+                            MobileApiClient(host).revokePairedDevice(deviceId = target.deviceId, name = target.name)
+                            pairedDevices = MobileApiClient(host).getPairedDevices()
+                                .sortedWith(
+                                    compareByDescending<MobilePairedDevice> { it.deviceId == host.deviceId }
+                                        .thenByDescending { it.lastSeenAt },
+                                )
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(context, "已吊销「${target.name}」", Toast.LENGTH_SHORT).show()
+                            }
+                        } catch (e: Exception) {
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(context, "吊销失败：${e.message ?: "未知错误"}", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                        withContext(Dispatchers.Main) { revokeTarget = null }
+                    }
+                } else {
+                    revokeTarget = null
+                }
+            },
+            onDismiss = { revokeTarget = null },
         )
     }
 
@@ -503,6 +598,7 @@ private fun DeviceCard(
     onOpen: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
+    onManagePairing: () -> Unit,
 ) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
@@ -616,6 +712,8 @@ private fun DeviceCard(
             Spacer(Modifier.width(7.dp))
             CardAction("删除", true, modifier = Modifier.weight(1f), onClick = onDelete)
         }
+        Spacer(Modifier.height(7.dp))
+        CardAction("配对管理", false, modifier = Modifier.fillMaxWidth(), onClick = onManagePairing)
     }
 }
 
@@ -1303,6 +1401,134 @@ private fun HStudioRenameDialog(
             }
         }
     }
+}
+
+// ---------- 配对管理（底部滑出） ----------
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PairedDevicesSheet(
+    hostName: String,
+    loading: Boolean,
+    error: String?,
+    devices: List<MobilePairedDevice>,
+    selfDeviceId: String,
+    onDismiss: () -> Unit,
+    onRevoke: (MobilePairedDevice) -> Unit,
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = HStudio.bgCard,
+        contentColor = HStudio.textPrimary,
+        shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
+        scrimColor = HStudio.overlay,
+        dragHandle = null,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 28.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("配对管理", fontSize = 16.sp, fontWeight = FontWeight(650), color = HStudio.textPrimary)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        if (devices.isNotEmpty()) "共 ${devices.size} 台设备 · $hostName" else hostName,
+                        fontSize = 11.sp,
+                        color = HStudio.textMuted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Default.Close, contentDescription = "关闭", tint = HStudio.textMuted)
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+            when {
+                loading -> {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(120.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        CircularProgressIndicator(color = HStudio.textMuted, strokeWidth = 2.dp, modifier = Modifier.size(22.dp))
+                    }
+                }
+                error != null -> {
+                    Text("加载失败：$error", color = HStudio.error, fontSize = 12.sp, lineHeight = 18.sp)
+                }
+                devices.isEmpty() -> {
+                    Text("暂无已配对设备", color = HStudio.textMuted, fontSize = 12.sp)
+                }
+                else -> {
+                    devices.forEach { device ->
+                        val isSelf = selfDeviceId.isNotBlank() && device.deviceId == selfDeviceId
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(HStudio.bgSecondary)
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        device.name.ifBlank { "未命名设备" },
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight(600),
+                                        color = HStudio.textPrimary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    if (isSelf) {
+                                        Spacer(Modifier.width(6.dp))
+                                        HTag("本机", HStudio.blue, HStudio.blueBg, monospace = false)
+                                    }
+                                }
+                                if (device.lastSeenAt > 0L) {
+                                    Spacer(Modifier.height(3.dp))
+                                    Text(
+                                        "最近活跃 ${formatPairedDeviceTime(device.lastSeenAt)}",
+                                        fontSize = 10.sp,
+                                        color = HStudio.textMuted,
+                                    )
+                                }
+                            }
+                            if (!isSelf) {
+                                Spacer(Modifier.width(10.dp))
+                                Text(
+                                    "吊销",
+                                    color = HStudio.error,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight(550),
+                                    modifier = Modifier.clickable { onRevoke(device) },
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun formatPairedDeviceTime(epochMs: Long): String {
+    val diff = System.currentTimeMillis() - epochMs
+    if (diff < 60_000) return "刚刚"
+    if (diff < 3_600_000) return "${diff / 60_000} 分钟前"
+    if (diff < 86_400_000) return "${diff / 3_600_000} 小时前"
+    return "${diff / 86_400_000} 天前"
 }
 
 /** baseUrl → 展示名：去协议、去末尾斜杠。 */

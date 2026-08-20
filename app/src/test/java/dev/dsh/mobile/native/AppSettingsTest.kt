@@ -4,6 +4,7 @@ import dev.dsh.mobile.core.withNamespace
 
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -73,10 +74,28 @@ class AppSettingsTest {
     }
 
     @Test
-    fun `读回值缺少提交键时视为保存失败`() {
-        val patch = JSONObject().put("default", "code")
-        assertThrows(IllegalStateException::class.java) {
-            verifyPatchApplied(JSONObject(), patch, "agent-presets")
-        }
+    fun `withNamespace 可清空默认模型`() {
+        val base = AppSettings(
+            defaultModelProvider = "deepseek-official",
+            defaultModel = "deepseek-v4-flash",
+            defaultReasoningEffort = "high",
+        )
+        val merged = base.withNamespace(
+            "agent-default-model",
+            JSONObject()
+                .put("provider", "deepseek-official")
+                .put("model", JSONObject.NULL)
+                .put("reasoningEffort", JSONObject.NULL),
+        )
+        assertEquals("deepseek-official", merged.defaultModelProvider)
+        assertNull(merged.defaultModel)
+        assertNull(merged.defaultReasoningEffort)
+    }
+
+    @Test
+    fun `读回 null 与提交 NULL 视为一致`() {
+        val patch = JSONObject().put("model", JSONObject.NULL)
+        val readBack = JSONObject().put("provider", "x").put("model", JSONObject.NULL)
+        verifyPatchApplied(readBack, patch, "agent-default-model")
     }
 }

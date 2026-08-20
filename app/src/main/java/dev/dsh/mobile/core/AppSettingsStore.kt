@@ -57,14 +57,24 @@ object AppSettingsStore {
 /** 读回值必须包含提交的每个键且值一致，否则视为未生效（保存失败）。 */
 fun verifyPatchApplied(readBack: JSONObject, patch: JSONObject, ns: String) {
     val mismatch = patch.keys().asSequence().any { key ->
-        val expected = patch.opt(key)
-        val actual = readBack.opt(key)
-        if (expected == null) actual != null
-        else expected != actual
+        !jsonSettingValuesEqual(patch.opt(key), readBack.opt(key))
     }
     if (mismatch) {
         throw IllegalStateException("保存校验失败：服务端未采用提交值（$ns），请重试")
     }
+}
+
+private fun jsonSettingValuesEqual(expected: Any?, actual: Any?): Boolean {
+    if (expected == null || expected == JSONObject.NULL) {
+        return actual == null || actual == JSONObject.NULL
+    }
+    return expected == actual
+}
+
+private fun JSONObject.readSettingString(key: String, fallback: String?): String? {
+    if (!has(key)) return fallback
+    if (isNull(key)) return null
+    return optString(key).takeIf { it.isNotBlank() }
 }
 
 /** 本地缓存：保存成功后写入，启动/离线时回退。 */
@@ -100,9 +110,9 @@ fun AppSettings.withNamespace(ns: String, value: JSONObject): AppSettings = when
     "ui-theme" -> copy(theme = value.optString("preference").ifBlank { theme })
     "ui-conversation" -> copy(busyEnter = value.optString("busyEnter").ifBlank { busyEnter })
     "agent-default-model" -> copy(
-        defaultModelProvider = value.optString("provider").ifBlank { defaultModelProvider },
-        defaultModel = value.optString("model").ifBlank { defaultModel },
-        defaultReasoningEffort = value.optString("reasoningEffort").ifBlank { defaultReasoningEffort },
+        defaultModelProvider = value.readSettingString("provider", defaultModelProvider),
+        defaultModel = value.readSettingString("model", defaultModel),
+        defaultReasoningEffort = value.readSettingString("reasoningEffort", defaultReasoningEffort),
     )
     else -> this
 }

@@ -70,7 +70,8 @@ dsh plugin --profile web add /path/to/dsh-links
 - `POST /dsh-link/mobile/sessions/:id/prompt|cancel|rename|fork|model|approval`
 - `GET/POST /dsh-link/mobile/workspaces` — 工作区列表/创建
 - `GET  /dsh-link/mobile/models|llm-models` — 模型目录
-- `POST /dsh-link/mobile/revoke` — 吊销设备（仅主 web 端口）
+- `GET  /dsh-link/mobile/devices` — 已配对设备列表
+- `POST /dsh-link/mobile/revoke` — 吊销已配对设备
 
 ## 远程访问
 
