@@ -29,7 +29,7 @@ export const inject = ["webServer"]
 
 export const Config = z.object({
   /** 手机接入代理端口（0.0.0.0） */
-  port: z.natural().max(65535).default(18640),
+  port: z.natural().min(1).max(65535).default(18640),
   /** 额外可访问地址（如 frp 公网地址），会一并写进二维码供手机按可达性选择 */
   extraUrls: z.array(z.string()).default([]),
   /** 配对自动批准（个人使用默认开启） */
@@ -40,8 +40,8 @@ export const Config = z.object({
   stateDir: z.string().default(""),
   /** 请求日志（排查用） */
   debug: z.boolean().default(false),
-  /** SSE 事件轮询间隔（毫秒），默认 1000 */
-  eventPollIntervalMs: z.natural().default(1000),
+  /** SSE 事件轮询间隔（毫秒，最低 100），默认 1000 */
+  eventPollIntervalMs: z.natural().min(100).default(1000),
   /** 重连补发最大历史条数（session.history maxMessages，按消息边界计数） */
   reconnectHistoryLimit: z.natural().default(50),
 })

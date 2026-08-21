@@ -10,7 +10,7 @@ import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Readable } from "node:stream"
-import { apply } from "../src/index.js"
+import { apply, Config } from "../src/index.js"
 import { newPairingCode, pairingEntropy } from "../src/auth.js"
 
 const TMP = mkdtempSync(join(tmpdir(), "dsh-auth-test-"))
@@ -83,6 +83,13 @@ function parseJson(s) {
 function tokenHeaders(token) {
   return { "x-dsh-link-token": token, "content-type": "application/json" }
 }
+
+test("拒绝无效的代理端口与过短 SSE 轮询间隔", () => {
+  assert.throws(() => Config({ port: 0 }), /expected number >= 1/)
+  assert.throws(() => Config({ eventPollIntervalMs: 0 }), /expected number >= 100/)
+  assert.equal(Config({ port: 1, eventPollIntervalMs: 100 }).port, 1)
+  assert.equal(Config({ port: 1, eventPollIntervalMs: 100 }).eventPollIntervalMs, 100)
+})
 
 let proxyPort, upstream, dispose, registered
 
@@ -463,4 +470,3 @@ test("配对码跨 IP 总失败次数达到上限后作废", async () => {
   assert.equal(after.ok, false)
   assert.match(after.error, /失效|已使用|频繁/)
 })
-
