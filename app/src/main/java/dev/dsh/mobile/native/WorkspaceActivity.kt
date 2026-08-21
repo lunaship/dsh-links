@@ -49,6 +49,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -75,6 +76,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -98,6 +100,9 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Density
@@ -558,10 +563,17 @@ fun WorkspaceScreen(
 
     /** 用户是否停留在列表底部附近（用于决定是否跟随新消息 / 显示回到底部）。 */
     fun isNearBottom(): Boolean {
-        val total = listState.layoutInfo.totalItemsCount
+        val info = listState.layoutInfo
+        val total = info.totalItemsCount
         if (total == 0) return true
-        val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: return true
-        return lastVisible >= total - 2
+        val lastVisible = info.visibleItemsInfo.lastOrNull() ?: return true
+        if (lastVisible.index < total - 2) return false
+        // 最后一项很长时：只要其底部离视口底 ≤ 120px，仍算贴底（避免只露出开头就判定已离开）
+        if (lastVisible.index >= total - 1) {
+            val overflow = (lastVisible.offset + lastVisible.size) - info.viewportEndOffset
+            return overflow <= 120
+        }
+        return true
     }
 
     /** 请求一次"等待布局完成后滚动到尾部"（并发合并为一次）。 */
@@ -569,13 +581,35 @@ fun WorkspaceScreen(
         tailRequestId++
     }
 
-    /** 立即滚到列表末尾；失败写入可检索日志。 */
-    fun scrollToTail(tag: String) {
+    /**
+     * 把列表真正贴到底：scrollToItem 只会把条目顶到视口顶部，
+     * 长回复需要再 scrollBy 把溢出部分推上去，否则最新内容仍在视口外。
+     */
+    suspend fun alignListToBottom() {
         val total = listState.layoutInfo.totalItemsCount
         if (total == 0) return
+        val lastIndex = total - 1
+        listState.scrollToItem(lastIndex)
+        withFrameNanos { }
+        repeat(2) {
+            val info = listState.layoutInfo
+            val last = info.visibleItemsInfo.lastOrNull() ?: return
+            val overflow = (last.offset + last.size) - info.viewportEndOffset
+            if (overflow > 0) {
+                listState.scrollBy(overflow.toFloat())
+                withFrameNanos { }
+            } else {
+                return
+            }
+        }
+    }
+
+    /** 立即滚到列表末尾；失败写入可检索日志。 */
+    fun scrollToTail(tag: String) {
+        if (listState.layoutInfo.totalItemsCount == 0) return
         scope.launch {
             try {
-                listState.scrollToItem(total - 1)
+                alignListToBottom()
             } catch (e: Exception) {
                 Log.w("WorkspaceActivity", "scrollToTail($tag) failed: ${e.message}")
             }
@@ -584,14 +618,14 @@ fun WorkspaceScreen(
 
     /**
      * 用户停在底部附近时跟随新消息（WI-003）；已上翻阅读时不强行拉回尾部，
-     * 而是显示"回到底部"。
+     * 而是显示"回到底部"。发送等用户主动操作传 [force]=true 强制贴底。
      */
-    fun followIfNearBottom() {
+    fun followIfNearBottom(force: Boolean = false) {
         if (viewMode != "chat") return
-        if (listState.isScrollInProgress) return
-        val total = messages.size
-        if (total == 0) return
-        if (isNearBottom()) {
+        if (!force && listState.isScrollInProgress) return
+        if (messages.isEmpty() && listState.layoutInfo.totalItemsCount == 0) return
+        if (force || isNearBottom()) {
+            showScrollToBottom = false
             requestTailPosition()
         } else {
             showScrollToBottom = true
@@ -828,6 +862,20 @@ fun WorkspaceScreen(
         val i = messages.indexOfFirst { it.id == id }
         if (i >= 0) {
             messages = messages.toMutableList().apply { this[i] = transform(this[i]) }
+            // 流式变长：贴底时只轻推溢出，避免每个 delta 都重跑整段尾部定位
+            if (viewMode == "chat" && isNearBottom()) {
+                showScrollToBottom = false
+                scope.launch {
+                    try {
+                        withFrameNanos { }
+                        val info = listState.layoutInfo
+                        val last = info.visibleItemsInfo.lastOrNull() ?: return@launch
+                        val overflow = (last.offset + last.size) - info.viewportEndOffset
+                        if (overflow > 0) listState.scrollBy(overflow.toFloat())
+                    } catch (_: Exception) {
+                    }
+                }
+            }
         }
     }
 
@@ -1159,9 +1207,25 @@ fun WorkspaceScreen(
                     .first { it > 0 && !listState.isScrollInProgress }
             }
             withFrameNanos { } // 等一帧，让条目完成布局
-            scrollToTail("request-$tailRequestId")
+            alignListToBottom()
         } catch (e: Exception) {
             Log.w("WorkspaceActivity", "tail position request-$tailRequestId failed: ${e.message}")
+        }
+    }
+
+    // 键盘顶起：视口变矮后若用户原本贴底，再贴一次，避免最新消息被输入区挡住
+    val imeBottomPx = WindowInsets.ime.getBottom(LocalDensity.current)
+    LaunchedEffect(imeBottomPx, viewMode, currentSessionId) {
+        if (viewMode != "chat" || messages.isEmpty()) return@LaunchedEffect
+        if (imeBottomPx <= 0) return@LaunchedEffect
+        withFrameNanos { }
+        // 键盘弹出后 isNearBottom 可能已因溢出变 false；只要末项仍可见就强制贴底
+        val info = listState.layoutInfo
+        val total = info.totalItemsCount
+        val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: -1
+        if (total > 0 && lastVisible >= total - 2) {
+            showScrollToBottom = false
+            alignListToBottom()
         }
     }
 
@@ -1775,7 +1839,7 @@ fun WorkspaceScreen(
                     .padding(top = 12.dp, start = 20.dp, end = 28.dp)
                     .padding(bottom = 0.dp)
             ) {
-                // Row 1: 菜单按钮 + 标题面包屑 + 停止按钮 + 更多菜单
+                // Row 1: 菜单按钮 + 标题面包屑 + 更多菜单
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1830,37 +1894,7 @@ fun WorkspaceScreen(
                         )
                     }
 
-                    // 右侧：运行中显示停止按钮 + 会话更多菜单
-                    if (running) {
-                        val stopInteraction = remember { MutableInteractionSource() }
-                        val stopPressed by stopInteraction.collectIsPressedAsState()
-                        val stopScale by animateFloatAsState(if (stopPressed) 0.94f else 1f)
-                        val stopBg by animateColorAsState(
-                            targetValue = if (stopPressed) Dsh.hover else Color.Transparent,
-                            animationSpec = tween(motionDuration(120)),
-                            label = "stopBg"
-                        )
-                        Box(
-                            modifier = Modifier
-                                .height(28.dp)
-                                .clip(RoundedCornerShape(DshRadius.full))
-                                .background(stopBg)
-                                .graphicsLayer(scaleX = stopScale, scaleY = stopScale)
-                                .clickable(interactionSource = stopInteraction, indication = null) {
-                                    val sid = currentSessionId ?: return@clickable
-                                    scope.launch(Dispatchers.IO) {
-                                        try {
-                                            client.cancelSession(sid)
-                                            refreshSessions()
-                                        } catch (e: Exception) {}
-                                    }
-                                }
-                                .padding(horizontal = 12.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(L.stop, color = Dsh.labelSecondary, fontSize = 13.sp, fontWeight = FontWeight(500))
-                        }
-                    }
+                    // 右侧：会话工具（停止改到发送键位，见 InputBar）
                     // 工具调用查找开关（仅对话视图；切换时重置瞬时查询）
                     if (viewMode == "chat") {
                         val tsInteraction = remember { MutableInteractionSource() }
@@ -2619,6 +2653,8 @@ fun WorkspaceScreen(
                                     type = "text",
                                 ),
                             )
+                            // 用户主动发送：强制贴底，不看是否已上翻
+                            followIfNearBottom(force = true)
                         }
                         scope.launch(Dispatchers.IO) {
                             try {
@@ -4166,116 +4202,7 @@ private fun DshMenu(
     }
 }
 
-// ---------- 工具审批卡（DSH ApprovalPanel：等待审批 + 允许一次/拒绝） ----------
-
-@Composable
-private fun ApprovalCard(
-    msg: MobileMessage,
-    onAnswer: (approvalId: String, outcome: String) -> Unit,
-) {
-    var answered by remember { mutableStateOf(false) }
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(DshRadius.lg))
-            .background(Dsh.bgCode)
-            .border(1.dp, Dsh.borderL2, RoundedCornerShape(DshRadius.lg))
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(Dsh.warn.copy(alpha = 0.15f))
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(8.dp)
-                    .clip(CircleShape)
-                    .background(Dsh.warn)
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                L.waitingApproval,
-                color = Dsh.warn,
-                fontSize = 13.sp,
-                lineHeight = 18.sp
-            )
-        }
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp)
-        ) {
-            Text(
-                msg.text,
-                color = Dsh.labelPrimary,
-                fontSize = 13.sp,
-                lineHeight = 20.sp
-            )
-            Spacer(Modifier.height(12.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End
-            ) {
-                val rejectInteraction = remember { MutableInteractionSource() }
-                val rejectPressed by rejectInteraction.collectIsPressedAsState()
-                val rejectScale by animateFloatAsState(if (rejectPressed) 0.94f else 1f)
-                val rejectBg by animateColorAsState(
-                    targetValue = if (rejectPressed) Dsh.hover else Color.Transparent,
-                    animationSpec = tween(motionDuration(120)),
-                    label = "rejectBg"
-                )
-                Box(
-                    modifier = Modifier
-                        .height(30.dp)
-                        .clip(RoundedCornerShape(DshRadius.full))
-                        .background(rejectBg)
-                        .graphicsLayer(scaleX = rejectScale, scaleY = rejectScale)
-                        .clickable(
-                            interactionSource = rejectInteraction,
-                            indication = null,
-                            enabled = !answered
-                        ) {
-                            answered = true
-                            msg.approvalId?.let { onAnswer(it, "rejected") }
-                        }
-                        .padding(horizontal = 14.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        L.reject,
-                        color = if (answered) Dsh.labelTertiary else Dsh.labelSecondary,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight(500),
-                        lineHeight = 20.sp
-                    )
-                }
-                Spacer(Modifier.width(10.dp))
-                Box(
-                    modifier = Modifier
-                        .height(30.dp)
-                        .clip(RoundedCornerShape(DshRadius.full))
-                        .background(if (answered) Dsh.brand400.copy(alpha = 0.4f) else Dsh.brand400)
-                        .clickable(enabled = !answered) {
-                            answered = true
-                            msg.approvalId?.let { onAnswer(it, "allowed-once") }
-                        }
-                        .padding(horizontal = 14.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        if (answered) L.processed else L.allowOnce,
-                        color = Color.White,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight(500),
-                        lineHeight = 20.sp
-                    )
-                }
-            }
-        }
-    }
-}
+// ---------- 工具审批卡见 ApprovalCard.kt ----------
 
 // ---------- 上下文计量（DSH ContextMeter：28px 环形 + 用量面板） ----------
 
@@ -5805,21 +5732,9 @@ private fun QueueDock(label: String = L.sending, badge: String = L.processing) {
                 .padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // 旋转小圈
-            val angle = rememberMotionSpin(750, label = "dock")
-            Box(
-                modifier = Modifier
-                    .size(12.dp)
-                    .rotate(angle ?: 0f)
-                    .border(1.5.dp, Dsh.brand400, CircleShape)
-            )
+            PixelLoaderGrid(variant = PixelLoaderVariant.Drive)
             Spacer(Modifier.width(10.dp))
-            Text(
-                label,
-                color = Dsh.labelSecondary,
-                fontSize = 12.sp,
-                lineHeight = 18.sp
-            )
+            ShimmerLabel(text = label, working = true)
             Spacer(Modifier.weight(1f))
             Text(
                 badge,
@@ -5921,18 +5836,23 @@ private fun InputBar(
                     }
                 }
             }
-            BasicTextField(
+            // 原生 EditText：保住中文输入法 composition / 语音转写的 InputConnection。
+            // Compose BasicTextField 在 canSend 切换 imeAction 或双状态同步时易断连。
+            val composerHint = when {
+                isListening -> L.listening
+                heroMode == HeroMode.PLAN -> L.planPlaceholder
+                heroMode == HeroMode.GOAL -> L.goalPlaceholder
+                else -> L.chatPlaceholder
+            }
+            ComposerEditField(
                 value = inputText,
                 onValueChange = onInputChange,
-                keyboardOptions = KeyboardOptions(imeAction = if (canSend) ImeAction.Send else ImeAction.Default),
-                keyboardActions = KeyboardActions(onSend = { if (canSend) onSend() }),
-                textStyle = TextStyle(
-                    color = Dsh.labelPrimary,
-                    fontSize = 15.sp,
-                    lineHeight = 23.sp,
-                    letterSpacing = (-0.1).sp,
-                ),
-                cursorBrush = SolidColor(Dsh.brand400),
+                hint = composerHint,
+                textColor = Dsh.labelPrimary,
+                hintColor = Dsh.labelTertiary,
+                cursorColor = Dsh.brand400,
+                fontSize = 15.sp,
+                lineHeight = 23.sp,
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(min = 52.dp, max = 200.dp)
@@ -5940,24 +5860,6 @@ private fun InputBar(
                     .let { base ->
                         if (composerFocusRequester != null) base.focusRequester(composerFocusRequester) else base
                     },
-                decorationBox = { innerTextField ->
-                    Box(contentAlignment = Alignment.CenterStart) {
-                        if (inputText.isEmpty()) {
-                            Text(
-                                when {
-                                    isListening -> L.listening
-                                    heroMode == HeroMode.PLAN -> L.planPlaceholder
-                                    heroMode == HeroMode.GOAL -> L.goalPlaceholder
-                                    else -> L.chatPlaceholder
-                                },
-                                color = Dsh.labelTertiary,
-                                fontSize = 16.sp,
-                                lineHeight = 24.sp
-                            )
-                        }
-                        innerTextField()
-                    }
-                }
             )
 
 
@@ -6022,30 +5924,6 @@ private fun InputBar(
                         }
                     }
 
-                    if (running) {
-                        val stopInteraction = remember { MutableInteractionSource() }
-                        val stopPressed by stopInteraction.collectIsPressedAsState()
-                        val stopBg = if (stopPressed)
-                            if (Dsh.isDark) Dsh.brand400.copy(alpha = 0.28f) else Dsh.brand500.copy(alpha = 0.2f)
-                        else
-                            if (Dsh.isDark) Dsh.brand400.copy(alpha = 0.18f) else Dsh.brand500.copy(alpha = 0.12f)
-                        Box(
-                            modifier = Modifier
-                                .size(26.dp)
-                                .clip(CircleShape)
-                                .background(stopBg)
-                                .clickable(interactionSource = stopInteraction, indication = null, onClick = onStop),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                StopFill16,
-                                contentDescription = L.stopGenerating,
-                                tint = Dsh.labelPrimary,
-                                modifier = Modifier.size(14.dp)
-                            )
-                        }
-                    }
-
                     Spacer(Modifier.weight(1f))
 
                     // 模型选择：可收缩省略，不得挤掉发送键
@@ -6089,12 +5967,14 @@ private fun InputBar(
                     }
                 }
 
-                // 发送键：固定在行尾，始终可见
+                // 发送键：固定在行尾。执行中且无输入 → 呼吸停止圆；有输入 → 仍可发送（排队/打断）
                 val sendInteraction = remember { MutableInteractionSource() }
                 val sendPressed by sendInteraction.collectIsPressedAsState()
                 val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+                val showStopAtSend = running && !canSend && !isSending
                 val sendBg by animateColorAsState(
                     targetValue = when {
+                        showStopAtSend -> Dsh.brand500
                         !canSend && !isSending -> Dsh.brand500.copy(alpha = 0.55f)
                         sendPressed -> Dsh.brand400
                         else -> Dsh.brand500
@@ -6103,43 +5983,80 @@ private fun InputBar(
                     label = "sendBg"
                 )
                 val sendScale by animateFloatAsState(
-                    targetValue = if (sendPressed) 0.88f else 1f,
+                    targetValue = if (sendPressed && !showStopAtSend) 0.88f else 1f,
                     animationSpec = tween(DshDuration.fast),
                     label = "sendScale"
                 )
+                val reduceMotion = isReduceMotionEnabled()
+                val breath = rememberInfiniteTransition(label = "stopBreath")
+                val breathScaleAnim by breath.animateFloat(
+                    initialValue = 0.88f,
+                    targetValue = 1f,
+                    animationSpec = infiniteRepeatable(
+                        animation = tween(1100, easing = FastOutSlowInEasing),
+                        repeatMode = RepeatMode.Reverse
+                    ),
+                    label = "stopBreathScale"
+                )
+                val breathAlphaAnim by breath.animateFloat(
+                    initialValue = 0.62f,
+                    targetValue = 1f,
+                    animationSpec = infiniteRepeatable(
+                        animation = tween(1100, easing = FastOutSlowInEasing),
+                        repeatMode = RepeatMode.Reverse
+                    ),
+                    label = "stopBreathAlpha"
+                )
+                val breathScale = if (showStopAtSend && !reduceMotion) breathScaleAnim else 1f
+                val breathAlpha = if (showStopAtSend && !reduceMotion) breathAlphaAnim else 1f
                 Box(
                     modifier = Modifier
                         .padding(start = 4.dp)
                         .size(28.dp)
-                        .graphicsLayer(scaleX = sendScale, scaleY = sendScale)
+                        .graphicsLayer(
+                            scaleX = if (showStopAtSend) breathScale else sendScale,
+                            scaleY = if (showStopAtSend) breathScale else sendScale,
+                            alpha = if (showStopAtSend) breathAlpha else 1f
+                        )
                         .clip(CircleShape)
                         .background(sendBg)
                         .clickable(
                             interactionSource = sendInteraction,
                             indication = null,
-                            enabled = canSend && !isSending,
+                            enabled = showStopAtSend || (canSend && !isSending),
                             onClick = {
                                 haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
-                                onSend()
+                                if (showStopAtSend) onStop() else onSend()
                             }
                         ),
                     contentAlignment = Alignment.Center
                 ) {
-                    if (isSending) {
-                        val angle = rememberMotionSpin(750, label = "spin")
-                        Box(
-                            modifier = Modifier
-                                .size(12.dp)
-                                .rotate(angle ?: 0f)
-                                .border(1.5.dp, Color.White, CircleShape)
-                        )
-                    } else {
-                        Icon(
-                            SendOutline16,
-                            contentDescription = L.sendMessage,
-                            tint = Color.White,
-                            modifier = Modifier.size(14.dp)
-                        )
+                    when {
+                        showStopAtSend -> {
+                            Box(
+                                modifier = Modifier
+                                    .size(10.dp)
+                                    .clip(RoundedCornerShape(2.dp))
+                                    .background(Color.White)
+                            )
+                        }
+                        isSending -> {
+                            val angle = rememberMotionSpin(750, label = "spin")
+                            Box(
+                                modifier = Modifier
+                                    .size(12.dp)
+                                    .rotate(angle ?: 0f)
+                                    .border(1.5.dp, Color.White, CircleShape)
+                            )
+                        }
+                        else -> {
+                            Icon(
+                                SendOutline16,
+                                contentDescription = L.sendMessage,
+                                tint = Color.White,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -6176,7 +6093,7 @@ private fun RoundIconButton(
 // MessageGroup / groupMessages 抽到 util/MessageGrouping.kt（纯函数，JVM 单测覆盖），
 // 此处仅保留渲染层 ToolGroupHeader。
 
-/** 聚合 header：N 工具调用 · +X.Ys · 展开/收起（默认收起）。 */
+/** 聚合 header：轻量行（对齐思考条），默认收起；展开后左侧细轨 + 明细。 */
 @Composable
 private fun ToolGroupHeader(
     group: MessageGroup.ToolGroup,
@@ -6185,78 +6102,84 @@ private fun ToolGroupHeader(
     var expanded by remember(group.groupKey) { mutableStateOf(false) }
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
-    // 总耗时 = 最后一条 time - 第一条 time
     val first = group.items.first()
     val last = group.items.last()
     val totalDuration = if (first.time > 0 && last.time >= first.time) last.time - first.time else null
-    // 聚合组 running 视觉：任一条 tool_call 的 id 命中 sweepingId
     val groupRunning = sweepingId != null && group.items.any { it.id == sweepingId }
-    Box {
-        Column(
+    val hover = Dsh.hover
+    val rail = Dsh.borderL3
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
             modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(DshRadius.lg))
-                .background(Dsh.bgCode)
-                .border(1.dp, Dsh.borderL1, RoundedCornerShape(DshRadius.lg))
+                .clip(RoundedCornerShape(DshRadius.sm))
                 .clickable(interactionSource = interaction, indication = null) { expanded = !expanded }
-                .padding(horizontal = 16.dp, vertical = 12.dp)
+                .then(if (pressed) Modifier.drawBehind { drawRect(hover) } else Modifier)
+                .padding(horizontal = 6.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(4.dp)
-                        .clip(CircleShape)
-                        .background(if (pressed || groupRunning) Dsh.brand400 else Dsh.labelTertiary)
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    L.toolCallCount.format(group.items.size),
-                    color = Dsh.labelSecondary,
-                    fontSize = 14.sp,
-                    lineHeight = 24.sp,
-                    fontWeight = FontWeight(400),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-                if (groupRunning) {
-                    Text(L.executing, color = Dsh.labelTertiary, fontSize = 12.sp, lineHeight = 18.sp)
-                    Spacer(Modifier.width(6.dp))
-                    RunningDots(tint = Dsh.brand400)
-                    Spacer(Modifier.width(8.dp))
-                } else if (totalDuration != null) {
-                    Text(
-                        "+${formatTraceDuration(totalDuration)}",
-                        color = Dsh.labelCaption,
-                        fontSize = 11.sp,
-                        lineHeight = 16.sp,
-                        fontFamily = FontFamily.Monospace
-                    )
-                    Spacer(Modifier.width(8.dp))
-                }
+            if (groupRunning) {
+                PixelLoaderGrid(variant = PixelLoaderVariant.Drive)
+                Spacer(Modifier.width(10.dp))
+            } else {
                 Icon(
-                    if (expanded) ChevronUpOutline14 else ChevronDownOutline14,
+                    CodeOutline16,
                     contentDescription = null,
                     tint = Dsh.labelTertiary,
-                    modifier = Modifier.size(18.dp)
+                    modifier = Modifier.size(14.dp),
                 )
+                Spacer(Modifier.width(8.dp))
             }
-            AnimatedVisibility(
-                visible = expanded,
-                enter = expandVertically(animationSpec = tween(motionDuration(200), easing = FastOutSlowInEasing)) + fadeIn(animationSpec = tween(motionDuration(150))),
-                exit = shrinkVertically(animationSpec = tween(motionDuration(180), easing = FastOutSlowInEasing)) + fadeOut(animationSpec = tween(motionDuration(150)))
+            Text(
+                L.toolCallCount.format(group.items.size),
+                color = if (groupRunning) Dsh.labelSecondary else Dsh.labelTertiary,
+                fontSize = 13.sp,
+                fontWeight = FontWeight(500),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
+            )
+            Spacer(Modifier.width(8.dp))
+            if (groupRunning) {
+                ShimmerLabel(text = L.executing.trimEnd('…', '.'), working = true)
+                Spacer(Modifier.width(8.dp))
+            } else if (totalDuration != null) {
+                Text(
+                    formatTraceDuration(totalDuration),
+                    color = Dsh.labelCaption,
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                )
+                Spacer(Modifier.width(6.dp))
+            }
+            Icon(
+                if (expanded) ChevronUpOutline14 else ChevronDownOutline14,
+                contentDescription = if (expanded) L.collapse else L.expand,
+                tint = Dsh.labelTertiary,
+                modifier = Modifier.size(14.dp),
+            )
+        }
+        AnimatedVisibility(
+            visible = expanded,
+            enter = expandVertically(animationSpec = tween(motionDuration(200), easing = FastOutSlowInEasing)) + fadeIn(animationSpec = tween(motionDuration(150))),
+            exit = shrinkVertically(animationSpec = tween(motionDuration(180), easing = FastOutSlowInEasing)) + fadeOut(animationSpec = tween(motionDuration(150))),
+        ) {
+            Box(
+                modifier = Modifier
+                    .padding(start = 7.dp, top = 2.dp)
+                    .drawBehind {
+                        val x = 3.5.dp.toPx()
+                        drawLine(rail, Offset(x, 0f), Offset(x, size.height), 1.dp.toPx())
+                    }
+                    .padding(start = 16.dp, top = 4.dp, bottom = 4.dp),
             ) {
-                Column(modifier = Modifier.padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     group.items.forEach { item ->
                         MessageItem(
                             msg = item,
                             running = sweepingId != null && item.id == sweepingId,
                             onCopy = {},
                             onQuote = {},
-                            onFork = {}
+                            onFork = {},
                         )
                     }
                 }
@@ -7450,83 +7373,86 @@ private fun buildInlineMarkdown(
     return annotated to inlineContent
 }
 
-// 命令卡片（tool call / result：radius 12, bg code-block, max-height 260）
+// 命令行（tool call / result）：轻量可展开行，去掉厚底卡片
 @Composable
 private fun CommandCard(title: String, body: String?, running: Boolean = false, runningLabel: String = L.executing) {
     var expanded by remember { mutableStateOf(false) }
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
-    Box {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(DshRadius.lg))
-            .background(Dsh.bgCode)
-            .border(1.dp, Dsh.borderL2, RoundedCornerShape(DshRadius.lg))
-            .clickable(interactionSource = interaction, indication = null) { expanded = !expanded }
-            .padding(horizontal = 16.dp, vertical = 12.dp)
-    ) {
+    val hover = Dsh.hover
+    val rail = Dsh.borderL3
+    Column(modifier = Modifier.fillMaxWidth()) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
+            modifier = Modifier
+                .clip(RoundedCornerShape(DshRadius.sm))
+                .clickable(interactionSource = interaction, indication = null) { expanded = !expanded }
+                .then(if (pressed) Modifier.drawBehind { drawRect(hover) } else Modifier)
+                .padding(horizontal = 6.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(
-                modifier = Modifier
-                    .size(4.dp)
-                    .clip(CircleShape)
-                    .background(if (pressed) Dsh.brand400 else Dsh.labelTertiary)
-            )
-            Spacer(Modifier.width(8.dp))
+            if (running) {
+                PixelLoaderGrid(variant = PixelLoaderVariant.Dots)
+                Spacer(Modifier.width(10.dp))
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(4.dp)
+                        .clip(CircleShape)
+                        .background(Dsh.labelTertiary),
+                )
+                Spacer(Modifier.width(8.dp))
+            }
             Text(
                 title,
-                color = Dsh.labelSecondary,
-                fontSize = 14.sp,
-                lineHeight = 24.sp,
-                fontWeight = FontWeight(400),
+                color = if (running) Dsh.labelSecondary else Dsh.labelTertiary,
+                fontSize = 13.sp,
+                fontWeight = FontWeight(500),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.weight(1f),
             )
             if (running) {
-                Text(
-                    runningLabel,
-                    color = Dsh.labelTertiary,
-                    fontSize = 12.sp,
-                    lineHeight = 18.sp
-                )
-                Spacer(Modifier.width(6.dp))
-                RunningDots(tint = Dsh.brand400)
                 Spacer(Modifier.width(8.dp))
+                ShimmerLabel(text = runningLabel.trimEnd('…', '.', '。'), working = true)
+                Spacer(Modifier.width(6.dp))
             }
             Icon(
                 if (expanded) ChevronUpOutline14 else ChevronDownOutline14,
-                contentDescription = null,
+                contentDescription = if (expanded) L.collapse else L.expand,
                 tint = Dsh.labelTertiary,
-                modifier = Modifier.size(18.dp)
+                modifier = Modifier.size(14.dp),
             )
         }
-        // 展开内容（收起时隐藏；visible 条件内置，enter/exit 动画均有效）
         AnimatedVisibility(
             visible = expanded && !body.isNullOrBlank(),
             enter = expandVertically(animationSpec = tween(motionDuration(200), easing = FastOutSlowInEasing)) + fadeIn(animationSpec = tween(motionDuration(150))),
-            exit = shrinkVertically(animationSpec = tween(motionDuration(180), easing = FastOutSlowInEasing)) + fadeOut(animationSpec = tween(motionDuration(150)))
+            exit = shrinkVertically(animationSpec = tween(motionDuration(180), easing = FastOutSlowInEasing)) + fadeOut(animationSpec = tween(motionDuration(150))),
         ) {
-            Column {
-                Spacer(Modifier.height(8.dp))
+            Box(
+                modifier = Modifier
+                    .padding(start = 7.dp, top = 2.dp)
+                    .drawBehind {
+                        val x = 3.5.dp.toPx()
+                        drawLine(rail, Offset(x, 0f), Offset(x, size.height), 1.dp.toPx())
+                    }
+                    .padding(start = 16.dp, top = 4.dp, bottom = 4.dp),
+            ) {
                 Text(
                     body.orEmpty(),
                     color = Dsh.labelPrimary,
                     fontFamily = FontFamily.Monospace,
-                    fontSize = 13.sp,
-                    lineHeight = 20.sp,
+                    fontSize = 12.sp,
+                    lineHeight = 18.sp,
                     maxLines = 16,
-                    overflow = TextOverflow.Ellipsis
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(DshRadius.sm))
+                        .background(Dsh.bgCode)
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
                 )
             }
         }
-    }
-    // 旧版 RunningSweep() 已被 Header 内的 RunningDots（脉动 3 点）替代
-    // reduce-motion 时 RunningDots 静态全亮，无需兜底
     }
 }
 

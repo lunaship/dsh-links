@@ -10,6 +10,7 @@ Android App 局域网 Beta。
 - 备份与设备迁移排除 Token / HostStore。
 - 关于页提供 MIT 与第三方声明入口。
 - 产品口径限定为可信局域网；不把远程连接写成可用能力。
+- 分发口径：插件 / 文档 MIT 开源；Android 客户端闭源，仅 GitHub Releases 正式签名 APK。
 
 ## dsh-links 0.1.0-beta.1 — 2026-08-21
 

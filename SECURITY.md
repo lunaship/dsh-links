@@ -26,6 +26,11 @@ This public Beta supports **trusted LAN only**. Phone access from outside the LA
 - Commit `local.properties`, keystores, `state.json`, or any `*.token` / `*.pem` files.
 - Rely on Host/Origin rewriting as authentication — auth is the device token.
 
+## Source and APK trust
+
+- The public repository opens the `dsh-links` plugin and docs (MIT). The Android client is not published as source; install only signed APKs from this project's GitHub Releases.
+- Do not trust third-party rebuilds or sideloaded APKs that claim to be DSH Links.
+
 ## Reporting
 
-If you find a vulnerability in this repository, open a private report to the maintainer of [`lunaship/dsh-links`](https://github.com/lunaship/dsh-links) (or email the owner listed on the GitHub profile). Please include repro steps and impact; avoid filing public issues for exploitable auth or proxy bypasses until a fix is available.
+If you find a vulnerability in the plugin, docs, or the official APK, open a private report to the maintainer of [`lunaship/dsh-links`](https://github.com/lunaship/dsh-links) (or email the owner listed on the GitHub profile). Please include repro steps and impact; avoid filing public issues for exploitable auth or proxy bypasses until a fix is available.

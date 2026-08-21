@@ -2,6 +2,33 @@ MIT License
 
 Copyright (c) 2026 dsh-links contributors
 
+-------------------------------------------------------------------------------
+Scope
+-------------------------------------------------------------------------------
+
+This repository publishes different components under different terms:
+
+1. Open (MIT below)
+   - `dsh-links/` plugin (npm package)
+   - `remote/` experimental notes
+   - Project docs (`README.md`, `SECURITY.md`, `PRIVACY.md`, `CHANGELOG.md`,
+     `THIRD_PARTY_NOTICES.md`, and similar)
+   - Branding assets that are original to this project, except where
+     `THIRD_PARTY_NOTICES.md` says otherwise
+
+2. Closed (not MIT)
+   - Android client (`app/` and related Gradle Android build files)
+   - The client is distributed as a signed APK via GitHub Releases only.
+   - Source for the Android client is not a public contribution surface and is
+     not licensed for copying, modification, or redistribution.
+
+If you only need the phone-link plugin or the mobile API contract, use the MIT
+parts above. Install the Android app from official Release APKs.
+
+-------------------------------------------------------------------------------
+MIT License text (applies only to the Open scope listed above)
+-------------------------------------------------------------------------------
+
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights

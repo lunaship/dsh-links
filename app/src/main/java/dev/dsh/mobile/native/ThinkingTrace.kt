@@ -146,32 +146,18 @@ internal fun ThinkingTrace(
     }
 }
 
-/** 等待首 token：只有扫光标题，没有可展开正文。 */
+/** 等待首 token：像素波前 + 扫光「思考中」+ 计时。 */
 @Composable
 internal fun ThinkingStatusRow(
     elapsedSec: Long,
     modifier: Modifier = Modifier,
 ) {
-    Row(
-        modifier = modifier.height(26.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            StarFour16,
-            contentDescription = null,
-            tint = Dsh.labelSecondary,
-            modifier = Modifier.size(16.dp),
-        )
-        Spacer(Modifier.width(8.dp))
-        ShimmerLabel(text = L.thinkingActive, working = true)
-        Spacer(Modifier.width(8.dp))
-        Text(
-            "${elapsedSec}s",
-            fontSize = 12.sp,
-            color = Dsh.labelTertiary,
-            fontFamily = FontFamily.Monospace,
-        )
-    }
+    PixelLoadingState(
+        label = L.thinkingActive,
+        elapsedLabel = formatPixelElapsed(elapsedSec),
+        modifier = modifier,
+        variant = PixelLoaderVariant.Drive,
+    )
 }
 
 @Composable
@@ -255,7 +241,7 @@ private fun ThinkingHeader(
  * reduce-motion 时退化为静态次要色文本。
  */
 @Composable
-private fun ShimmerLabel(text: String, working: Boolean) {
+internal fun ShimmerLabel(text: String, working: Boolean) {
     val style = remember {
         TextStyle(fontSize = 13.sp, fontWeight = FontWeight(500))
     }

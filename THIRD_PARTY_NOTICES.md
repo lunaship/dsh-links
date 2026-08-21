@@ -2,7 +2,7 @@
 
 DSH Links is an independent unofficial community project. It is not affiliated with, authorized by, or endorsed by DeepSeek. DeepSeek Harness names and related marks belong to their respective owners.
 
-This file covers source and runtime attribution for the Android app and the `dsh-links` plugin. Project code is MIT; see [LICENSE](LICENSE).
+This file covers attribution for the signed Android APK (runtime) and the open-source `dsh-links` plugin. The plugin and docs are MIT; the Android client is proprietary binary distribution. See [LICENSE](LICENSE).
 
 ## DeepSeek Harness
 
@@ -10,7 +10,7 @@ This file covers source and runtime attribution for the Android app and the `dsh
 - Copyright: Copyright (c) 2026 DeepSeek
 - Upstream: https://github.com/deepseek-ai
 
-`app/src/main/java/dev/dsh/mobile/native/DshIcons.kt` and parts of the workspace copy, color tokens, and panel language are derived from the DeepSeek Harness Web UI. The MIT copyright notice and permission text of DeepSeek Harness apply to those derived portions.
+Parts of the Android client UI (icons, workspace copy, color tokens, and panel language) are derived from the DeepSeek Harness Web UI. The MIT copyright notice and permission text of DeepSeek Harness apply to those derived portions.
 
 ## Fonts
 

@@ -10,6 +10,19 @@ DSH Links 是独立的非官方社区项目，与 DeepSeek 官方不存在隶属
 
 > 配对手机等同特权控制台，可驱动具有工具 / 代码执行能力的主机。使用前请阅读 [`SECURITY.md`](SECURITY.md) 与 [`PRIVACY.md`](PRIVACY.md)。
 
+## 开源范围
+
+本仓库是**混合分发**：
+
+| 部分 | 是否公开源码 | 许可 / 获取方式 |
+|---|---|---|
+| `dsh-links/` 插件、手机 API、文档、`remote/` 实验资料 | 是 | [MIT](LICENSE)（见 LICENSE 中 Open scope） |
+| Android App | 否 | 仅通过 GitHub **Releases 正式签名 APK** 安装；客户端源码不开放、不接受外部贡献 |
+
+这样做的原因：插件与 API 需要可审计、可自建；手机端是高权限控制台，用固定签名 APK 分发，避免任意自编译包混入升级链。信任边界以 Release 签名与 [`SECURITY.md`](SECURITY.md) / [`PRIVACY.md`](PRIVACY.md) 为准。
+
+请只从本仓库 Releases 安装 APK；不要安装来路不明的重打包。
+
 ## 快速安装
 
 已安装 DSH 的电脑执行：
@@ -35,9 +48,8 @@ dsh web
 | 组件 | 首发验证版本 |
 |---|---|
 | DSH | `0.1.0-rc.8` |
-| dsh-links | `0.1.0-beta.1` |
-| Android | API 26–35 |
-| Java 构建环境 | 17 |
+| dsh-links 插件 | `0.1.0-beta.1` |
+| Android App（Release APK） | API 26–35 |
 | Node 插件测试环境 | 22 |
 
 App 通过 `dsh-links` 的移动 API 隔离 DSH Web UI 变化；DSH 仍处于 Developer Preview，跨版本兼容性以本表和 CI 结果为准。不要假定未验证的 DSH 版本可用。
@@ -72,26 +84,26 @@ App 通过 `dsh-links` 的移动 API 隔离 DSH Web UI 变化；DSH 仍处于 De
 
 ```
 dsh-links/
-├── app/                    # Android App（Kotlin + Compose，包名 dev.dsh.mobile）
-├── dsh-links/              # dsh 插件（npm 包 dsh-links）
-├── branding/               # App logo 与字体许可
+├── dsh-links/              # 开源：dsh 插件（npm 包 dsh-links）+ 手机 API
+├── branding/               # logo 与字体许可（供 Release / 文档使用）
 ├── remote/                 # 实验性远程访问资料（不受支持）
-├── LICENSE                 # MIT
+├── LICENSE                 # 混合许可：插件/文档 MIT；App 闭源
 ├── PRIVACY.md
 ├── SECURITY.md
 ├── THIRD_PARTY_NOTICES.md
 └── CHANGELOG.md
 ```
 
+维护者私有树中另有 Android 工程（包名 `dev.dsh.mobile`）；公开仓库以插件与文档为主，手机端以 Release APK 交付。
+
 ## 架构
 
 ```
-Splash → DevicesActivity（设备中心：设备列表 / 扫码配对 / 手动添加）
-       → WorkspaceActivity（原生工作台：会话 / 消息 / SSE 实时流 / 审批）
+电脑：dsh web + dsh-links 插件（18640 HTTPS / 配对 / mobile API）
+手机：正式签名 APK（设备中心 → 工作台：会话 / SSE / 审批）
 ```
 
-- 所有界面均为 Kotlin + Compose 原生实现，无 WebView。
-- 原生只依赖 `dsh-links` 插件定义的 `/dsh-link/mobile/*` API，不解析 DSH Web UI。
+- App 无 WebView；只调用插件定义的 `/dsh-link/mobile/*`，不解析 DSH Web UI。
 
 ## 特性
 
@@ -101,17 +113,9 @@ Splash → DevicesActivity（设备中心：设备列表 / 扫码配对 / 手动
 - **通知**：后台时审批请求 / 任务完成 / 会话停止 → 系统通知（需授权）
 - **设计**：DSH dsw 设计系统风格（`#151517` 底 / `#679EFE` 品牌蓝，深浅色两套 token）
 
-## 编译与测试
+## 编译与测试（插件）
 
-```bash
-./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
-./gradlew :app:assembleRelease   # 需要本机 Release Key；没有签名材料会失败
-./gradlew :app:assembleRelease -PallowUnsignedRelease=true  # 仅用于验证 R8，产物不是正式包
-```
-
-正式签名材料放在仓库外，不进 git。本机使用 `~/Library/Application Support/DSH Links Signing/env`（或四个 `DSH_LINKS_*` 环境变量）。只设置其中一部分会在配置期失败。Debug 构建不会使用 Release Key。开源仓库可以编译 Debug；没有这把 Release Key 就打不出可原地升级的正式 APK。
-
-插件：
+公开仓库可复现的是 **插件**，不是 App：
 
 ```bash
 cd dsh-links
@@ -121,6 +125,8 @@ node --test test/*.mjs
 ```
 
 改 `src/module2.js` 后必须重新生成 `src/client.js`。
+
+Android App 仅由维护者私有工程构建；正式签名材料不进 git，产物只通过 GitHub Releases 发布。
 
 ## 手机 API（插件 18640 代理，token 认证）
 
@@ -147,4 +153,6 @@ node --test test/*.mjs
 
 ## License
 
-[MIT](LICENSE)。第三方归属见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+- **插件与文档**：[MIT](LICENSE)（LICENSE 中的 Open scope）
+- **Android App**：闭源；仅分发正式签名 APK
+- 第三方归属：[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
