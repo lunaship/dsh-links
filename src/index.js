@@ -23,6 +23,7 @@ import {
 } from "./auth.js"
 import { loadOrCreateTls } from "./tls.js"
 import { loadEventsAfter, sseMessageFrame } from "./stream-cursor.js"
+import { respondQuestion, startMuxQuestionBridge } from "./question-bridge.js"
 
 export const name = "dsh-links"
 export const inject = ["webServer"]
@@ -1120,6 +1121,25 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
       return json(res, 200, { ok: true, accepted: true, handledBy: "plugin" })
     }
 
+    const questionMatch = pathname.match(/^\/dsh-link\/mobile\/sessions\/([^/]+)\/question$/)
+    if (req.method === "POST" && questionMatch) {
+      const sessionId = decodeURIComponent(questionMatch[1])
+      const body = await readJson(req, res)
+      if (!body) return
+      const rpcId = String(body.rpcId ?? "").trim()
+      const answer = body.answer
+      if (!rpcId || !answer || !Array.isArray(answer.answers)) {
+        return json(res, 400, { error: "缺少 rpcId 或 answer.answers" })
+      }
+      try {
+        const result = await respondQuestion(targetPort, rpcId, sessionId, answer)
+        const accepted = result?.accepted === true
+        return json(res, accepted ? 200 : 409, { ok: accepted, accepted, result })
+      } catch (err) {
+        return json(res, 502, { error: err?.message ?? "question respond failed" })
+      }
+    }
+
     const historyMatch = pathname.match(/^\/dsh-link\/mobile\/sessions\/([^/]+)\/history$/)
     if (req.method === "GET" && historyMatch) {
       const sessionId = decodeURIComponent(historyMatch[1])
@@ -1394,6 +1414,7 @@ export function apply(ctx, config) {
   let proxy
   let pollTimer
   let keepAliveTimer
+  let muxBridge = null
   const ready = loadOrCreateTls(ensureStateDir(config)).then((tls) => {
     tlsHolder.fingerprint = tls.fingerprint
     proxy = createHttpsServer({ key: tls.key, cert: tls.cert }, requestHandler)
@@ -1418,6 +1439,7 @@ export function apply(ctx, config) {
       proxy.listen(config.port, "0.0.0.0", () => {
         ctx.logger.info(`dsh-links: 手机接入代理已启动，https 端口 ${config.port}（指纹 ${tls.fingerprint.slice(0, 12)}…）`)
         for (const u of lanUrls(config).urls) ctx.logger.info(`dsh-links: 可访问地址 ${u}`)
+        muxBridge = startMuxQuestionBridge({ targetPort, rt, logger: ctx.logger })
         resolve(tls)
       })
     })
@@ -1428,6 +1450,8 @@ export function apply(ctx, config) {
       for (const dispose of disposers) dispose()
       if (pollTimer) clearInterval(pollTimer)
       if (keepAliveTimer) clearInterval(keepAliveTimer)
+      try { muxBridge?.stop() } catch {}
+      muxBridge = null
       for (const writers of rt.sessionStreams.values()) {
         for (const conn of writers) {
           try { conn.res.end() } catch {}
