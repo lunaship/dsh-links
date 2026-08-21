@@ -52,9 +52,9 @@ dsh plugin --profile web add /path/to/dsh-links
 
 公开 Beta 的正式支持范围仍是可信局域网；如果你只为自己使用，可通过 Tailscale 私网或 Cloudflare Tunnel 建立远端网络路径。它们不改变配对码、设备 Token 或吊销机制，但也不属于兼容性与安全承诺范围。
 
-- [Tailscale / Cloudflare Tunnel / 原生 Relay 路线说明](REMOTE_ACCESS.md)
+- [Tailscale / Cloudflare Tunnel / DSH Links Relay 路线说明](REMOTE_ACCESS.md)
 - 不要把 `18640` 直接做路由器端口转发。
-- 原生自管 Relay 尚未发布：其目标是电脑 `local-relay` 主动连向你的 VPS Relay，手机通过 Relay 访问已配对设备，电脑不接受公网入站连接。
+- DSH Links Relay 尚未发布：将由 DSH Links 自建并运营公共中继服务。电脑 `local-relay` 和手机 App 均主动连接 Relay；Relay 仅实时转发已配对设备的请求与响应，不持久化存储会话内容、文件、工作区数据或设备内容，电脑不接受公网入站连接。
 
 ## 开发
 

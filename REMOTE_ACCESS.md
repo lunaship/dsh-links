@@ -47,12 +47,12 @@ ingress:
 
 Android App 当前不会执行 Cloudflare Access 的网页登录，也不会携带 `Cf-Access-Jwt-Assertion`。因此配置 `originRequest.access.required: true` 会拒绝 App 的配对与运行请求；不要把该配置误认为当前可用。
 
-## 原生自管 Relay（规划中）
+## DSH Links Relay（规划中）
 
 ```
-手机 App  ⇄  你的 VPS Relay  ⇄  电脑 local-relay  ⇄  127.0.0.1:18640
+手机 App  ⇄  DSH Links Relay 服务  ⇄  电脑 local-relay  ⇄  127.0.0.1:18640
 ```
 
-目标形态是 `local-relay` 从电脑主动连接到你的 Relay，电脑不接受公网入站连接。Relay 只转发经过远端身份认证与设备 Token 校验的会话，设备吊销会切断后续远端请求。
+目标形态是由 DSH Links 自建并运营公共 Relay 服务。电脑 `local-relay` 与手机 App 均主动连接 Relay，电脑不接受公网入站连接。Relay 仅实时转发已配对设备的请求与响应，不持久化存储会话内容、文件、工作区数据或设备内容；设备吊销会切断后续远端请求。
 
 协议、Relay 实现、安装包和端到端验收尚未发布，当前不可配置或下载。
