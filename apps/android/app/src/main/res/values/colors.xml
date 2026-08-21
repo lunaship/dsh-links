@@ -1,0 +1,39 @@
+<resources>
+    <!-- ================================================
+         DSH 墨色体系（对照 HStudio ink 变量 亮色主题）
+         ================================================ -->
+    <color name="ink_bg_primary">#FAFAFA</color>
+    <color name="ink_bg_card">#FFFFFF</color>
+    <color name="ink_bg_secondary">#F0F0F0</color>
+    <color name="ink_bg_input">#FFFFFF</color>
+
+    <color name="ink_text_primary">#1A1A1A</color>
+    <color name="ink_text_secondary">#666666</color>
+    <color name="ink_text_muted">#999999</color>
+
+    <color name="ink_border">#E0E0E0</color>
+    <color name="ink_border_light">#EBEBEB</color>
+
+    <color name="ink_accent">#333333</color>
+    <color name="ink_on_accent">#FFFFFF</color>
+    <color name="ink_error">#C62828</color>
+    <color name="ink_pressed">#0A000000</color>
+    <color name="ink_overlay">#F0FFFFFF</color>
+
+    <!-- 语义色：在线 / 来源 / 端点（HStudio 同款） -->
+    <color name="ink_online">#397454</color>
+    <color name="ink_online_bg">#1A397454</color>
+    <color name="ink_source_cloud">#7657A6</color>
+    <color name="ink_source_cloud_bg">#1A7657A6</color>
+    <color name="ink_endpoint_desktop">#397454</color>
+    <color name="ink_endpoint_desktop_bg">#1A397454</color>
+    <color name="ink_endpoint_web">#3F648F</color>
+    <color name="ink_endpoint_web_bg">#1A3F648F</color>
+
+    <!-- 兼容旧引用 -->
+    <color name="dsh_online">#397454</color>
+    <color name="dsh_offline">#9CA3AF</color>
+    <color name="dsh_checking">#C7CDD6</color>
+    <color name="dsh_avatar_bg">#F0F0F0</color>
+    <color name="dsh_avatar_text">#1A1A1A</color>
+</resources>

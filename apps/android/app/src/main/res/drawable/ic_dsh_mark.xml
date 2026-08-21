@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- DSH 品牌标记：圆角方块 + 终端提示符 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <path
+        android:fillColor="@color/ink_accent"
+        android:pathData="M12,4 h24 a8,8 0 0 1 8,8 v24 a8,8 0 0 1 -8,8 h-24 a8,8 0 0 1 -8,-8 v-24 a8,8 0 0 1 8,-8 z" />
+    <path
+        android:fillColor="@color/ink_on_accent"
+        android:pathData="M15,16.5 l7,7.5 l-7,7.5 l-2.6,-2.8 l4.5,-4.7 l-4.5,-4.7 z" />
+    <path
+        android:fillColor="@color/ink_on_accent"
+        android:pathData="M26,16.5 l7,7.5 l-7,7.5 l-2.6,-2.8 l4.5,-4.7 l-4.5,-4.7 z" />
+</vector>
