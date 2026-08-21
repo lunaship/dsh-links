@@ -12,8 +12,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/lunaship/dsh-links.git",
-    "directory": "dsh-links"
+    "url": "git+https://github.com/lunaship/dsh-links.git"
   },
   "homepage": "https://github.com/lunaship/dsh-links#readme",
   "bugs": {
