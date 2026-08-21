@@ -5,7 +5,7 @@
  */
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { projectHistoryPage } from "../src/history.js"
+import { projectHistoryPage, clampHistoryMaxMessages, MAX_HISTORY_MESSAGES } from "../src/history.js"
 
 const T = 1_700_000_000_000
 
@@ -204,4 +204,12 @@ test("缺少可选字段时响应仍稳定（无 sourceEventSeqs / 空 events / 
     hasMore: false,
   })
   assert.deepEqual(m3.map((m) => m.id), ["msg-911"])
+})
+
+test("clampHistoryMaxMessages caps and rejects non-positive", () => {
+  assert.equal(clampHistoryMaxMessages(20), 20)
+  assert.equal(clampHistoryMaxMessages(MAX_HISTORY_MESSAGES + 999), MAX_HISTORY_MESSAGES)
+  assert.equal(clampHistoryMaxMessages(0), undefined)
+  assert.equal(clampHistoryMaxMessages(-8), undefined)
+  assert.equal(clampHistoryMaxMessages("x"), undefined)
 })

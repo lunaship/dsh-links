@@ -1,5 +1,14 @@
 import { isContextInjectionText } from "./context-injection.js"
 
+/** session.history 单页消息数上限（客户端 maxMessages 不得突破）。 */
+export const MAX_HISTORY_MESSAGES = 200
+
+export function clampHistoryMaxMessages(raw) {
+  const n = Number(raw)
+  if (!Number.isInteger(n) || n <= 0) return undefined
+  return Math.min(n, MAX_HISTORY_MESSAGES)
+}
+
 /**
  * 历史页投影（纯函数，WI-001）
  *

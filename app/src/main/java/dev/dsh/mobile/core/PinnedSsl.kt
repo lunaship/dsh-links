@@ -49,12 +49,17 @@ object PinnedSsl {
 
     fun normalizeUrl(baseUrl: String): String {
         val trimmed = baseUrl.trim()
-        return if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) trimmed
-        else "https://$trimmed"
+        return when {
+            trimmed.startsWith("https://", ignoreCase = true) -> trimmed
+            trimmed.startsWith("http://", ignoreCase = true) -> "https://" + trimmed.substring(7)
+            else -> "https://$trimmed"
+        }
     }
 
     fun apply(connection: HttpURLConnection, fingerprint: String?) {
-        if (connection !is HttpsURLConnection) return
+        if (connection !is HttpsURLConnection) {
+            throw IllegalArgumentException("拒绝明文 HTTP，仅支持 HTTPS")
+        }
         val pin = normalizeFingerprint(fingerprint)
         if (pin.isEmpty()) {
             // 私网/回环主机必须钉死证书；空指纹不得静默回退到系统 PKI（fail-closed）

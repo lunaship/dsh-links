@@ -33,6 +33,8 @@ cloudflared tunnel create dsh
 ```bash
 cp remote/cloudflared.yml.example ~/.cloudflared/config.yml
 # 把 <TUNNEL_ID> 替换成上一步的隧道 ID
+# 把 <CF_ACCESS_TEAM> / <CF_ACCESS_AUD> 换成 Zero Trust Access 应用的团队名和 AUD
+# 未配置 Access 时 cloudflared 会拒绝转发，这是有意的 fail-closed。
 ```
 
 ### 4. 绑定 DNS 并启动
@@ -54,16 +56,15 @@ cloudflared tunnel run dsh                          # 前台跑（验证）
 
 ## 安全说明
 
+- **Access 是公网暴露的前置条件**，不是可选项。模板里 `originRequest.access.required: true`，
+  未填团队名 / AUD 时隧道拒绝转发。Zero Trust → Access → Applications 给
+  `dsh.example.com` 加邮箱或一次性验证码策略，把 AUD 拷进配置。
 - **token 仍然有效**：所有手机 API 都要求 `x-dsh-link-token` 配对 token，
-  隧道本身不提供任何业务豁免。token 泄露风险面 = 你域名被爆破的难度。
-- 推荐再加一层 **Cloudflare Access**（Zero Trust 免费额度）给 `dsh.example.com`
-  加邮箱/一次性验证码登录，双保险：
-  ```bash
-  # 网页控制台 Zero Trust → Access → Applications 添加该域名即可
-  ```
+  隧道本身不提供任何业务豁免。Access 挡住匿名探测，token 挡住已认证后的业务调用。
 - 插件侧无需改动：18640 代理会重写 Host/Origin 为 `127.0.0.1:3080`，
   对 dsh 而言请求永远是"本机回环"，**不需要 --trusted-host / --web-token**。
 - 不要用 Cloudflare 的「页面规则缓存」缓存 `/dsh-link/` 路径（动态 API）。
+- 不要把 dsh web 管理界面一并暴露到公网。
 
 ## 已知限制
 

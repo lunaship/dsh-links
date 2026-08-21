@@ -20,6 +20,8 @@ import java.net.URL
 import java.net.URLEncoder
 import java.util.concurrent.atomic.AtomicLong
 
+private const val MAX_SSE_DATA_CHARS = 1_000_000
+
 /** DSH 会话 SSE 实时流客户端。 */
 class SessionStreamClient(
     private val host: Host,
@@ -35,7 +37,7 @@ class SessionStreamClient(
 
     enum class ConnectionState { CONNECTING, CONNECTED, RETRYING, FAILURE }
 
-    private val _items = Channel<Item>(capacity = Channel.UNLIMITED)
+    private val _items = Channel<Item>(capacity = 256)
     val items: Channel<Item> = _items
     private val lastSeqAtomic = AtomicLong(0)
     val lastSeq: Long get() = lastSeqAtomic.get()
@@ -123,7 +125,13 @@ class SessionStreamClient(
             when {
                 line.startsWith(":") -> {}
                 line.startsWith("event:") -> eventName = line.removePrefix("event:").trim()
-                line.startsWith("data:") -> data += line.removePrefix("data:").trim()
+                line.startsWith("data:") -> {
+                    data += line.removePrefix("data:").trim()
+                    if (data.length > MAX_SSE_DATA_CHARS) {
+                        eventName = ""
+                        data = ""
+                    }
+                }
                 line.isEmpty() -> { if (data.isNotBlank()) try { dispatch(eventName, data) } catch (_: Exception) {}; eventName = ""; data = "" }
             }
         }

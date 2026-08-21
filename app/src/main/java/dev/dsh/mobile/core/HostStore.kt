@@ -40,12 +40,16 @@ object HostStore {
             }
         } else {
             val legacy = hostsFromJson(raw)
-            if (legacy.isNotEmpty()) {
-                save(ctx, legacy)
-            } else {
+            if (legacy.isEmpty()) {
                 prefs.edit().remove(KEY).apply()
+                return HostLoadResult.Empty
             }
-            if (legacy.isEmpty()) HostLoadResult.Empty else HostLoadResult.Ok(legacy)
+            if (!save(ctx, legacy)) return HostLoadResult.Undecryptable
+            val stored = prefs.getString(KEY, null)
+            if (stored.isNullOrEmpty() || !TokenCrypto.isEncrypted(stored)) {
+                return HostLoadResult.Undecryptable
+            }
+            HostLoadResult.Ok(legacy)
         }
     }
 
@@ -59,8 +63,7 @@ object HostStore {
         if (prefs.getBoolean(LOCK, false)) return false
         return try {
             val encrypted = TokenCrypto.encrypt(ctx, hostsToJson(hosts))
-            prefs.edit().putString(KEY, encrypted).apply()
-            true
+            prefs.edit().putString(KEY, encrypted).commit()
         } catch (_: Exception) {
             false
         }

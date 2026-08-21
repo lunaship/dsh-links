@@ -355,7 +355,7 @@ test("5 次失败后 pair-info 不换发新码，冷却仍在", async () => {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ code: wrong, deviceName: "限流机后再试" }),
   })
-  assert.equal(again.status, 401)
+  assert.equal(again.status, 429)
   assert.match((await again.json()).error, /频繁/)
 })
 
@@ -446,8 +446,21 @@ test("配对失败限流按 IP 隔离，不全局锁死", async () => {
   const locked = verifyPairingCode(state, code, "10.0.0.1")
   assert.equal(locked.ok, false)
   assert.match(locked.error, /频繁|稍后再试/)
-  // 另一 IP 仍可用正确码配对
+  // 另一 IP 仍可用正确码配对（未打到跨 IP 挑战预算）
   const other = verifyPairingCode(state, code, "10.0.0.2")
   assert.equal(other.ok, true)
+})
+
+test("配对码跨 IP 总失败次数达到上限后作废", async () => {
+  const { PAIR_CHALLENGE_FAIL_LIMIT, newPairingCode, verifyPairingCode } = await import("../src/auth.js")
+  const state = {}
+  const code = newPairingCode(state, 600)
+  for (let i = 0; i < PAIR_CHALLENGE_FAIL_LIMIT; i++) {
+    const r = verifyPairingCode(state, "000000", `10.1.${Math.floor(i / 250)}.${i % 250}`)
+    assert.equal(r.ok, false)
+  }
+  const after = verifyPairingCode(state, code, "10.2.0.1")
+  assert.equal(after.ok, false)
+  assert.match(after.error, /失效|已使用|频繁/)
 })
 

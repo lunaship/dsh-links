@@ -34,7 +34,7 @@ apply(ctx, {
   port: 18641,
   autoApprove: true,
   pairingTtlSeconds: 600,
-  extraUrls: ["http://test-relay.example.com:18641"],
+  extraUrls: ["https://test-relay.example.com:18641"],
   stateDir: "/tmp/dsh-links-test",
   debug: true,
 })

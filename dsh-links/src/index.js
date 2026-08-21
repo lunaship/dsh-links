@@ -16,7 +16,7 @@ import { randomBytes } from "node:crypto"
 import { zstdDecompressSync } from "node:zlib"
 import z from "@deepseek-ai/schemastery"
 import QRCode from "qrcode"
-import { projectHistoryPage } from "./history.js"
+import { clampHistoryMaxMessages, projectHistoryPage } from "./history.js"
 import {
   consumePairingCode, ensurePairingCode, hydratePairing, persistablePairing,
   randomToken, revokeDevice, sha256, verifyPairingCode,
@@ -117,6 +117,8 @@ function saveState(file, state) {
   }
   delete persist.pairingRate
   delete persist.pairingRates
+  delete persist.pairingGlobal
+  delete persist.pairingChallenge
   const data = JSON.stringify(persist, null, 2)
   const tmp = `${file}.${process.pid}.tmp`
   writeFileSync(tmp, data, { mode: 0o600 })
@@ -126,6 +128,21 @@ function saveState(file, state) {
 
 function now() {
   return Date.now()
+}
+
+/** extraUrls 只接受 https；http 一律升为 https。非法项丢弃。 */
+function requireHttpsUrl(raw) {
+  const s = String(raw ?? "").trim()
+  if (!s) return null
+  const withScheme = /^[a-z][a-z0-9+.-]*:/i.test(s) ? s : `https://${s}`
+  const https = withScheme.replace(/^http:\/\//i, "https://")
+  try {
+    const u = new URL(https)
+    if (u.protocol !== "https:") return null
+    return https
+  } catch {
+    return null
+  }
 }
 
 function classifyUrl(url) {
@@ -163,8 +180,10 @@ function lanUrls(config) {
     firstPrivate.isRecommended = true
   }
   for (const extra of config.extraUrls ?? []) {
-    urls.add(extra)
-    urlInfos.push({ url: extra, label: extra, category: "extra", isRecommended: false })
+    const httpsUrl = requireHttpsUrl(extra)
+    if (!httpsUrl) continue
+    urls.add(httpsUrl)
+    urlInfos.push({ url: httpsUrl, label: httpsUrl, category: "extra", isRecommended: false })
   }
   return { urls: [...urls], infos: urlInfos }
 }
@@ -379,7 +398,8 @@ async function handlePair(req, res, config, state, stateFile) {
   const ver = verifyPairingCode(state, code, clientKey)
   if (!ver.ok) {
     // pairingRates 仅内存；勿写入 state.json
-    json(res, 401, { error: ver.error })
+    const throttled = /频繁|失效|稍后再试/.test(ver.error ?? "")
+    json(res, throttled ? 429 : 401, { error: ver.error })
     return
   }
   if (!config.autoApprove) {
@@ -401,9 +421,11 @@ async function handlePair(req, res, config, state, stateFile) {
   json(res, 200, { ok: true, token, deviceId, name: deviceName, urls: lanUrls(config).urls })
 }
 
-/** 拼接多帧 zstd 解压（DSH 存储按帧追加写入）。 */
+const MAX_ZSTD_OUTPUT_BYTES = 32 * 1024 * 1024
+
+/** 拼接多帧 zstd 解压（DSH 存储按帧追加写入）。输出字节数硬顶，防压缩炸弹。 */
 function zstdDecompressAll(buf) {
-  return zstdDecompressSync(buf)
+  return zstdDecompressSync(buf, { maxOutputLength: MAX_ZSTD_OUTPUT_BYTES })
 }
 
 /**
@@ -554,6 +576,8 @@ async function selectSessionModel(targetPort, sessionId, provider, model, reason
  * workspace.* / settings.describe|update / agentPreset.list / llm.models|balance），
  * 不是 18640 上的开放转发。依赖 dsh 内部 API，升级时需复查。
  */
+const MAX_RPC_RESPONSE_BYTES = 8 * 1024 * 1024
+
 function callLocalRpc(targetPort, method, payload) {
   return new Promise((resolve, reject) => {
     const rpcId = "mobile-" + randomBytes(12).toString("hex")
@@ -573,7 +597,15 @@ function callLocalRpc(targetPort, method, payload) {
       },
       (response) => {
         const chunks = []
-        response.on("data", (chunk) => chunks.push(chunk))
+        let received = 0
+        response.on("data", (chunk) => {
+          received += chunk.length
+          if (received > MAX_RPC_RESPONSE_BYTES) {
+            request.destroy(new Error("RPC " + method + " response too large"))
+            return
+          }
+          chunks.push(chunk)
+        })
         response.on("end", () => {
           try {
             const frame = JSON.parse(Buffer.concat(chunks).toString("utf8"))
@@ -621,13 +653,23 @@ function sseCounts(rt) {
 }
 
 function closeSseForDevice(rt, deviceId) {
-  for (const [sessionId, writers] of rt.sessionStreams) {
+  for (const [sessionId, writers] of [...rt.sessionStreams]) {
     for (const conn of [...writers]) {
       if (conn.deviceId !== deviceId) continue
       writers.delete(conn)
       try { conn.res.destroy() } catch {}
     }
     if (writers.size === 0) dropSession(rt, sessionId)
+  }
+  settleOrphanApprovals(rt)
+}
+
+function settleOrphanApprovals(rt) {
+  for (const rec of [...rt.pendingApprovals.values()]) {
+    const writers = rec.sessionId ? rt.sessionStreams.get(rec.sessionId) : null
+    if (!writers || writers.size === 0) {
+      try { rec.settle("cancelled") } catch {}
+    }
   }
 }
 
@@ -659,6 +701,7 @@ async function sessionFilePath(targetPort, sessionId, rt) {
 function dropSession(rt, sessionId) {
   rt.sessionStreams.delete(sessionId)
   rt.sessionFiles.delete(sessionId)
+  settleOrphanApprovals(rt)
 }
 
 function writeSse(writers, frame) {
@@ -782,6 +825,7 @@ async function handleStreamRoute(sessionId, res, targetPort, config, req, rt, de
     const set = rt.sessionStreams.get(sessionId)
     set?.delete(conn)
     if (set && set.size === 0) dropSession(rt, sessionId)
+    else settleOrphanApprovals(rt)
   })
 }
 
@@ -1085,10 +1129,10 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
       const rawBeforeSeq = search.get("beforeSeq")
       const rawMaxMessages = search.get("maxMessages")
       const beforeSeq = Number(rawBeforeSeq ?? "")
-      const maxMessages = Number(rawMaxMessages ?? "")
+      const maxMessages = clampHistoryMaxMessages(rawMaxMessages)
       const isTailPage = rawBeforeSeq === null && rawMaxMessages === null
       if (!isTailPage && Number.isInteger(beforeSeq) && beforeSeq > 0) rpcPayload.beforeSeq = beforeSeq
-      if (Number.isInteger(maxMessages) && maxMessages > 0) rpcPayload.maxMessages = maxMessages
+      if (maxMessages !== undefined) rpcPayload.maxMessages = maxMessages
       const value = await callLocalRpc(targetPort, "session.history", rpcPayload)
       const rawEvents = value.events ?? []
       // 会话统计（tokenUsage/sessionStats/contextPressure/contextBreakdown/todos projections）
@@ -1279,7 +1323,7 @@ export function apply(ctx, config) {
       }
       const onAbort = () => settle("cancelled")
       const timer = setTimeout(() => settle("unavailable"), APPROVAL_TIMEOUT_MS)
-      rt.pendingApprovals.set(id, { settle, timer, onAbort })
+      rt.pendingApprovals.set(id, { settle, timer, onAbort, sessionId })
       req.signal?.addEventListener("abort", onAbort, { once: true })
     })
   })
@@ -1392,7 +1436,7 @@ export function apply(ctx, config) {
       rt.sessionStreams.clear()
       rt.sessionFiles.clear()
       rt.reasoningCache.clear()
-      for (const rec of rt.pendingApprovals.values()) {
+      for (const rec of [...rt.pendingApprovals.values()]) {
         try { rec.settle("cancelled") } catch {}
       }
       rt.pendingApprovals.clear()

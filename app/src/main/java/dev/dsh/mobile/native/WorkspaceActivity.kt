@@ -11,6 +11,7 @@ import dev.dsh.mobile.core.AppSettingsStore
 import dev.dsh.mobile.core.DshNotifier
 import dev.dsh.mobile.core.DshTheme
 import dev.dsh.mobile.core.HostStore
+import dev.dsh.mobile.core.MarkdownMedia
 import dev.dsh.mobile.devices.DevicesActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
@@ -7135,27 +7136,27 @@ private fun MarkdownContent(text: String, streaming: Boolean = false) {
                 )
             }
             MarkdownBlockType.IMAGE -> {
-                // 网络图片（DSH markdown 图片）
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(DshRadius.lg))
-                        .background(Dsh.bgLayer1)
-                        .clickable {
-                            val uri = android.net.Uri.parse(block.content)
-                            val scheme = uri.scheme?.lowercase()
-                            if (scheme != "http" && scheme != "https") return@clickable
-                            runCatching {
-                                context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, uri))
+                val imageUrl = MarkdownMedia.takeIfSafe(block.content)
+                if (imageUrl != null) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(DshRadius.lg))
+                            .background(Dsh.bgLayer1)
+                            .clickable {
+                                val uri = android.net.Uri.parse(imageUrl)
+                                runCatching {
+                                    context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, uri))
+                                }
                             }
-                        }
-                ) {
-                    coil.compose.AsyncImage(
-                        model = block.content,
-                        contentDescription = null,
-                        contentScale = androidx.compose.ui.layout.ContentScale.FillWidth,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    ) {
+                        coil.compose.AsyncImage(
+                            model = imageUrl,
+                            contentDescription = null,
+                            contentScale = androidx.compose.ui.layout.ContentScale.FillWidth,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
                 }
             }
             MarkdownBlockType.MATH -> LatexDisplayBlock(block.content)
@@ -7326,8 +7327,12 @@ private fun splitMarkdownBlocks(text: String): List<MarkdownBlock> {
                 val urlStart = trimmed.indexOf('(', close)
                 val urlEnd = trimmed.indexOf(')', urlStart)
                 if (urlStart > 0 && urlEnd > urlStart) {
-                    val url = trimmed.substring(urlStart + 1, urlEnd)
-                    blocks.add(MarkdownBlock(MarkdownBlockType.IMAGE, url))
+                    val url = trimmed.substring(urlStart + 1, urlEnd).trim()
+                    if (MarkdownMedia.isSafeImageUrl(url)) {
+                        blocks.add(MarkdownBlock(MarkdownBlockType.IMAGE, url))
+                    } else {
+                        blocks.add(MarkdownBlock(MarkdownBlockType.PARAGRAPH, line))
+                    }
                 } else {
                     blocks.add(MarkdownBlock(MarkdownBlockType.PARAGRAPH, line))
                 }

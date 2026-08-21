@@ -18,7 +18,6 @@ import com.google.zxing.ResultPoint
 import com.journeyapps.barcodescanner.BarcodeCallback
 import com.journeyapps.barcodescanner.BarcodeResult
 import com.journeyapps.barcodescanner.DecoratedBarcodeView
-import org.json.JSONObject
 import java.util.concurrent.Executors
 
 class ScanActivity : AppCompatActivity() {
@@ -66,56 +65,51 @@ class ScanActivity : AppCompatActivity() {
         barcodeView.pause()
 
         val text = result.text ?: ""
-        var payload: JSONObject? = null
-        try {
-            payload = JSONObject(text)
-        } catch (e: Exception) {
-            payload = null
-        }
-
-        if (payload != null && payload.optString("type") == "dsh-link") {
-            // 兼容 pairingCode / code 两种字段命名
-            val code = payload.optString("pairingCode", payload.optString("code")).trim()
-            val urlsArr = payload.optJSONArray("urls")
-            val urls = (0 until (urlsArr?.length() ?: 0)).map { urlsArr!!.getString(it) }
-            val fallbackName = payload.optString("name", "dsh").ifBlank { "dsh" }
-            if (code.isEmpty() || urls.isEmpty()) {
+        when (val parsed = parsePairingQr(text)) {
+            PairingQrResult.NotDsh -> {
+                scanFailed("不是 dsh 连接二维码")
+                return
+            }
+            PairingQrResult.Invalid -> {
                 scanFailed("二维码内容不完整")
                 return
             }
-            val qrFp = payload.optString("certFingerprint").trim()
-            executor.execute {
-                var lastError = "所有地址都无法连接"
-                for (u in urls) {
-                    try {
-                        val pin = qrFp.takeIf { it.isNotBlank() && PinnedSsl.shouldPin(u) }
-                        val r = try {
-                            PairClient.pair(u, code, DeviceName.of(this), pin)
-                        } catch (e: PinnedSsl.CertChangedException) {
-                            if (PinnedSsl.shouldPin(u)) throw e
-                            PairClient.pair(u, code, DeviceName.of(this), null)
-                        }
-                        runOnUiThread {
-                            if (isFinishing) return@runOnUiThread
-                            if (!HostStore.upsert(this, Host(fallbackName, r.baseUrl, r.token, r.deviceId, r.certFingerprint))) {
-                                scanFailed("凭据无法保存，请重新配对")
-                                return@runOnUiThread
+            is PairingQrResult.Ok -> {
+                val code = parsed.qr.code
+                val urls = parsed.qr.urls
+                val fallbackName = parsed.qr.name
+                val qrFp = parsed.qr.certFingerprint
+                executor.execute {
+                    var lastError = "所有地址都无法连接"
+                    for (u in urls) {
+                        try {
+                            val pin = qrFp.takeIf { it.isNotBlank() && PinnedSsl.shouldPin(u) }
+                            val r = try {
+                                PairClient.pair(u, code, DeviceName.of(this), pin)
+                            } catch (e: PinnedSsl.CertChangedException) {
+                                if (PinnedSsl.shouldPin(u)) throw e
+                                PairClient.pair(u, code, DeviceName.of(this), null)
                             }
-                            Toast.makeText(this, "已连接 $fallbackName", Toast.LENGTH_SHORT).show()
-                            startActivity(android.content.Intent(this@ScanActivity, WorkspaceActivity::class.java).putExtra("hostBaseUrl", r.baseUrl))
-                            finish()
+                            runOnUiThread {
+                                if (isFinishing) return@runOnUiThread
+                                if (!HostStore.upsert(this, Host(fallbackName, r.baseUrl, r.token, r.deviceId, r.certFingerprint))) {
+                                    scanFailed("凭据无法保存，请重新配对")
+                                    return@runOnUiThread
+                                }
+                                Toast.makeText(this, "已连接 $fallbackName", Toast.LENGTH_SHORT).show()
+                                startActivity(android.content.Intent(this@ScanActivity, WorkspaceActivity::class.java).putExtra("hostBaseUrl", r.baseUrl))
+                                finish()
+                            }
+                            return@execute
+                        } catch (e: Exception) {
+                            val unwrapped = PinnedSsl.unwrap(e)
+                            lastError = "$u: ${unwrapped.message ?: unwrapped.javaClass.simpleName}"
                         }
-                        return@execute
-                    } catch (e: Exception) {
-                        val unwrapped = PinnedSsl.unwrap(e)
-                        lastError = "$u: ${unwrapped.message ?: unwrapped.javaClass.simpleName}"
                     }
+                    val msg = lastError
+                    runOnUiThread { scanFailed(msg) }
                 }
-                val msg = lastError
-                runOnUiThread { scanFailed(msg) }
             }
-        } else {
-            scanFailed("不是 dsh 连接二维码")
         }
     }
 

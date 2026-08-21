@@ -12,12 +12,12 @@ DSH Links connects a phone to [DeepSeek Harness (dsh)](https://github.com/deepse
 
 - Pair only on networks you trust; prefer QR / pairing code over sharing URLs widely.
 - Revoke lost or unused devices from the Web UI「手机连接」panel.
-- Keep `18640` off the public Internet unless you add another control plane (e.g. Cloudflare Tunnel + Access). See [`remote/README.md`](remote/README.md).
+- Keep `18640` off the public Internet unless you put Cloudflare Tunnel **and** Access (or equivalent VPN) in front of it. The example in [`remote/cloudflared.yml.example`](remote/cloudflared.yml.example) is fail-closed: Access JWT validation is required. See [`remote/README.md`](remote/README.md).
 - Prefer short-lived pairing codes; do not paste tokens into chat logs or screenshots.
 
 ## Do not
 
-- Expose `0.0.0.0:18640` to untrusted networks without Access / VPN / equivalent.
+- Expose `0.0.0.0:18640` to untrusted networks without Access / VPN / equivalent. Do not copy the tunnel example with Access placeholders left unreplaced.
 - Commit `local.properties`, keystores, `state.json`, or any `*.token` / `*.pem` files.
 - Rely on Host/Origin rewriting as authentication — auth is the device token.
 

@@ -6,13 +6,18 @@
  *
  * 安全约定：
  *   - 配对码明文不落盘
- *   - 失败限流按客户端 IP 隔离，避免全局锁死配对
+ *   - 失败限流按客户端 IP 隔离，避免单 IP 全局锁死配对
+ *   - 同一配对码跨 IP 总失败次数封顶后作废（防分布式猜测）
+ *   - 全局预算 + 短冷却，降低爆破速率
  *   - 冷却期内不换发新码（ensurePairingCode 仍可展示未过期码）
  */
 import * as crypto from "node:crypto"
 
 export const PAIR_FAIL_LIMIT = 5                  // 失败限流阈值（每客户端）
 export const PAIR_COOLDOWN_MS = 15 * 60 * 1000    // 冷却 15 分钟
+export const PAIR_CHALLENGE_FAIL_LIMIT = 25       // 当前配对码跨 IP 总失败上限
+export const PAIR_GLOBAL_FAIL_LIMIT = 40          // 进程级失败预算
+export const PAIR_GLOBAL_COOLDOWN_MS = 60 * 1000  // 全局短冷却
 
 const liveCodes = new WeakMap()
 
@@ -62,6 +67,21 @@ function pairingRateFor(state, clientKey = "unknown") {
     state.pairingRates[key] = { failCount: 0, cooldownUntil: 0 }
   }
   return state.pairingRates[key]
+}
+
+function pairingGlobal(state) {
+  if (!state.pairingGlobal || typeof state.pairingGlobal !== "object") {
+    state.pairingGlobal = { failCount: 0, cooldownUntil: 0 }
+  }
+  return state.pairingGlobal
+}
+
+function pairingChallenge(state) {
+  const codeHash = state.pairing?.codeHash ?? "none"
+  if (!state.pairingChallenge || state.pairingChallenge.codeHash !== codeHash) {
+    state.pairingChallenge = { codeHash, failCount: 0 }
+  }
+  return state.pairingChallenge
 }
 
 export function getLivePairingCode(state) {
@@ -128,6 +148,8 @@ export function ensurePairingCode(state, ttlSeconds) {
  */
 export function verifyPairingCode(state, code, clientKey = "unknown") {
   const rate = pairingRateFor(state, clientKey)
+  const global = pairingGlobal(state)
+  if (Date.now() < (global.cooldownUntil ?? 0)) return { ok: false, error: "尝试过于频繁，请稍后再试" }
   if (Date.now() < (rate.cooldownUntil ?? 0)) return { ok: false, error: "尝试过于频繁，请稍后再试" }
   const p = state.pairing ?? {}
   const live = getLivePairingCode(state)
@@ -151,6 +173,19 @@ export function verifyPairingCode(state, code, clientKey = "unknown") {
     if (rate.failCount >= PAIR_FAIL_LIMIT) {
       rate.cooldownUntil = Date.now() + PAIR_COOLDOWN_MS
       rate.failCount = 0
+    }
+    const challenge = pairingChallenge(state)
+    challenge.failCount = (challenge.failCount ?? 0) + 1
+    global.failCount = (global.failCount ?? 0) + 1
+    if (challenge.failCount >= PAIR_CHALLENGE_FAIL_LIMIT) {
+      consumePairingCode(state)
+      return { ok: false, error: "尝试过多，配对码已失效，请刷新二维码" }
+    }
+    if (global.failCount >= PAIR_GLOBAL_FAIL_LIMIT) {
+      global.cooldownUntil = Date.now() + PAIR_GLOBAL_COOLDOWN_MS
+      global.failCount = 0
+      consumePairingCode(state)
+      return { ok: false, error: "尝试过于频繁，请稍后再试" }
     }
     return { ok: false, error: "配对码无效" }
   }
