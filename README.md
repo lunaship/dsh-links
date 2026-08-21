@@ -2,7 +2,18 @@
 
 DSH 电脑端插件（npm 包 `dsh-links`）：给 [DeepSeek Harness](https://github.com/deepseek-ai) 增加局域网手机接入。
 
-**Beta** · **LAN only** · **Unofficial**
+**Beta** · **Android only** · **Trusted LAN only** · **Unofficial**
+
+## Beta support boundary
+
+This release is a **trusted-LAN Android Beta**, not a public remote-access product.
+
+- **Supported:** Android phone and DSH `0.1.0-rc.8` on the same trusted LAN.
+- **Experimental, at your own risk:** a Tailscale or Cloudflare Tunnel path you operate yourself. It is not a supported Beta path and is not covered by the security or compatibility promise.
+- **Not supported:** exposing port `18640` directly to the public Internet, frp, or any hosted relay configuration.
+- **Planned:** `dsh-links-relay` will be released separately only after its self-hosted remote-access security model and end-to-end acceptance tests are complete.
+
+The Android APK is distributed only as an official signed release. Verify the version and SHA-256 published with that release; do not install repackaged APKs.
 
 同级仓库（已拆开，互不混推）：
 
@@ -36,6 +47,14 @@ dsh plugin --profile web add /path/to/dsh-links
 - `/dsh-link/mobile/*` 会话、SSE、审批、吊销
 
 详情见 [`SECURITY.md`](SECURITY.md)、[`PRIVACY.md`](PRIVACY.md)。远程中继见同级 `dsh-links-relay`（非 Beta 支持路径）。
+
+## 自管远端接入（实验性）
+
+公开 Beta 的正式支持范围仍是可信局域网；如果你只为自己使用，可通过 Tailscale 私网或 Cloudflare Tunnel 建立远端网络路径。它们不改变配对码、设备 Token 或吊销机制，但也不属于兼容性与安全承诺范围。
+
+- [Tailscale / Cloudflare Tunnel / 原生 Relay 路线说明](REMOTE_ACCESS.md)
+- 不要把 `18640` 直接做路由器端口转发。
+- 原生自管 Relay 尚未发布：其目标是电脑 `local-relay` 主动连向你的 VPS Relay，手机通过 Relay 访问已配对设备，电脑不接受公网入站连接。
 
 ## 开发
 

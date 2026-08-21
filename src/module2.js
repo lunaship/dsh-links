@@ -1,8 +1,8 @@
 /**
  * dsh-links 客户端面 · 面板模块（作为 createPanelModule 工厂被主模块组合调用）
- * 「手机连接」：局域网配对（二维码 / 配对码 / 设备）。当前 Beta 只支持可信局域网。
+ * 「手机连接」：局域网配对与自管远端连接（Tailscale / Cloudflare Tunnel / Relay 路线图）。
  *
- * Hallmark pre-emit critique: P5 H5 E4 S5 R5 V4
+ * Hallmark pre-emit critique: P5 H5 E5 S5 R5 V5
  */
 const createPanelModule = (require) => {
   const React = require('react')
@@ -91,6 +91,20 @@ const createPanelModule = (require) => {
       margin: 0; font-size: 13px; line-height: 1.5; color: var(--dl-muted);
       max-width: 36em;
     }
+    .dshlink-tabs {
+      display: flex; gap: 4px; padding: 4px; border-radius: 11px;
+      background: var(--dl-soft); border: 1px solid var(--dl-line);
+    }
+    .dshlink-tab {
+      flex: 1; appearance: none; cursor: pointer; border: 0; border-radius: 8px;
+      min-height: 32px; padding: 6px 10px; background: transparent; color: var(--dl-muted);
+      font: inherit; font-size: 12px; font-weight: 600; white-space: nowrap;
+      transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+    }
+    .dshlink-tab:hover { color: var(--dl-ink) }
+    .dshlink-tab.is-active { color: var(--dl-ink); background: var(--dl-paper); box-shadow: 0 1px 3px rgba(10, 14, 20, 0.12) }
+    .dshlink-tab:focus-visible { outline: 2px solid var(--dl-accent); outline-offset: 2px }
+    .dshlink-connection { display: flex; flex-direction: column; gap: 14px }
 
     .dshlink-lan {
       display: flex; flex-direction: column; gap: 14px;
@@ -140,22 +154,63 @@ const createPanelModule = (require) => {
       margin: 0; font-size: 12px; line-height: 1.45; color: var(--dl-muted);
     }
 
-    .dshlink-fp-block { display: flex; flex-direction: column; gap: 6px }
-    .dshlink-fp {
-      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-      font-size: 11px; line-height: 1.55; letter-spacing: 0.02em;
-      word-break: break-all;
-      padding: 10px 12px; border-radius: 10px;
-      background: var(--dl-soft); border: 1px solid var(--dl-line);
-      color: var(--dl-muted);
-    }
-    .dshlink-fp-help {
-      margin: 0; font-size: 11px; line-height: 1.45; color: var(--dl-faint);
-    }
     .dshlink-tunnel-note {
       margin: 0; font-size: 12px; line-height: 1.5; color: var(--dl-muted);
       padding: 10px 12px; border-radius: 10px;
       background: var(--dl-soft); border: 1px dashed var(--dl-line);
+    }
+    .dshlink-roadmap {
+      display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px;
+      align-items: start; padding: 13px 14px; border-radius: 12px;
+      background: linear-gradient(135deg, rgba(112, 78, 196, 0.09), transparent 72%), var(--dl-paper);
+      border: 1px solid rgba(112, 78, 196, 0.18);
+    }
+    .dshlink-roadmap-mark {
+      display: grid; place-items: center; width: 28px; height: 28px; border-radius: 9px;
+      color: #7050c4; background: rgba(112, 78, 196, 0.11); font-size: 14px; font-weight: 700;
+    }
+    .dshlink-roadmap-copy { min-width: 0; display: flex; flex-direction: column; gap: 3px }
+    .dshlink-roadmap-title { font-size: 13px; font-weight: 650; color: var(--dl-ink) }
+    .dshlink-roadmap-text { margin: 0; font-size: 12px; line-height: 1.5; color: var(--dl-muted) }
+    .dshlink-roadmap-status {
+      align-self: start; margin-left: 8px; font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+      color: #7050c4; background: rgba(112, 78, 196, 0.1); border-radius: 999px; padding: 3px 7px;
+    }
+
+    .dshlink-remote { display: flex; flex-direction: column; gap: 12px }
+    .dshlink-remote-intro {
+      margin: 0; font-size: 12px; line-height: 1.5; color: var(--dl-muted);
+    }
+    .dshlink-remote-card {
+      display: flex; flex-direction: column; gap: 10px; padding: 14px;
+      border-radius: 12px; border: 1px solid var(--dl-line); background: var(--dl-paper);
+    }
+    .dshlink-remote-card-head { display: flex; align-items: flex-start; gap: 9px }
+    .dshlink-remote-icon {
+      display: grid; place-items: center; flex: none; width: 27px; height: 27px; border-radius: 8px;
+      color: #7050c4; background: rgba(112, 78, 196, 0.11); font-size: 14px; font-weight: 700;
+    }
+    .dshlink-remote-title { font-size: 13px; font-weight: 650; color: var(--dl-ink) }
+    .dshlink-remote-summary { margin: 2px 0 0; font-size: 11px; line-height: 1.45; color: var(--dl-muted) }
+    .dshlink-remote-badge {
+      flex: none; margin-left: auto; font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+      color: #7050c4; background: rgba(112, 78, 196, 0.1); border-radius: 999px; padding: 3px 7px;
+    }
+    .dshlink-remote-steps { margin: 0; padding-left: 19px; font-size: 11px; line-height: 1.55; color: var(--dl-muted) }
+    .dshlink-remote-steps li + li { margin-top: 4px }
+    .dshlink-remote-code, .dshlink-remote-fingerprint {
+      margin: 0; overflow-x: auto; white-space: pre-wrap; word-break: break-word;
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 10px; line-height: 1.5;
+      color: var(--dl-muted); background: var(--dl-soft); border: 1px solid var(--dl-line); border-radius: 8px; padding: 9px 10px;
+    }
+    .dshlink-remote-fingerprint { color: var(--dl-ink); letter-spacing: 0.02em }
+    .dshlink-remote-note {
+      margin: 0; padding: 9px 10px; font-size: 11px; line-height: 1.5; color: var(--dl-muted);
+      background: rgba(185, 124, 18, 0.08); border: 1px solid rgba(185, 124, 18, 0.19); border-radius: 8px;
+    }
+    .dshlink-relay-flow {
+      margin: 0; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 10px;
+      line-height: 1.5; color: var(--dl-muted); text-align: center;
     }
 
     .dshlink-urls {
@@ -236,11 +291,11 @@ const createPanelModule = (require) => {
     return jsxs('div', {
       className: 'dshlink-brand',
       children: [
-        jsx('div', { className: 'dshlink-brand-kicker', children: 'DSH Links · LAN Beta' }),
+        jsx('div', { className: 'dshlink-brand-kicker', children: 'DSH Links · 局域网 Beta' }),
         jsx('div', { className: 'dshlink-brand-title', children: '手机连接' }),
         jsx('p', {
           className: 'dshlink-brand-lede',
-          children: '把本机 dsh 接到同一可信局域网内的 Android 手机。当前公开 Beta 只支持局域网，不提供远程连接。',
+          children: '局域网 Beta 可立即扫码配对；远端连接提供自管接入方式，并说明后续原生 Relay 的实现路线。',
         }),
       ],
     })
@@ -269,25 +324,12 @@ const createPanelModule = (require) => {
                 jsx('p', { className: 'dshlink-code', children: info.pairingCode }),
                 jsx('p', {
                   className: 'dshlink-hint',
-                  children: '10 分钟内有效。用 DSH Links App 扫码即可（指纹已写入二维码，无需手填）；或手动输入地址与配对码。',
+                  children: '10 分钟内有效。用 DSH Links App 扫码即可；二维码已包含地址、配对码和安全指纹。',
                 }),
               ],
             }),
           ],
         }),
-        info.certFingerprint
-          ? jsxs('div', {
-              className: 'dshlink-fp-block',
-              children: [
-                jsx('div', { className: 'dshlink-section-label', children: 'TLS 指纹' }),
-                jsx('div', { className: 'dshlink-fp', children: formatFingerprint(info.certFingerprint) }),
-                jsx('p', {
-                  className: 'dshlink-fp-help',
-                  children: '自签证书的身份指纹。扫码自动带上，不用填写；仅手动添加时在手机上对照确认即可。',
-                }),
-              ],
-            })
-          : null,
         rows.length
           ? jsxs('div', {
               className: 'dshlink-urls',
@@ -345,10 +387,142 @@ const createPanelModule = (require) => {
     })
   }
 
+  function RemoteBody({ info }) {
+    const pairingCode = info?.pairingCode || '本页加载完成后显示'
+    const fingerprint = info?.certFingerprint ? formatFingerprint(info.certFingerprint) : '本页加载完成后显示'
+    const cloudflaredConfig = `tunnel: <你的 Tunnel UUID>
+credentials-file: <cloudflared 凭据文件>
+ingress:
+  - hostname: dsh.example.com
+    service: https://127.0.0.1:18640
+    originRequest:
+      noTLSVerify: true
+  - service: http_status:404`
+
+    return jsxs('div', {
+      className: 'dshlink-remote',
+      children: [
+        jsx('p', {
+          className: 'dshlink-remote-intro',
+          children: '以下是你自己管理的远端接入方式。它们不改变配对码、设备 Token 或吊销机制；只改变手机抵达本机 18640 的网络路径。',
+        }),
+        jsxs('section', {
+          className: 'dshlink-remote-card',
+          children: [
+            jsxs('div', {
+              className: 'dshlink-remote-card-head',
+              children: [
+                jsx('span', { className: 'dshlink-remote-icon', 'aria-hidden': true, children: 'T' }),
+                jsxs('div', {
+                  children: [
+                    jsx('div', { className: 'dshlink-remote-title', children: 'Tailscale 私网连接' }),
+                    jsx('p', { className: 'dshlink-remote-summary', children: '推荐个人使用：手机和电脑加入同一 tailnet，不开放公网入口。' }),
+                  ],
+                }),
+                jsx('span', { className: 'dshlink-remote-badge', children: '推荐' }),
+              ],
+            }),
+            jsxs('ol', {
+              className: 'dshlink-remote-steps',
+              children: [
+                jsx('li', { children: '在电脑和手机安装 Tailscale，并登录同一个 tailnet。' }),
+                jsx('li', { children: '电脑执行 `tailscale ip -4`，取得 100.x.y.z 地址。' }),
+                jsx('li', { children: `在 DSH Links App 选择“手动添加”，填入 https://100.x.y.z:18640 与本页配对码 ${pairingCode}。` }),
+                jsx('li', { children: '首次连接会要求核对证书指纹；核对一致后再继续。' }),
+              ],
+            }),
+            jsxs('div', {
+              children: [
+                jsx('div', { className: 'dshlink-section-label', children: 'Tailscale 手动连接时核对的 TLS 指纹' }),
+                jsx('pre', { className: 'dshlink-remote-fingerprint', children: fingerprint }),
+              ],
+            }),
+          ],
+        }),
+        jsxs('section', {
+          className: 'dshlink-remote-card',
+          children: [
+            jsxs('div', {
+              className: 'dshlink-remote-card-head',
+              children: [
+                jsx('span', { className: 'dshlink-remote-icon', 'aria-hidden': true, children: 'C' }),
+                jsxs('div', {
+                  children: [
+                    jsx('div', { className: 'dshlink-remote-title', children: 'Cloudflare Tunnel' }),
+                    jsx('p', { className: 'dshlink-remote-summary', children: '使用你自己的域名把公开 HTTPS 请求转入本机；不需要路由器端口转发。' }),
+                  ],
+                }),
+                jsx('span', { className: 'dshlink-remote-badge', children: '实验性' }),
+              ],
+            }),
+            jsxs('ol', {
+              className: 'dshlink-remote-steps',
+              children: [
+                jsx('li', { children: '创建你自己的 Tunnel 和 hostname，再将 hostname 仅指向本机 18640。' }),
+                jsx('li', { children: '使用下面的 ingress；不要把 DSH Web 管理台 3080 一起发布。' }),
+                jsx('li', { children: `在 App“手动添加”中填入 https://你的域名 与本页配对码 ${pairingCode}。` }),
+              ],
+            }),
+            jsx('pre', { className: 'dshlink-remote-code', children: cloudflaredConfig }),
+            jsx('p', {
+              className: 'dshlink-remote-note',
+              children: '当前 App 不会完成 Cloudflare Access 登录，也不会携带 Access JWT；启用 `originRequest.access.required` 会导致配对与运行请求失败。该能力需要随原生 Relay 一起完成。',
+            }),
+          ],
+        }),
+        jsxs('section', {
+          className: 'dshlink-roadmap',
+          children: [
+            jsx('span', { className: 'dshlink-roadmap-mark', 'aria-hidden': true, children: '↗' }),
+            jsxs('div', {
+              className: 'dshlink-roadmap-copy',
+              children: [
+                jsx('div', { className: 'dshlink-roadmap-title', children: '原生云端连接：自管 Relay' }),
+                jsx('p', {
+                  className: 'dshlink-roadmap-text',
+                  children: '电脑侧 local-relay 主动连向你的 VPS Relay；手机连 Relay，Relay 只转发已认证的设备会话。这样个人电脑没有入站公网端口，访问控制与设备吊销由产品统一处理。',
+                }),
+                jsx('p', { className: 'dshlink-relay-flow', children: '手机 App ⇄ 你的 Relay ⇄ local-relay ⇄ 127.0.0.1:18640' }),
+              ],
+            }),
+            jsx('span', { className: 'dshlink-roadmap-status', children: '规划中' }),
+          ],
+        }),
+      ],
+    })
+  }
+
+  function ConnectionTabs({ active, onChange }) {
+    return jsxs('div', {
+      className: 'dshlink-tabs',
+      role: 'navigation',
+      'aria-label': '连接方式',
+      children: [
+        jsx('button', {
+          type: 'button', 'aria-pressed': active === 'lan',
+          className: 'dshlink-tab' + (active === 'lan' ? ' is-active' : ''),
+          onClick: () => onChange('lan'), children: '局域网',
+        }),
+        jsx('button', {
+          type: 'button', 'aria-pressed': active === 'remote',
+          className: 'dshlink-tab' + (active === 'remote' ? ' is-active' : ''),
+          onClick: () => onChange('remote'), children: '远端连接',
+        }),
+      ],
+    })
+  }
+
   function ConnectionBody({ info, devices, err, revoke }) {
+    const [active, setActive] = React.useState('lan')
     if (err) return jsx('div', { className: 'dshlink-status is-error', children: `加载失败：${err}` })
     if (!info) return jsx('div', { className: 'dshlink-status', children: '加载中…' })
-    return jsx(LanBody, { info, devices, revoke })
+    return jsxs('div', {
+      className: 'dshlink-connection',
+      children: [
+        jsx(ConnectionTabs, { active, onChange: setActive }),
+        active === 'lan' ? jsx(LanBody, { info, devices, revoke }) : jsx(RemoteBody, { info }),
+      ],
+    })
   }
 
   function usePairData(active) {
