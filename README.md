@@ -10,8 +10,8 @@ This release is a **trusted-LAN Android Beta**, not a public remote-access produ
 
 - **Supported:** Android phone and DSH `0.1.0-rc.8` on the same trusted LAN.
 - **Experimental, at your own risk:** a Tailscale or Cloudflare Tunnel path you operate yourself. It is not a supported Beta path and is not covered by the security or compatibility promise.
-- **Not supported:** exposing port `18640` directly to the public Internet, frp, or any hosted relay configuration.
-- **Planned:** `dsh-links-relay` will be released separately only after its self-hosted remote-access security model and end-to-end acceptance tests are complete.
+- **Not supported:** exposing port `18640` directly to the public Internet or using frp. DSH Links Relay is not available in this Beta.
+- **Planned:** DSH Links Relay is currently in development. It will be released only after its security model and end-to-end acceptance tests are complete.
 
 The Android APK is distributed only as an official signed release. Verify the version and SHA-256 published with that release; do not install repackaged APKs.
 
@@ -20,8 +20,8 @@ The Android APK is distributed only as an official signed release. Verify the ve
 | 目录 | 用途 |
 |---|---|
 | **本仓库 `dsh-links`** | 插件 + 手机 API（可公开） |
-| [`../dsh-links-app`](../dsh-links-app) | Android 客户端（**私有**，只发签名 APK） |
-| [`../dsh-links-relay`](../dsh-links-relay) | 自建远程中继（规划中） |
+| Android 客户端 | **私有**；仅发布官方签名 APK |
+| DSH Links Relay | 正在建设中；当前不可用 |
 
 ## 安装
 
@@ -36,7 +36,7 @@ dsh web
 dsh plugin --profile web add /path/to/dsh-links
 ```
 
-然后重启 `dsh web`，设置 →「手机连接」扫码或手动配对。
+然后重启 `dsh web`，设置 →「手机连接」扫码或手动配对。扫码中的地址或手动填写的地址可以指向家中电脑或远程服务器上运行的 DSH；当前 Beta 正式支持同一可信局域网，跨网络访问需要你自行配置 Tailscale / Cloudflare Tunnel，或等待正在建设中的 DSH Links Relay。
 
 已验证：DSH `0.1.0-rc.8` + 本插件 `0.1.0-beta.1`。
 
@@ -46,15 +46,15 @@ dsh plugin --profile web add /path/to/dsh-links
 - `0.0.0.0:18640` HTTPS 手机接入代理
 - `/dsh-link/mobile/*` 会话、SSE、审批、吊销
 
-详情见 [`SECURITY.md`](SECURITY.md)、[`PRIVACY.md`](PRIVACY.md)。远程中继见同级 `dsh-links-relay`（非 Beta 支持路径）。
+详情见 [`SECURITY.md`](SECURITY.md)、[`PRIVACY.md`](PRIVACY.md) 与 [`REMOTE_ACCESS.md`](REMOTE_ACCESS.md)。
 
-## 自管远端接入（实验性）
+## 远端连接路线（实验性）
 
 公开 Beta 的正式支持范围仍是可信局域网；如果你只为自己使用，可通过 Tailscale 私网或 Cloudflare Tunnel 建立远端网络路径。它们不改变配对码、设备 Token 或吊销机制，但也不属于兼容性与安全承诺范围。
 
 - [Tailscale / Cloudflare Tunnel / DSH Links Relay 路线说明](REMOTE_ACCESS.md)
 - 不要把 `18640` 直接做路由器端口转发。
-- DSH Links Relay 尚未发布：将由 DSH Links 自建并运营公共中继服务。电脑 `local-relay` 和手机 App 均主动连接 Relay；Relay 仅实时转发已配对设备的请求与响应，不持久化存储会话内容、文件、工作区数据或设备内容，电脑不接受公网入站连接。
+- DSH Links Relay 正在建设中：计划中电脑 `local-relay` 和手机 App 均主动连接 Relay；Relay 仅实时转发已配对设备的请求与响应，不持久化存储会话内容、文件、工作区数据或设备内容，电脑不接受公网入站连接。
 
 ## 开发
 

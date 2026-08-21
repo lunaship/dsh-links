@@ -1,12 +1,12 @@
-# 自管远端接入
+# 远端连接路线（实验性）
 
-`dsh-links` 当前正式支持的是可信局域网 Android Beta。本页说明两种由你自己管理的实验性远端网络路径，以及计划中的原生 Relay；它们不是已经发布的“云端连接”产品。
+扫码中的地址或手动填写的地址可以指向家中电脑或远程服务器上运行的 DSH。`dsh-links` 当前正式支持的是可信局域网 Android Beta；本页说明两种由你自己管理的实验性跨网络路径，以及正在建设中的 DSH Links Relay。它们都不是已经发布的“云端连接”产品。
 
 | 方式 | 适合什么 | 公网入口 | 手机添加地址 |
 |---|---|---|---|
 | Tailscale | 个人电脑和自己的手机 | 无 | `https://100.x.y.z:18640` |
 | Cloudflare Tunnel | 自己的域名、跨网络直连 | 有，由你的 Tunnel 管理 | `https://dsh.example.com` |
-| 原生 Relay | 自建 VPS、统一身份与设备管理 | Relay，尚未发布 | 暂不可用 |
+| DSH Links Relay | 面向跨网络设备连接 | Relay，建设中 | 暂不可用 |
 
 ## Tailscale 私网
 
@@ -53,6 +53,6 @@ Android App 当前不会执行 Cloudflare Access 的网页登录，也不会携�
 手机 App  ⇄  DSH Links Relay 服务  ⇄  电脑 local-relay  ⇄  127.0.0.1:18640
 ```
 
-目标形态是由 DSH Links 自建并运营公共 Relay 服务。电脑 `local-relay` 与手机 App 均主动连接 Relay，电脑不接受公网入站连接。Relay 仅实时转发已配对设备的请求与响应，不持久化存储会话内容、文件、工作区数据或设备内容；设备吊销会切断后续远端请求。
+DSH Links Relay 正在建设中。计划形态是电脑 `local-relay` 与手机 App 均主动连接 Relay，电脑不接受公网入站连接。Relay 仅实时转发已配对设备的请求与响应，不持久化存储会话内容、文件、工作区数据或设备内容；设备吊销会切断后续远端请求。
 
 协议、Relay 实现、安装包和端到端验收尚未发布，当前不可配置或下载。
