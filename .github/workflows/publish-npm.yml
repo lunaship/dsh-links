@@ -1,0 +1,58 @@
+name: Publish npm package
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing Git tag to publish (for a deliberate retry)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: npm-publish-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Verify and publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the release tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify release version
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          node -e "const version = require('./package.json').version; const tag = process.env.RELEASE_TAG; if (tag !== 'v' + version) { throw new Error('Release tag must equal v' + version + '; got ' + tag) }"
+
+      - name: Test
+        run: pnpm test
+
+      - name: Publish with npm Trusted Publishing
+        run: |
+          DIST_TAG="$(node -p \"require('./package.json').version.split('-')[1]?.split('.')[0] || 'latest'\")"
+          npm publish --access public --tag "$DIST_TAG"
