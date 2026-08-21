@@ -289,6 +289,9 @@ class DshStrings(private val values: Map<String, String>) {
     val cancelled: String get() = t("cancelled")
     val timeoutStopped: String get() = t("timeoutStopped")
     val thinking: String get() = t("thinking")
+    val thinkingActive: String get() = t("thinkingActive")
+    val thoughtDone: String get() = t("thoughtDone")
+    val thoughtForSeconds: String get() = t("thoughtForSeconds")
     val justNowShort: String get() = t("justNowShort")
     val minutesShort: String get() = t("minutesShort")
     val hoursShort: String get() = t("hoursShort")
@@ -364,6 +367,11 @@ class DshStrings(private val values: Map<String, String>) {
     val paletteSwitchTrace: String get() = t("paletteSwitchTrace")
     val paletteSelectModel: String get() = t("paletteSelectModel")
     val paletteSelectPermission: String get() = t("paletteSelectPermission")
+    val unofficialNotice: String get() = t("unofficialNotice")
+    val aboutVersion: String get() = t("aboutVersion")
+    val openSourceLicense: String get() = t("openSourceLicense")
+    val thirdPartyNotices: String get() = t("thirdPartyNotices")
+    val legalLoadFailed: String get() = t("legalLoadFailed")
 }
 
 val DshStringsZh = DshStrings(
@@ -607,6 +615,9 @@ val DshStringsZh = DshStrings(
         put("cancelled", "已取消")
         put("timeoutStopped", "超时停止")
         put("thinking", "思考")
+        put("thinkingActive", "思考中")
+        put("thoughtDone", "已思考")
+        put("thoughtForSeconds", "已思考 %d 秒")
         put("justNowShort", "刚刚")
         put("minutesShort", "%d分钟")
         put("hoursShort", "%d小时")
@@ -682,6 +693,11 @@ val DshStringsZh = DshStrings(
         put("paletteSwitchTrace", "切换到轨迹视图")
         put("paletteSelectModel", "选择模型")
         put("paletteSelectPermission", "选择权限")
+        put("unofficialNotice", "DSH Links 是独立的非官方社区项目，与 DeepSeek 官方不存在隶属、授权或背书关系。DeepSeek Harness 名称及相关标识归其权利人所有。当前公开 Beta 只支持可信局域网。")
+        put("aboutVersion", "版本 %s · 局域网 Beta")
+        put("openSourceLicense", "开源许可")
+        put("thirdPartyNotices", "第三方声明")
+        put("legalLoadFailed", "无法加载 %s")
     }
 )
 
@@ -926,6 +942,9 @@ val DshStringsEn = DshStrings(
         put("cancelled", "Cancelled")
         put("timeoutStopped", "Timed out")
         put("thinking", "Thinking")
+        put("thinkingActive", "Thinking")
+        put("thoughtDone", "Thought")
+        put("thoughtForSeconds", "Thought for %d seconds")
         put("justNowShort", "Just now")
         put("minutesShort", "%dm")
         put("hoursShort", "%dh")
@@ -1001,6 +1020,11 @@ val DshStringsEn = DshStrings(
         put("paletteSwitchTrace", "Switch to trace view")
         put("paletteSelectModel", "Select model")
         put("paletteSelectPermission", "Select permissions")
+        put("unofficialNotice", "DSH Links is an independent unofficial community project. It is not affiliated with, authorized by, or endorsed by DeepSeek. DeepSeek Harness names and marks belong to their respective owners. This public Beta supports trusted LAN only.")
+        put("aboutVersion", "Version %s · LAN Beta")
+        put("openSourceLicense", "Open source license")
+        put("thirdPartyNotices", "Third-party notices")
+        put("legalLoadFailed", "Could not load %s")
     }
 )
 

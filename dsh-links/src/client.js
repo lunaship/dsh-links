@@ -6,7 +6,7 @@
  */
 /**
  * dsh-links 客户端面 · 面板模块（作为 createPanelModule 工厂被主模块组合调用）
- * 「手机连接」：局域网配对（二维码 / 配对码 / 设备）+ 云端连接（敬请期待）。
+ * 「手机连接」：局域网配对（二维码 / 配对码 / 设备）。当前 Beta 只支持可信局域网。
  *
  * Hallmark pre-emit critique: P5 H5 E4 S5 R5 V4
  */
@@ -96,30 +96,6 @@ const createPanelModule = (require) => {
     .dshlink-brand-lede {
       margin: 0; font-size: 13px; line-height: 1.5; color: var(--dl-muted);
       max-width: 36em;
-    }
-
-    .dshlink-modes {
-      display: grid; grid-template-columns: 1fr 1fr; gap: 4px;
-      padding: 4px; border-radius: 12px;
-      background: var(--dl-soft);
-      border: 1px solid var(--dl-line);
-    }
-    .dshlink-mode {
-      appearance: none; border: 0; cursor: pointer;
-      border-radius: 9px; padding: 10px 12px;
-      background: transparent; color: var(--dl-muted);
-      font: inherit; font-size: 13px; font-weight: 600;
-      letter-spacing: 0.01em;
-      transition: background 0.16s ease, color 0.16s ease, box-shadow 0.16s ease;
-    }
-    .dshlink-mode:hover { color: var(--dl-ink) }
-    .dshlink-mode:focus-visible {
-      outline: 2px solid var(--dl-accent); outline-offset: 2px;
-    }
-    .dshlink-mode.is-active {
-      background: var(--dl-paper);
-      color: var(--dl-ink);
-      box-shadow: 0 1px 2px rgba(18, 20, 26, 0.06), 0 4px 12px rgba(18, 20, 26, 0.06);
     }
 
     .dshlink-lan {
@@ -247,38 +223,6 @@ const createPanelModule = (require) => {
       border: 1px dashed var(--dl-line); text-align: center;
     }
 
-    .dshlink-cloud {
-      position: relative; overflow: hidden;
-      border-radius: 16px; padding: 28px 22px 24px;
-      border: 1px solid var(--dl-line);
-      background:
-        radial-gradient(120% 90% at 100% 0%, rgba(13, 235, 243, 0.16), transparent 55%),
-        radial-gradient(80% 70% at 0% 100%, rgba(10, 158, 170, 0.08), transparent 50%),
-        var(--dl-soft);
-      text-align: left;
-    }
-    .dshlink-cloud-badge {
-      display: inline-flex; align-items: center;
-      font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: var(--dl-accent);
-      background: rgba(255, 255, 255, 0.72);
-      border: 1px solid rgba(10, 158, 170, 0.22);
-      border-radius: 999px; padding: 4px 10px;
-      margin-bottom: 14px;
-    }
-    .dshlink-cloud-title {
-      margin: 0 0 8px; font-size: 18px; font-weight: 650;
-      letter-spacing: -0.02em; line-height: 1.3;
-    }
-    .dshlink-cloud-body {
-      margin: 0; font-size: 13px; line-height: 1.55; color: var(--dl-muted);
-      max-width: 32em;
-    }
-    .dshlink-cloud-note {
-      margin: 16px 0 0; font-size: 12px; color: var(--dl-faint);
-    }
-
     .dshlink-status { font-size: 12px; color: var(--dl-muted); padding: 4px 0 }
     .dshlink-status.is-error { color: var(--dl-danger) }
 
@@ -294,59 +238,15 @@ const createPanelModule = (require) => {
     .dshlink-close:focus-visible { outline: 2px solid var(--dl-accent); outline-offset: 2px }
   `
 
-  function ModeSwitch({ mode, onChange }) {
-    return jsxs('div', {
-      className: 'dshlink-modes',
-      role: 'tablist',
-      'aria-label': '连接方式',
-      children: [
-        jsx('button', {
-          type: 'button',
-          role: 'tab',
-          'aria-selected': mode === 'lan',
-          className: 'dshlink-mode' + (mode === 'lan' ? ' is-active' : ''),
-          onClick: () => onChange('lan'),
-          children: '局域网',
-        }),
-        jsx('button', {
-          type: 'button',
-          role: 'tab',
-          'aria-selected': mode === 'cloud',
-          className: 'dshlink-mode' + (mode === 'cloud' ? ' is-active' : ''),
-          onClick: () => onChange('cloud'),
-          children: '云端连接',
-        }),
-      ],
-    })
-  }
-
   function BrandHeader() {
     return jsxs('div', {
       className: 'dshlink-brand',
       children: [
-        jsx('div', { className: 'dshlink-brand-kicker', children: 'DSH Links' }),
+        jsx('div', { className: 'dshlink-brand-kicker', children: 'DSH Links · LAN Beta' }),
         jsx('div', { className: 'dshlink-brand-title', children: '手机连接' }),
         jsx('p', {
           className: 'dshlink-brand-lede',
-          children: '把本机 dsh 接到手机。局域网立即可用；云端通道正在筹备。',
-        }),
-      ],
-    })
-  }
-
-  function CloudComingSoon() {
-    return jsxs('div', {
-      className: 'dshlink-cloud',
-      children: [
-        jsx('div', { className: 'dshlink-cloud-badge', children: 'Coming soon' }),
-        jsx('div', { className: 'dshlink-cloud-title', children: '云端连接 · 敬请期待' }),
-        jsx('p', {
-          className: 'dshlink-cloud-body',
-          children: '跨网络、不依赖同一 Wi‑Fi 的安全中继还在搭建中。上线后，你仍可用现有配对关系，从任意网络访问本机会话。',
-        }),
-        jsx('p', {
-          className: 'dshlink-cloud-note',
-          children: '当前请使用「局域网」：手机与电脑连上同一网络后扫码即可。',
+          children: '把本机 dsh 接到同一可信局域网内的 Android 手机。当前公开 Beta 只支持局域网，不提供远程连接。',
         }),
       ],
     })
@@ -415,7 +315,7 @@ const createPanelModule = (require) => {
           : null,
         jsx('p', {
           className: 'dshlink-tunnel-note',
-          children: '手机与电脑不在同一 Wi‑Fi 时，有基础可自建 Tailscale / VPN / frp 等穿透，并把地址写入配置 extraUrls；勿将 18640 裸暴露到公网。',
+          children: '请让手机与电脑连上同一可信 Wi‑Fi 后扫码。丢失手机时在此立即吊销设备。勿将 18640 裸暴露到公网。',
         }),
         jsxs('div', {
           className: 'dshlink-devices',
@@ -451,8 +351,7 @@ const createPanelModule = (require) => {
     })
   }
 
-  function ConnectionBody({ mode, info, devices, err, revoke }) {
-    if (mode === 'cloud') return jsx(CloudComingSoon, {})
+  function ConnectionBody({ info, devices, err, revoke }) {
     if (err) return jsx('div', { className: 'dshlink-status is-error', children: `加载失败：${err}` })
     if (!info) return jsx('div', { className: 'dshlink-status', children: '加载中…' })
     return jsx(LanBody, { info, devices, revoke })
@@ -501,7 +400,6 @@ const createPanelModule = (require) => {
 
   function LinkPanel() {
     const [open, setOpen] = React.useState(false)
-    const [mode, setMode] = React.useState('lan')
     const { info, devices, err, revoke } = usePairData(open)
 
     React.useEffect(() => {
@@ -523,8 +421,7 @@ const createPanelModule = (require) => {
                 onClick: (e) => e.stopPropagation(),
                 children: [
                   jsx(BrandHeader, {}),
-                  jsx(ModeSwitch, { mode, onChange: setMode }),
-                  jsx(ConnectionBody, { mode, info, devices, err, revoke }),
+                  jsx(ConnectionBody, { info, devices, err, revoke }),
                   jsx('button', {
                     type: 'button',
                     className: 'dshlink-close',
@@ -540,7 +437,6 @@ const createPanelModule = (require) => {
   }
 
   function DshLinkSettingsSection() {
-    const [mode, setMode] = React.useState('lan')
     const { info, devices, err, revoke } = usePairData(true)
 
     return jsxs(React.Fragment, {
@@ -550,8 +446,7 @@ const createPanelModule = (require) => {
           className: 'dshlink-settings dshlink-root',
           children: [
             jsx(BrandHeader, {}),
-            jsx(ModeSwitch, { mode, onChange: setMode }),
-            jsx(ConnectionBody, { mode, info, devices, err, revoke }),
+            jsx(ConnectionBody, { info, devices, err, revoke }),
           ],
         }),
       ],

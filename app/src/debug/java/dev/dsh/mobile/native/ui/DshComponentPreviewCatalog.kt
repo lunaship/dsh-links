@@ -24,8 +24,8 @@ import dev.dsh.mobile.core.LightDshColors
 import dev.dsh.mobile.core.LocalDshColors
 
 /**
- * DSH 设计系统组件目录（@Preview catalog）—— 在 Android Studio Preview 面板
- * 直接看到所有 ui.Dsh* 组件在深 / 浅主题下的真实外观。
+ * DSH 设计系统组件目录（@Preview catalog）—— 仅 debug 源集，不进入 Release。
+ * 在 Android Studio Preview 面板直接看到所有 ui.Dsh* 组件在深 / 浅主题下的真实外观。
  *
  * 命名规范：
  * - `DshCatalog*Preview`：每个组件独立的小预览；

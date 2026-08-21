@@ -1,10 +1,7 @@
 package dev.dsh.mobile.core
-import dev.dsh.mobile.R
-import dev.dsh.mobile.core.DshNotifier
-import dev.dsh.mobile.core.Host
-import dev.dsh.mobile.native.WorkspaceActivity
 
 import android.Manifest
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -15,6 +12,8 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import dev.dsh.mobile.R
+import dev.dsh.mobile.native.WorkspaceActivity
 
 /**
  * DSH 会话事件系统通知（对标 dsh-mobile 的 DshNotify 桥）：
@@ -39,42 +38,51 @@ object DshNotifier {
 
     /** 审批请求：需要审批「工具名」。 */
     fun notifyApproval(context: Context, host: Host, sessionId: String, toolName: String) {
-        if (!canNotify(context)) return
         val notification = base(context, host, sessionId)
             .setContentTitle("需要审批")
             .setContentText("「$toolName」请求执行，点击查看")
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
             .build()
-        NotificationManagerCompat.from(context).notify(notificationId(host, sessionId, 1), notification)
+        postNotification(context, notificationId(host, sessionId, 1), notification)
     }
 
     /** 任务完成。 */
     fun notifyTaskDone(context: Context, host: Host, sessionId: String, title: String) {
-        if (!canNotify(context)) return
         val notification = base(context, host, sessionId)
             .setContentTitle("任务完成")
             .setContentText("会话「$title」已完成")
             .setAutoCancel(true)
             .build()
-        NotificationManagerCompat.from(context).notify(notificationId(host, sessionId, 2), notification)
+        postNotification(context, notificationId(host, sessionId, 2), notification)
     }
 
     /** 会话停止（非正常结束，如 interrupted/error/maxTokens）。 */
     fun notifyTaskFailed(context: Context, host: Host, sessionId: String, title: String, reason: String) {
-        if (!canNotify(context)) return
         val notification = base(context, host, sessionId)
             .setContentTitle("会话已停止")
             .setContentText("会话「$title」已停止（$reason）")
             .setAutoCancel(true)
             .build()
-        NotificationManagerCompat.from(context).notify(notificationId(host, sessionId, 3), notification)
+        postNotification(context, notificationId(host, sessionId, 3), notification)
     }
 
     /** 打开会话时清掉该会话的残留通知。 */
     fun cancelForSession(context: Context, host: Host, sessionId: String) {
         val nm = NotificationManagerCompat.from(context)
         for (kind in 1..3) nm.cancel(notificationId(host, sessionId, kind))
+    }
+
+    private fun postNotification(context: Context, id: Int, notification: Notification) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) return
+        if (!NotificationManagerCompat.from(context).areNotificationsEnabled()) return
+        try {
+            NotificationManagerCompat.from(context).notify(id, notification)
+        } catch (_: SecurityException) {
+            // 用户可能在检查后立刻撤销权限；通知是可丢失的辅助能力。
+        }
     }
 
     private fun base(context: Context, host: Host, sessionId: String): NotificationCompat.Builder {
@@ -94,15 +102,6 @@ object DshNotifier {
             .setContentIntent(pending)
             .setCategory(NotificationCompat.CATEGORY_EVENT)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
-    }
-
-    private fun canNotify(context: Context): Boolean {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
-            return false
-        }
-        return NotificationManagerCompat.from(context).areNotificationsEnabled()
     }
 
     private fun notificationId(host: Host, sessionId: String, kind: Int): Int =

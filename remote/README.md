@@ -1,8 +1,8 @@
-# 远程访问 DeepSeek Harness（Cloudflare Tunnel）
+# 远程访问 DeepSeek Harness（实验性资料）
 
-手机 App 目前通过局域网直连（`https://<局域网IP>:18640`，自签证书 + 指纹固定）。离开局域网后需要一条
-外网通道。本方案用 **Cloudflare Tunnel**（免费、不需要公网 IP、不需要 VPS），
-把 Mac 上 dsh 的 18640 代理端口暴露成自己的 HTTPS 域名。
+> **不受当前公开 Beta 支持。** 当前产品只承诺可信局域网。本目录是实验性研究资料，不是安装路径，也不构成官方 Tunnel / Relay 支持。
+
+手机 App 目前通过局域网直连（`https://<局域网IP>:18640`，自签证书 + 指纹固定）。以下记录曾调研过的 Cloudflare Tunnel 做法，供以后立项参考，不要当成可用功能。
 
 > 备选：如果你想完全自建（不依赖 Cloudflare），可以仿照 dsh-mobile 项目的
 > `dsh-relay`（Go 写的 cloud-relay + local-relay 隧道 + 口令认证），需要一台 VPS。

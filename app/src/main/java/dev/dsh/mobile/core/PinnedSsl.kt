@@ -1,5 +1,6 @@
 package dev.dsh.mobile.core
 
+import android.annotation.SuppressLint
 import java.net.HttpURLConnection
 import java.net.URI
 import java.security.MessageDigest
@@ -13,7 +14,12 @@ import javax.net.ssl.X509TrustManager
 
 /**
  * 局域网自签证书按 SHA-256 指纹钉死，跳过主机名校验。
- * 公网 HTTPS（Cloudflare Tunnel）不传指纹，走系统 CA。
+ * 公网 HTTPS（例如用户自建隧道）不传指纹，走系统 CA。
+ *
+ * 安全不变量：
+ * - 正式请求必须有 64 位 SHA-256 指纹才会安装自定义 TrustManager。
+ * - 私网 / 回环空指纹 fail-closed，不得静默回退到系统 PKI。
+ * - [peekFingerprint] 的 TOFU 结果只能展示给用户确认，不能直接写入 HostStore。
  */
 object PinnedSsl {
     class CertChangedException : SSLHandshakeException("主机证书已变更，请重新配对")
@@ -71,31 +77,45 @@ object PinnedSsl {
         if (pin.length != 64 || pin.any { it !in "0123456789abcdef" }) {
             throw CertChangedException()
         }
-        val tm = object : X509TrustManager {
+        val ctx = SSLContext.getInstance("TLS")
+        ctx.init(null, arrayOf(pinnedTrustManager(pin)), SecureRandom())
+        connection.sslSocketFactory = ctx.socketFactory
+        connection.hostnameVerifier = HostnameVerifier { _, _ -> true }
+    }
+
+    /**
+     * 正式请求：只信任叶证书 SHA-256 与 [expectedPin] 完全一致的服务器。
+     * 空链或指纹不匹配一律失败。这不是“信任所有证书”。
+     */
+    @SuppressLint("CustomX509TrustManager", "TrustAllX509TrustManager")
+    internal fun pinnedTrustManager(expectedPin: String): X509TrustManager =
+        object : X509TrustManager {
             override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
             override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) {}
             override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {
                 if (chain.isEmpty()) throw CertChangedException()
-                if (fingerprintOf(chain[0]) != pin) throw CertChangedException()
+                if (fingerprintOf(chain[0]) != expectedPin) throw CertChangedException()
             }
         }
-        val ctx = SSLContext.getInstance("TLS")
-        ctx.init(null, arrayOf(tm), SecureRandom())
-        connection.sslSocketFactory = ctx.socketFactory
-        connection.hostnameVerifier = HostnameVerifier { _, _ -> true }
-    }
+
+    /**
+     * TOFU 读取：在用户确认前临时接受当前叶证书，只为展示指纹。
+     * 返回值不得在未经用户确认时写入 HostStore。
+     */
+    @SuppressLint("CustomX509TrustManager", "TrustAllX509TrustManager")
+    internal fun tofuReadTrustManager(): X509TrustManager =
+        object : X509TrustManager {
+            override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+            override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) {}
+            override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {}
+        }
 
     /** TOFU：先看清服务器证书指纹（仅用于展示确认，随后按该指纹钉死）。 */
     fun peekFingerprint(baseUrl: String): String {
         val url = java.net.URL("${normalizeUrl(baseUrl).trimEnd('/')}/dsh-link/health")
         val conn = url.openConnection() as HttpsURLConnection
-        val tm = object : X509TrustManager {
-            override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
-            override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) {}
-            override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {}
-        }
         val ctx = SSLContext.getInstance("TLS")
-        ctx.init(null, arrayOf(tm), SecureRandom())
+        ctx.init(null, arrayOf(tofuReadTrustManager()), SecureRandom())
         conn.sslSocketFactory = ctx.socketFactory
         conn.hostnameVerifier = HostnameVerifier { _, _ -> true }
         conn.connectTimeout = 6000

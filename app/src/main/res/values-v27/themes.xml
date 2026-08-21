@@ -3,8 +3,10 @@
     <style name="Theme.DSH.Splash" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="android:windowBackground">@drawable/splash_bg</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
-        <item name="android:windowLightStatusBar">false</item>
-        <item name="android:navigationBarColor">@color/ink_bg_primary</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
     </style>
 
     <style name="Theme.DSH" parent="Theme.Material3.DayNight.NoActionBar">
@@ -15,8 +17,10 @@
         <item name="colorSecondaryContainer">@color/ink_bg_secondary</item>
         <item name="colorOnSecondaryContainer">@color/ink_text_primary</item>
         <item name="android:windowBackground">@color/ink_bg_primary</item>
-        <item name="android:statusBarColor">@color/ink_bg_primary</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">false</item>
-        <item name="android:navigationBarColor">@color/ink_bg_primary</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
     </style>
 </resources>

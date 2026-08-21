@@ -1,21 +1,32 @@
 # dsh-links
 
-DSH 手机一体化插件（npm 包名 `dsh-links`，App 品牌 **DSH Links**）：**一个插件**同时提供
+DSH 手机一体化插件（npm 包名 `dsh-links`，当前版本 **0.1.0-beta.1**）：给 [DeepSeek Harness](https://github.com/deepseek-ai) 增加局域网手机接入。
 
-1. **扫码连接**：设置 →「手机连接」→ **局域网**（二维码 + 一次性配对码，默认 10 分钟有效）。**云端连接**页为预告（敬请期待）。
-2. **自带手机接入代理**：监听 `0.0.0.0:18640`，校验连接 token 并重写 Host/Origin 转发到 dsh 本体（127.0.0.1:<web 端口>），手机 App 无需任何其它穿透工具即可接入
+**Beta** · **LAN only** · **Unofficial**。这是独立的非官方社区项目，与 DeepSeek 官方不存在隶属、授权或背书关系。
+
+当前公开 Beta 只支持可信局域网。仓库中的 `remote/` 为实验性研究资料，不属于受支持产品路径。
+
+1. **扫码连接**：设置 →「手机连接」→ 二维码 + 一次性配对码（默认 10 分钟有效）。
+2. **自带手机接入代理**：监听 `0.0.0.0:18640`，校验连接 token 并重写 Host/Origin 转发到 dsh 本体。
+
+完整 App 安装步骤见仓库根目录 [README](https://github.com/lunaship/dsh-links#readme)。
 
 ## 安装（每个 dsh 实例执行一次）
 
 ```bash
-# 本地目录方式（开发）
-dsh plugin --profile web add /path/to/dsh-links
-
-# npm 方式（发布后）
-dsh plugin --profile web add dsh-links
+dsh plugin --profile web add dsh-links@0.1.0-beta.1
+dsh web
 ```
 
-然后重启 `dsh web`，在设置里打开「手机连接」即可。
+开发期可用本地目录：
+
+```bash
+dsh plugin --profile web add /path/to/dsh-links
+```
+
+然后重启 `dsh web`，在设置里打开「手机连接」。
+
+已验证组合：DSH `0.1.0-rc.8` + 本插件 `0.1.0-beta.1`。不要假定未验证的 DSH 版本兼容。
 
 ## 配置（profile 配置里的 dsh-links 段）
 
@@ -24,7 +35,7 @@ dsh plugin --profile web add dsh-links
 | `port` | `18640` | 手机接入代理端口（0.0.0.0 监听，token 保护） |
 | `autoApprove` | `true` | 扫码配对自动批准 |
 | `pairingTtlSeconds` | `600` | 配对码有效期 |
-| `extraUrls` | `[]` | 额外写进二维码的可达地址（如 Tailscale IP、frp 地址） |
+| `extraUrls` | `[]` | 额外写进二维码的可达地址（高级用途；当前 Beta 仍只承诺局域网） |
 
 ## 接口约定（手机 App 使用）
 
@@ -32,17 +43,6 @@ dsh plugin --profile web add dsh-links
 - `POST /dsh-link/pair` body `{code, deviceName}` → `{token, deviceId, name, urls}`（18640 HTTPS）
 - 后续所有请求带头 `x-dsh-link-token`
 - 手机 API 仅 `/dsh-link/health`、`/dsh-link/pair`、`/dsh-link/mobile/*`
-
-## 跨网络（自建穿透，可选）
-
-当前产品主路径是**同一局域网**扫码。若手机和电脑不在同一 Wi‑Fi，有基础的用户可自行组网，例如：
-
-- [Tailscale](https://tailscale.com/) / Headscale：两边装上客户端后，用 Tailscale IP 访问 `https://100.x.x.x:18640`
-- 其它 VPN、frp、WireGuard 等：把 18640 映射到手机可达的地址
-
-然后把该地址写进配置的 `extraUrls`，二维码与「可访问地址」里会一并出现。插件**不托管中继**；云端连接仍是后续能力。
-
-请勿把裸 18640 直接暴露到公网；穿透层应有访问控制。
 
 ## TLS 指纹是什么？
 
@@ -57,9 +57,10 @@ dsh plugin --profile web add dsh-links
 
 ## 安全说明
 
-- 18640 使用自签 TLS；配对会固定证书指纹。请勿把该端口暴露给不受信任的网络
-- 配对码一次性且有时效；可随时在面板里吊销已配对设备
-- dsh 具有代码执行能力；吊销设备会断开其已建立的 SSE 连接
+- 当前 Beta 只支持同一可信局域网。请勿把 18640 裸暴露到公网。
+- 配对码一次性且有时效；丢失手机请立即在面板里吊销设备。
+- dsh 具有代码执行能力；吊销设备会断开其已建立的 SSE 连接。
+- 改 `src/module2.js` 后必须运行 `npm run build:client`，不要手改 `src/client.js`。
 
 ## License
 

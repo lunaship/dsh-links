@@ -13,6 +13,7 @@ import dev.dsh.mobile.core.AppSettingsStore
 import dev.dsh.mobile.core.DshTheme
 import dev.dsh.mobile.core.HostStore
 import dev.dsh.mobile.devices.DevicesActivity
+import dev.dsh.mobile.BuildConfig
 
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
@@ -21,6 +22,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
+import kotlin.text.Charsets
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.animation.AnimatedVisibility
@@ -136,6 +138,7 @@ private fun SettingsScreen(
     var llmGroups by remember { mutableStateOf<List<MobileModelGroup>>(emptyList()) }
     var expandedProviders by remember { mutableStateOf(setOf<String>()) }
     var showFullAccessConfirm by remember { mutableStateOf(false) }
+    var legalDoc by remember { mutableStateOf<Pair<String, String>?>(null) }
 
     // WI-004：服务端设置为唯一真实源；加载失败回退本地缓存（离线可用）
     var appSettings by remember { mutableStateOf(AppSettingsStore.cached(context)) }
@@ -457,6 +460,13 @@ private fun SettingsScreen(
                 SettingsTab.PLUGINS -> PluginsSettings(context)
 
                 SettingsTab.ABOUT -> {
+                    Text(
+                        text = s.unofficialNotice,
+                        color = Dsh.labelTertiary,
+                        fontSize = 12.sp,
+                        lineHeight = 18.sp,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
+                    )
                     SettingsSection("账户余额")
                     val b = balance
                     if (b == null) {
@@ -469,8 +479,21 @@ private fun SettingsScreen(
                         )
                     }
                     SettingsSection("关于")
-                    SettingsItem(title = "DSH Links", description = "版本 0.5.0 · 手机端 dsh 工作台", onClick = {})
-                    SettingsItem(title = "开源许可", description = "MIT License", onClick = {})
+                    SettingsItem(
+                        title = "DSH Links",
+                        description = s.aboutVersion.replace("%s", BuildConfig.VERSION_NAME),
+                        onClick = {},
+                    )
+                    SettingsItem(
+                        title = s.openSourceLicense,
+                        description = "MIT License",
+                        onClick = { legalDoc = "LICENSE" to s.openSourceLicense },
+                    )
+                    SettingsItem(
+                        title = s.thirdPartyNotices,
+                        description = "THIRD_PARTY_NOTICES",
+                        onClick = { legalDoc = "THIRD_PARTY_NOTICES.md" to s.thirdPartyNotices },
+                    )
                 }
             }
         }
@@ -537,6 +560,68 @@ private fun SettingsScreen(
                         ) {
                             Text("启用 Full access", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight(500))
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    legalDoc?.let { (fileName, title) ->
+        val body = remember(fileName) {
+            runCatching {
+                context.assets.open("legal/$fileName").bufferedReader(Charsets.UTF_8).use { it.readText() }
+            }.getOrElse { s.legalLoadFailed.replace("%s", fileName) }
+        }
+        Dialog(
+            onDismissRequest = { legalDoc = null },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Dsh.bgOverlay)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                    ) { legalDoc = null },
+                contentAlignment = Alignment.Center,
+            ) {
+                Column(
+                    modifier = Modifier
+                        .widthIn(max = 420.dp)
+                        .fillMaxWidth(0.92f)
+                        .fillMaxHeight(0.8f)
+                        .clip(RoundedCornerShape(DshRadius.lg))
+                        .background(Dsh.bgLayer1)
+                        .border(1.dp, Dsh.borderL2, RoundedCornerShape(DshRadius.lg))
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                        ) {}
+                        .padding(18.dp)
+                ) {
+                    Text(title, color = Dsh.labelPrimary, fontSize = 15.sp, fontWeight = FontWeight(500))
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = body,
+                        color = Dsh.labelSecondary,
+                        fontSize = 11.sp,
+                        lineHeight = 16.sp,
+                        modifier = Modifier
+                            .weight(1f)
+                            .verticalScroll(rememberScrollState()),
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.End)
+                            .height(34.dp)
+                            .clip(RoundedCornerShape(7.dp))
+                            .clickable { legalDoc = null }
+                            .padding(horizontal = 14.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(s.close, color = Dsh.labelSecondary, fontSize = 12.sp, fontWeight = FontWeight(500))
                     }
                 }
             }

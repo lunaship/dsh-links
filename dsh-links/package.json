@@ -1,7 +1,7 @@
 {
   "name": "dsh-links",
-  "version": "0.1.0",
-  "description": "DSH 手机插件：配对 + 设备管理 + 18640 接入代理 + 手机 API（纯后端，无页面布局注入）",
+  "version": "0.1.0-beta.1",
+  "description": "DSH 手机插件：局域网配对 + 设备管理 + 18640 接入代理 + 手机 API（纯后端，无页面布局注入）",
   "type": "module",
   "main": "./src/index.js",
   "exports": {
@@ -10,6 +10,27 @@
     "./package.json": "./package.json"
   },
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lunaship/dsh-links.git",
+    "directory": "dsh-links"
+  },
+  "homepage": "https://github.com/lunaship/dsh-links#readme",
+  "bugs": {
+    "url": "https://github.com/lunaship/dsh-links/issues"
+  },
+  "keywords": ["deepseek-harness", "dsh", "android", "lan", "mobile", "plugin"],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build:client": "node build-client.mjs",
+    "test": "node --test test/*.mjs",
+    "prepack": "node build-client.mjs && node --test test/*.mjs"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
     "@deepseek-ai/schemastery": "3.18.1",
     "qrcode": "1.5.4",
