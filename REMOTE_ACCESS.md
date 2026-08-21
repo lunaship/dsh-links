@@ -1,12 +1,12 @@
-# 自管远端接入
+# 远端连接路线（实验性）
 
-`dsh-links` 当前正式支持的是可信局域网 Android Beta。本页说明两种由你自己管理的实验性远端网络路径，以及计划中的原生 Relay；它们不是已经发布的“云端连接”产品。
+`dsh-links` 当前正式支持的是可信局域网 Android Beta。本页说明两种由你自己管理的实验性远端网络路径，以及 DSH Links 正在建设的公共 Relay 服务；它们都不是已经发布的“云端连接”产品。
 
 | 方式 | 适合什么 | 公网入口 | 手机添加地址 |
 |---|---|---|---|
 | Tailscale | 个人电脑和自己的手机 | 无 | `https://100.x.y.z:18640` |
 | Cloudflare Tunnel | 自己的域名、跨网络直连 | 有，由你的 Tunnel 管理 | `https://dsh.example.com` |
-| 原生 Relay | 自建 VPS、统一身份与设备管理 | Relay，尚未发布 | 暂不可用 |
+| DSH Links Relay | 由 DSH Links 运营的公共中继服务 | Relay，建设中 | 暂不可用 |
 
 ## Tailscale 私网
 
