@@ -36,11 +36,31 @@ Android App 当前最低支持 Android 8.0（API 26）。源码不在本仓库�
 
 ## 界面预览
 
+### 从配对到工作区
+
 <table>
   <tr>
+    <td width="33%" valign="top"><img src="docs/images/android-splash.jpg" alt="DSH Links Android App 启动页。"><br><sub><b>启动</b>：进入 DSH Links。</sub></td>
     <td width="33%" valign="top"><img src="docs/images/android-device-list-sanitized.png" alt="Android App 的我的设备页面，展示在线设备、局域网连接状态和添加设备入口。"><br><sub><b>设备管理</b>：查看在线状态，扫码或手动添加设备。</sub></td>
-    <td width="33%" valign="top"><img src="docs/images/android-workspace-light.jpg" alt="Android App 的原生会话工作台，含对话、轨迹、历史和消息输入区。"><br><sub><b>原生工作台</b>：在手机上继续对话，浏览轨迹和历史。</sub></td>
-    <td width="33%" valign="top"><img src="docs/images/android-settings-light.jpg" alt="Android App 的设置页面，展示通用设置、语言、外观和繁忙时发送行为。"><br><sub><b>设置</b>：按设备调整语言、外观和会话默认行为。</sub></td>
+    <td width="33%" valign="top"><img src="docs/images/android-navigation-drawer.jpg" alt="DSH Links Android App 的工作区导航抽屉。"><br><sub><b>工作区</b>：新建会话、切换工作区与进入设置。</sub></td>
+  </tr>
+</table>
+
+### 手机上的 DSH 工作台
+
+<table>
+  <tr>
+    <td width="50%" valign="top"><img src="docs/images/android-workspace-light.jpg" alt="Android App 的浅色原生会话工作台，含对话、轨迹、历史和消息输入区。"><br><sub><b>浅色模式</b>：继续对话、浏览轨迹和历史。</sub></td>
+    <td width="50%" valign="top"><img src="docs/images/android-workspace-dark.jpg" alt="Android App 的深色原生会话工作台，含对话、轨迹、历史和消息输入区。"><br><sub><b>深色模式</b>：同一工作台支持系统外观切换。</sub></td>
+  </tr>
+</table>
+
+### 设置
+
+<table>
+  <tr>
+    <td width="50%" valign="top"><img src="docs/images/android-settings-light.jpg" alt="Android App 的浅色设置页面，展示通用设置、语言、外观和繁忙时发送行为。"><br><sub><b>浅色设置</b>：调整语言、外观与会话默认行为。</sub></td>
+    <td width="50%" valign="top"><img src="docs/images/android-settings-dark.jpg" alt="Android App 的深色设置页面，展示通用设置、语言、外观和繁忙时发送行为。"><br><sub><b>深色设置</b>：设置随界面主题完整适配。</sub></td>
   </tr>
 </table>
 
