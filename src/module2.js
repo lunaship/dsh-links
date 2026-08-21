@@ -1,6 +1,6 @@
 /**
  * dsh-links 客户端面 · 面板模块（作为 createPanelModule 工厂被主模块组合调用）
- * 「手机连接」：局域网配对与自管远端连接（Tailscale / Cloudflare Tunnel / Relay 路线图）。
+ * 「手机连接」：局域网配对与远端连接路线（Tailscale / Cloudflare Tunnel / DSH Links Relay）。
  *
  * Hallmark pre-emit critique: P5 H5 E5 S5 R5 V5
  */
@@ -295,7 +295,7 @@ const createPanelModule = (require) => {
         jsx('div', { className: 'dshlink-brand-title', children: '手机连接' }),
         jsx('p', {
           className: 'dshlink-brand-lede',
-          children: '局域网 Beta 可立即扫码配对；远端连接提供自管接入方式，并说明后续原生 Relay 的实现路线。',
+          children: '局域网 Beta 可立即扫码配对；扫码地址或手动地址可连接家中或远程服务器上的 DSH。跨网络可自管 Tunnel，DSH Links Relay 正在建设中。',
         }),
       ],
     })
@@ -404,7 +404,7 @@ ingress:
       children: [
         jsx('p', {
           className: 'dshlink-remote-intro',
-          children: '以下是你自己管理的远端接入方式。它们不改变配对码、设备 Token 或吊销机制；只改变手机抵达本机 18640 的网络路径。',
+          children: '扫码中的地址或手动填写的地址可以指向家中电脑或远程服务器上的 DSH。当前跨网络可使用自管 Tunnel；它们不改变配对码、设备 Token 或吊销机制，只改变手机抵达 DSH 的网络路径。',
         }),
         jsxs('section', {
           className: 'dshlink-remote-card',
@@ -466,7 +466,7 @@ ingress:
             jsx('pre', { className: 'dshlink-remote-code', children: cloudflaredConfig }),
             jsx('p', {
               className: 'dshlink-remote-note',
-              children: '当前 App 不会完成 Cloudflare Access 登录，也不会携带 Access JWT；启用 `originRequest.access.required` 会导致配对与运行请求失败。该能力需要随原生 Relay 一起完成。',
+              children: '当前 App 不会完成 Cloudflare Access 登录，也不会携带 Access JWT；启用 `originRequest.access.required` 会导致配对与运行请求失败，请勿在当前 Beta 启用。',
             }),
           ],
         }),
@@ -477,15 +477,15 @@ ingress:
             jsxs('div', {
               className: 'dshlink-roadmap-copy',
               children: [
-                jsx('div', { className: 'dshlink-roadmap-title', children: '原生云端连接：自管 Relay' }),
+                jsx('div', { className: 'dshlink-roadmap-title', children: 'DSH Links Relay' }),
                 jsx('p', {
                   className: 'dshlink-roadmap-text',
-                  children: '电脑侧 local-relay 主动连向你的 VPS Relay；手机连 Relay，Relay 只转发已认证的设备会话。这样个人电脑没有入站公网端口，访问控制与设备吊销由产品统一处理。',
+                  children: '正在建设中。计划中电脑侧 local-relay 与手机 App 均主动连接 Relay；Relay 仅实时转发已配对设备的请求与响应，不持久化存储会话内容、文件、工作区数据或设备内容。这样个人电脑不接受公网入站连接，设备吊销会切断后续远端请求。',
                 }),
-                jsx('p', { className: 'dshlink-relay-flow', children: '手机 App ⇄ 你的 Relay ⇄ local-relay ⇄ 127.0.0.1:18640' }),
+                jsx('p', { className: 'dshlink-relay-flow', children: '手机 App ⇄ DSH Links Relay（建设中）⇄ local-relay ⇄ 127.0.0.1:18640' }),
               ],
             }),
-            jsx('span', { className: 'dshlink-roadmap-status', children: '规划中' }),
+            jsx('span', { className: 'dshlink-roadmap-status', children: '建设中' }),
           ],
         }),
       ],
