@@ -80,7 +80,7 @@ The Android APK is distributed only as an official signed release. Verify the ve
 ## 安装
 
 ```bash
-dsh plugin --profile web add dsh-links@0.1.0-beta.1
+dsh plugin --profile web add dsh-links@0.1.0-beta.3
 dsh web
 ```
 
@@ -92,7 +92,7 @@ dsh plugin --profile web add /path/to/dsh-links
 
 然后重启 `dsh web`，设置 →「手机连接」扫码或手动配对。扫码中的地址或手动填写的地址可以指向家中电脑或远程服务器上运行的 DSH；当前 Beta 正式支持同一可信局域网，跨网络访问需要你自行配置 Tailscale / Cloudflare Tunnel，或等待正在建设中的 DSH Links Relay。
 
-已验证：DSH `0.1.0-rc.8` + 本插件 `0.1.0-beta.1`。
+已验证：DSH `0.1.0-rc.8` + 本插件 `0.1.0-beta.3`。
 
 ## 能力摘要
 
