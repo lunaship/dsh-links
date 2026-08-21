@@ -26,5 +26,9 @@ class LocaleManagerTest {
         assertEquals("设置", DshStringsZh.settingsTitle)
         assertEquals("Paired devices", DshStringsEn.pairingManage)
         assertEquals("配对管理", DshStringsZh.pairingManage)
+        assertEquals("Thinking", DshStringsEn.thinkingActive)
+        assertEquals("思考中", DshStringsZh.thinkingActive)
+        assertEquals("Thought for %d seconds", DshStringsEn.thoughtForSeconds)
+        assertEquals("已思考 %d 秒", DshStringsZh.thoughtForSeconds)
     }
 }

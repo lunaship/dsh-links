@@ -142,7 +142,7 @@ fun rememberMotionDots(count: Int = 3, periodMs: Int = 900, minAlpha: Float = 0.
 
 /**
  * 横向 3 个 4dp 脉动点，alpha 由 [rememberMotionDots] 驱动。
- * 替代 [RunningSweep] 用于 CommandCard running 态，更轻量、视觉更聚焦。
+ * 用于 CommandCard running 态，比整卡扫光更轻量、视觉更聚焦。
  */
 @Composable
 fun RunningDots(tint: Color = Dsh.brand400, count: Int = 3) {

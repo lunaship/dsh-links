@@ -129,6 +129,8 @@ import dev.dsh.mobile.native.util.groupMessages
 import dev.dsh.mobile.native.util.isContextInjectionText
 import dev.dsh.mobile.native.util.isUserWorkspace
 import dev.dsh.mobile.native.util.matchesTool
+import dev.dsh.mobile.native.util.optNullableString
+import dev.dsh.mobile.native.util.parseStoppedReason
 import dev.dsh.mobile.native.util.visibleUserWorkspaces
 
 /**
@@ -619,7 +621,7 @@ fun WorkspaceScreen(
                     }
                     // 发送中/执行中不覆盖：旧 turn 的 stoppedReason 会误显示成「已停止」
                     if (!liveRunning && !isSending) {
-                        stoppedReason = result.stoppedReason
+                        stoppedReason = parseStoppedReason(result.stoppedReason)
                     }
                     // 登记本页最新事件 seq，作为 SSE 增量去重基线（缺 maxSeq 也必须 seed）
                     val seed = historySeedSeq(result.maxSeq, msgs.map { it.seq })
@@ -928,8 +930,8 @@ fun WorkspaceScreen(
                 liveRunning = false
                 // 定稿在途消息的 running，避免历史合并后长期卡住导致复制按钮不出现
                 messages = messages.map { if (it.running == true) it.copy(running = false) else it }
-                val kind = data.optJSONObject("reason")?.optString("kind")
-                stoppedReason = if (!kind.isNullOrBlank() && kind != "completed") kind else null
+                val kind = data.optJSONObject("reason")?.optNullableString("kind")
+                stoppedReason = parseStoppedReason(kind)
                 scope.launch(Dispatchers.IO) {
                     refreshSessions()
                     withContext(Dispatchers.Main) { refreshMessages(autoScroll = false) }
@@ -1216,10 +1218,11 @@ fun WorkspaceScreen(
     LaunchedEffect(running) {
         if (!running && wasRunning && !isForeground && currentSessionId != null) {
             val title = currentSession?.title ?: L.sessionFallbackTitle
-            if (stoppedReason.isNullOrBlank()) {
+            val failReason = parseStoppedReason(stoppedReason)
+            if (failReason == null) {
                 DshNotifier.notifyTaskDone(context, host, currentSessionId!!, title)
             } else {
-                DshNotifier.notifyTaskFailed(context, host, currentSessionId!!, title, stoppedReason!!)
+                DshNotifier.notifyTaskFailed(context, host, currentSessionId!!, title, failReason)
             }
         }
         wasRunning = running
@@ -2366,16 +2369,17 @@ fun WorkspaceScreen(
                             )
                         }
                     }
-                    // 等待/执行中：流尾部显示品牌蓝 shimmer（对齐 web Deep diving…）
-                    if (running || isSending) {
+                    // 等待首 token：流尾部思考条。已有 reasoning/工具行时由对应行承担，避免双标题。
+                    if ((running || isSending) && sweepingId == null) {
                         item(key = "turn-status") {
-                            TurnStatusRow(elapsedSec)
+                            ThinkingStatusRow(elapsedSec)
                         }
                     }
                     // 已停止标记：仅在非执行态展示，避免等待新回复时误显示旧 turn 的停止态
-                    if (stoppedReason != null && !running && !isSending) {
+                    val badgeReason = parseStoppedReason(stoppedReason)
+                    if (badgeReason != null && !running && !isSending) {
                         item(key = "stopped-badge") {
-                            StoppedBadge(reason = stoppedReason!!)
+                            StoppedBadge(reason = badgeReason)
                         }
                     }
                 }
@@ -3464,71 +3468,7 @@ private fun AddWorkspaceRow(onCreate: (String) -> Unit) {
     }
 }
 
-// ---------- 正在执行状态行（品牌蓝 shimmer） ----------
-
-@Composable
-private fun TurnStatusRow(elapsedSec: Long) {
-    val statusLabel = "Deep diving…"
-    Row(
-        modifier = Modifier
-            .height(26.dp)
-            .clip(RoundedCornerShape(DshRadius.sm)),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        if (isReduceMotionEnabled()) {
-            // reduce-motion：静态品牌蓝文本（Web prefers-reduced-motion 语义）
-            Text(
-                statusLabel,
-                fontSize = 14.sp,
-                fontWeight = FontWeight(500),
-                color = Dsh.brand400
-            )
-        } else {
-            // 渐变扫光文本：动画值只在 Canvas 绘制阶段读取，避免每帧重组/重建 Brush
-            val transition = rememberInfiniteTransition(label = "shimmer")
-            val offset = transition.animateFloat(
-                initialValue = 1f,
-                targetValue = 0f,
-                animationSpec = infiniteRepeatable(
-                    animation = tween(1800, easing = LinearEasing),
-                    repeatMode = RepeatMode.Restart
-                ),
-                label = "shimmerOffset"
-            )
-            val textMeasurer = rememberTextMeasurer()
-            val brand400 = Dsh.brand400
-            val brand200 = Dsh.brand200
-            val textLayout = remember(statusLabel) {
-                textMeasurer.measure(
-                    statusLabel,
-                    TextStyle(fontSize = 14.sp, fontWeight = FontWeight(500))
-                )
-            }
-            Canvas(
-                modifier = Modifier
-                    .width(with(LocalDensity.current) { textLayout.size.width.toDp() })
-                    .height(26.dp)
-            ) {
-                drawText(
-                    textLayout,
-                    brush = Brush.linearGradient(
-                        colors = listOf(brand400, brand200, brand400),
-                        start = Offset(offset.value * size.width, 0f),
-                        end = Offset(offset.value * size.width + size.width, 0f)
-                    ),
-                    topLeft = Offset(0f, (size.height - textLayout.size.height) / 2f)
-                )
-            }
-        }
-        Spacer(Modifier.width(8.dp))
-        Text(
-            "${elapsedSec}s",
-            fontSize = 12.sp,
-            color = Dsh.labelTertiary,
-            fontFamily = FontFamily.Monospace
-        )
-    }
-}
+// ---------- 正在执行状态行（四角星 + 扫光「思考中」） ----------
 
 // ---------- 侧栏工具 ----------
 
@@ -5083,7 +5023,7 @@ private fun TrajectoryView(
 
         if (running) {
             Spacer(Modifier.height(4.dp))
-            TurnStatusRow(elapsedSec)
+            ThinkingStatusRow(elapsedSec)
             Spacer(Modifier.height(14.dp))
         }
         filtered.forEachIndexed { index, msg ->
@@ -6368,7 +6308,7 @@ fun MessageItem(
                     )
                 }
             }
-            msg.role == "reasoning" -> ReasoningRow(msg.text, running)
+            msg.role == "reasoning" -> ReasoningRow(msg.text, running, msg.durationMs)
             msg.role == "approval" -> ApprovalCard(
                 msg = msg,
                 onAnswer = { approvalId, outcome ->
@@ -6397,14 +6337,22 @@ fun MessageItem(
                             streaming = msg.running == true,
                         )
                     }
-                    // 助手消息底部：复制 / 分叉 / 重新生成
+                    // 助手消息底部：复制 / 分叉 / 重新生成（流式结束后淡入，对齐 Web）
                     if (msg.role == "assistant") {
-                        Spacer(Modifier.height(8.dp))
-                        MessageActionRow(
-                            onCopy = onCopy,
-                            onFork = onFork,
-                            onRegenerate = onRegenerate,
-                        )
+                        AnimatedVisibility(
+                            visible = msg.running != true,
+                            enter = fadeIn(animationSpec = tween(motionDuration(400))),
+                            exit = fadeOut(animationSpec = tween(motionDuration(150))),
+                        ) {
+                            Column {
+                                Spacer(Modifier.height(8.dp))
+                                MessageActionRow(
+                                    onCopy = onCopy,
+                                    onFork = onFork,
+                                    onRegenerate = onRegenerate,
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -6857,6 +6805,7 @@ private fun stoppedReasonLabel(reason: String): String = when (reason.lowercase(
 @Composable
 private fun StoppedBadge(reason: String) {
     val label = stoppedReasonLabel(reason)
+    if (label.isBlank() || label.equals("null", ignoreCase = true)) return
     Row(modifier = Modifier.fillMaxWidth()) {
         DshTag(
             text = label,
@@ -6867,73 +6816,34 @@ private fun StoppedBadge(reason: String) {
     }
 }
 
-// 思考行（ReasoningRow：chevron + 标题 + 2px 圆点 + 摘要，展开显示全文）
+// 思考行：四角星 + 扫光标题，正文默认收起，仅用户点击后展开
+
 @Composable
-private fun ReasoningRow(text: String, running: Boolean = false) {
+private fun ReasoningRow(text: String, running: Boolean = false, durationMs: Long? = null) {
     var expanded by remember { mutableStateOf(false) }
-    LaunchedEffect(running) {
-        if (running) expanded = true
-    }
-    val interaction = remember { MutableInteractionSource() }
-    val pressed by interaction.collectIsPressedAsState()
-    Box {
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(DshRadius.sm))
-                .clickable(interactionSource = interaction, indication = null) { expanded = !expanded }
-                .padding(vertical = 2.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                if (expanded) ChevronDownOutline14 else ChevronRightOutline14,
-                contentDescription = null,
-                tint = if (pressed) Dsh.labelPrimary else Dsh.labelSecondary,
-                modifier = Modifier.size(16.dp)
-            )
-            Text(
-                L.thinking,
-                color = Dsh.labelPrimary,
-                fontSize = 14.sp,
-                lineHeight = 24.sp,
-                fontWeight = FontWeight(400)
-            )
-            Box(
-                modifier = Modifier
-                    .size(2.dp)
-                    .clip(CircleShape)
-                    .background(Dsh.labelCaption)
-                    .padding(horizontal = 8.dp)
-            )
-            Spacer(Modifier.width(6.dp))
-            Text(
-                text.trim().lineSequence().firstOrNull().orEmpty(),
-                color = Dsh.labelTertiary,
-                fontSize = 14.sp,
-                lineHeight = 24.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f)
-            )
-        }
-        AnimatedVisibility(
-            visible = expanded,
-            enter = expandVertically(animationSpec = tween(motionDuration(200), easing = FastOutSlowInEasing)) + fadeIn(animationSpec = tween(motionDuration(150))),
-            exit = shrinkVertically(animationSpec = tween(motionDuration(180), easing = FastOutSlowInEasing)) + fadeOut(animationSpec = tween(motionDuration(150)))
-        ) {
-            Text(
-                text,
-                color = Dsh.labelTertiary,
-                fontSize = 14.sp,
-                lineHeight = 24.sp,
-                modifier = Modifier.padding(start = 22.dp, top = 4.dp, bottom = 4.dp)
-            )
+    var startedAt by remember { mutableLongStateOf(0L) }
+    var settledSec by remember { mutableStateOf<Long?>(null) }
+    LaunchedEffect(running, durationMs) {
+        if (running && startedAt == 0L) startedAt = System.currentTimeMillis()
+        if (durationMs != null && durationMs > 0) {
+            settledSec = (durationMs / 1000L).coerceAtLeast(1L)
+        } else if (!running && settledSec == null && startedAt > 0L) {
+            settledSec = ((System.currentTimeMillis() - startedAt) / 1000L).coerceAtLeast(1L)
         }
     }
-    if (running) {
-        RunningSweep()
-    }
+    ThinkingTrace(
+        working = running,
+        activeLabel = L.thinkingActive,
+        doneLabel = thoughtDoneLabel(durationMs, settledSec),
+        expanded = expanded,
+        onToggle = { expanded = !expanded },
+    ) {
+        Text(
+            text,
+            color = Dsh.labelSecondary,
+            fontSize = 13.sp,
+            lineHeight = 20.sp,
+        )
     }
 }
 
@@ -7048,33 +6958,48 @@ private data class MarkdownBlock(
 private fun MarkdownContent(text: String, streaming: Boolean = false) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val blocks = remember(text) { splitMarkdownBlocks(text) }
-    val cursorAlpha = rememberInfiniteTransition(label = "streamCursor").animateFloat(
-        initialValue = 0.25f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(animation = tween(480), repeatMode = RepeatMode.Reverse),
-        label = "cursorAlpha",
-    ).value
     blocks.forEachIndexed { index, block ->
         val isLastBlock = index == blocks.lastIndex
+        val streamTail = streaming && isLastBlock
         when (block.type) {
-            MarkdownBlockType.CODE -> MarkdownCodeBlock(block.lang, block.content)
+            MarkdownBlockType.CODE -> {
+                MarkdownCodeBlock(block.lang, block.content)
+                if (streamTail) StreamCaret()
+            }
             MarkdownBlockType.HEADING -> {
-                Text(
-                    block.content,
-                    color = Dsh.labelPrimary,
-                    fontSize = when (block.level) {
-                        1 -> 22.sp
-                        2 -> 18.sp
-                        else -> 16.sp
-                    },
-                    fontWeight = FontWeight(500),
-                    lineHeight = 28.sp
-                )
+                if (streamTail) {
+                    StreamingParagraph(
+                        text = block.content,
+                        showCaret = true,
+                        fontSize = when (block.level) {
+                            1 -> 22.sp
+                            2 -> 18.sp
+                            else -> 16.sp
+                        },
+                        fontWeight = FontWeight(500),
+                    )
+                } else {
+                    Text(
+                        block.content,
+                        color = Dsh.labelPrimary,
+                        fontSize = when (block.level) {
+                            1 -> 22.sp
+                            2 -> 18.sp
+                            else -> 16.sp
+                        },
+                        fontWeight = FontWeight(500),
+                        lineHeight = 28.sp
+                    )
+                }
             }
             MarkdownBlockType.LIST -> {
                 Row(modifier = Modifier.fillMaxWidth()) {
                     Text("•  ", color = Dsh.labelTertiary, fontSize = 16.sp, lineHeight = 28.sp)
-                    InlineMarkdownText(block.content)
+                    if (streamTail) {
+                        StreamingParagraph(block.content, showCaret = true)
+                    } else {
+                        InlineMarkdownText(block.content)
+                    }
                 }
             }
             MarkdownBlockType.QUOTE -> {
@@ -7085,7 +7010,11 @@ private fun MarkdownContent(text: String, streaming: Boolean = false) {
                         .border(2.dp, Dsh.borderL2)
                         .padding(horizontal = 12.dp, vertical = 8.dp)
                 ) {
-                    InlineMarkdownText(block.content, color = Dsh.labelSecondary)
+                    if (streamTail) {
+                        StreamingParagraph(block.content, showCaret = true, color = Dsh.labelSecondary)
+                    } else {
+                        InlineMarkdownText(block.content, color = Dsh.labelSecondary)
+                    }
                 }
             }
             MarkdownBlockType.TABLE -> {
@@ -7126,6 +7055,7 @@ private fun MarkdownContent(text: String, streaming: Boolean = false) {
                         }
                     }
                 }
+                if (streamTail) StreamCaret()
             }
             MarkdownBlockType.HR -> {
                 Box(
@@ -7134,6 +7064,7 @@ private fun MarkdownContent(text: String, streaming: Boolean = false) {
                         .height(1.dp)
                         .background(Dsh.borderL2)
                 )
+                if (streamTail) StreamCaret()
             }
             MarkdownBlockType.IMAGE -> {
                 val imageUrl = MarkdownMedia.takeIfSafe(block.content)
@@ -7158,26 +7089,18 @@ private fun MarkdownContent(text: String, streaming: Boolean = false) {
                         )
                     }
                 }
+                if (streamTail) StreamCaret()
             }
-            MarkdownBlockType.MATH -> LatexDisplayBlock(block.content)
-            MarkdownBlockType.EMPTY -> {}
+            MarkdownBlockType.MATH -> {
+                LatexDisplayBlock(block.content)
+                if (streamTail) StreamCaret()
+            }
+            MarkdownBlockType.EMPTY -> if (streamTail) StreamCaret()
             else -> {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.Top,
-                ) {
-                    Box(modifier = Modifier.weight(1f)) {
-                        InlineMarkdownText(block.content)
-                    }
-                    if (streaming && isLastBlock) {
-                        Spacer(Modifier.width(2.dp))
-                        Box(
-                            modifier = Modifier
-                                .padding(top = 6.dp)
-                                .size(width = 2.dp, height = 16.dp)
-                                .background(Dsh.brand400.copy(alpha = cursorAlpha))
-                        )
-                    }
+                if (streamTail) {
+                    StreamingParagraph(block.content, showCaret = true)
+                } else {
+                    InlineMarkdownText(block.content)
                 }
             }
         }
@@ -7525,46 +7448,6 @@ private fun buildInlineMarkdown(
         }
     }
     return annotated to inlineContent
-}
-// 执行中扫光（DSH command/reasoning-row-sweep：300px 渐变条 2.6s 左→右无限）
-@Composable
-private fun RunningSweep() {
-    // reduce-motion：不播放扫光
-    if (isReduceMotionEnabled()) return
-    val transition = rememberInfiniteTransition(label = "sweep")
-    val progress = transition.animateFloat(
-        initialValue = -1f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(2600, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "sweepProgress"
-    )
-    val sweepBrush = Brush.horizontalGradient(
-        colors = listOf(
-            Color.Transparent,
-            Dsh.bgBase.copy(alpha = 0.6f),
-            Color.Transparent
-        )
-    )
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .clip(RoundedCornerShape(DshRadius.lg)),
-        contentAlignment = Alignment.CenterStart
-    ) {
-        Box(
-            modifier = Modifier
-                .width(300.dp)
-                .fillMaxHeight()
-                .graphicsLayer {
-                    // 渲染阶段读取动画值：只更新变换，不触发布局/重组
-                    translationX = progress.value * 1200.dp.toPx()
-                }
-                .background(sweepBrush)
-        )
-    }
 }
 
 // 命令卡片（tool call / result：radius 12, bg code-block, max-height 260）

@@ -10,6 +10,8 @@ import dev.dsh.mobile.native.MobileApiClient
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import dev.dsh.mobile.native.util.optNullableString
+import dev.dsh.mobile.native.util.parseStoppedReason
 
 data class MobileMessage(
     val id: String,
@@ -378,7 +380,7 @@ class MobileApiClient(private val host: Host) {
             hasMore = root.optBoolean("hasMore", false),
             nextBeforeSeq = if (root.has("nextBeforeSeq") && !root.isNull("nextBeforeSeq")) root.optLong("nextBeforeSeq") else null,
             maxSeq = if (root.has("maxSeq") && !root.isNull("maxSeq")) root.optLong("maxSeq") else null,
-            stoppedReason = root.optString("stoppedReason").takeIf { it.isNotBlank() },
+            stoppedReason = parseStoppedReason(root.optNullableString("stoppedReason")),
             stats = parseMobileSessionStats(stats),
         )
         return result
