@@ -1,47 +1,17 @@
-# --- 本机 / 私货 ---
-local.properties
-app/local.properties
-.private/
-.private-*/
-
-# --- Android ---
-.gradle/
-app/.gradle/
-.kotlin/
-app/.kotlin/
-build/
-app/build/
-app/app/build/
-captures/
-*.apk
-*.aab
-*.jks
-*.keystore
-*.jks.backup
-
-# --- Node (dsh-links plugin) ---
 node_modules/
-dsh-links/node_modules/
-
-# --- 凭据与状态 ---
+.DS_Store
+.idea/
+*.iml
+.vscode/
+.zcode/
+.skill-archive/
+*.log
+*.tmp
+*.bak
 state.json
 *.state.json
 *.token
-token_*
 *.pem
 *.key
 secrets*
 .env
-
-# --- IDE / 系统 ---
-.idea/
-*.iml
-.vscode/
-.DS_Store
-.zcode/
-.skill-archive/
-
-# --- 日志 / 临时 ---
-*.log
-*.tmp
-*.bak

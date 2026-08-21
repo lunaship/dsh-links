@@ -2,7 +2,7 @@
 
 DSH Links connects a phone to [DeepSeek Harness (dsh)](https://github.com/deepseek-ai) instances that can run tools and execute code on the host machine. Treat a paired device as a privileged remote console.
 
-This public Beta supports **trusted LAN only**. Phone access from outside the LAN is out of scope. The `dsh-links-relay/` directory is a placeholder / experimental notes for a future self-hosted relay, not a supported product path.
+This public Beta supports **trusted LAN only**. Phone access from outside the LAN is out of scope. A future self-hosted relay lives in the sibling tree `dsh-links-relay` and is not a supported product path.
 
 ## Threat model (short)
 
@@ -22,7 +22,7 @@ This public Beta supports **trusted LAN only**. Phone access from outside the LA
 ## Do not
 
 - Expose `0.0.0.0:18640` to untrusted networks.
-- Treat Cloudflare Tunnel, Tailscale, frp, or any notes in `dsh-links-relay/` as a supported Beta feature.
+- Treat Cloudflare Tunnel, Tailscale, frp, or `dsh-links-relay` notes as a supported Beta feature.
 - Commit `local.properties`, keystores, `state.json`, or any `*.token` / `*.pem` files.
 - Rely on Host/Origin rewriting as authentication — auth is the device token.
 

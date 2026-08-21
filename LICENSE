@@ -2,33 +2,6 @@ MIT License
 
 Copyright (c) 2026 dsh-links contributors
 
--------------------------------------------------------------------------------
-Scope
--------------------------------------------------------------------------------
-
-This repository publishes different components under different terms:
-
-1. Open (MIT below)
-   - `dsh-links/` plugin (npm package)
-   - `dsh-links-relay/` placeholder / experimental notes
-   - Project docs (`README.md`, `SECURITY.md`, `PRIVACY.md`, `CHANGELOG.md`,
-     `THIRD_PARTY_NOTICES.md`, and similar)
-   - Branding assets under `app/branding/` that are original to this project, except where
-     `THIRD_PARTY_NOTICES.md` says otherwise
-
-2. Closed (not MIT)
-   - Android client (`app/` Android Studio project, excluding notices called out above)
-   - The client is distributed as a signed APK via GitHub Releases only.
-   - Source for the Android client is not a public contribution surface and is
-     not licensed for copying, modification, or redistribution.
-
-If you only need the phone-link plugin or the mobile API contract, use the MIT
-parts above. Install the Android app from official Release APKs.
-
--------------------------------------------------------------------------------
-MIT License text (applies only to the Open scope listed above)
--------------------------------------------------------------------------------
-
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights
@@ -46,3 +19,10 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+-------------------------------------------------------------------------------
+Related projects (not part of this repository)
+-------------------------------------------------------------------------------
+
+- `dsh-links-app` — Android client (private; signed APK only)
+- `dsh-links-relay` — future self-hosted relay (separate tree)
