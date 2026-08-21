@@ -636,6 +636,10 @@ function createRuntime() {
     sessionStreams: new Map(),
     sessionFiles: new Map(),
     inflightPolls: new Set(),
+    // 单飞期间又被要求补洞的会话：轮询结束后立刻再跑一次
+    pendingPolls: new Set(),
+    // sessionId → { at, timer }，给 mux 补洞请求限流
+    gapPolls: new Map(),
     pendingApprovals: new Map(),
     reasoningCache: new Map(),
   }
@@ -702,6 +706,10 @@ async function sessionFilePath(targetPort, sessionId, rt) {
 function dropSession(rt, sessionId) {
   rt.sessionStreams.delete(sessionId)
   rt.sessionFiles.delete(sessionId)
+  rt.pendingPolls.delete(sessionId)
+  const gap = rt.gapPolls.get(sessionId)
+  if (gap?.timer) clearTimeout(gap.timer)
+  rt.gapPolls.delete(sessionId)
   settleOrphanApprovals(rt)
 }
 
@@ -720,21 +728,55 @@ function writeSse(writers, frame) {
   }
 }
 
-async function pollSession(sessionId, targetPort, rt) {
+/** mux 补洞的最小间隔：正常只在订阅初期抖一下，限流是为了防住 seq 空洞补不平时的 RPC 打转。 */
+const GAP_POLL_MIN_INTERVAL_MS = 200
+
+/**
+ * mux 发现 seq 空洞时请求一次强制轮询。首次立刻跑，其余排一个尾随定时器，
+ * 保证「不打转」的同时也「不丢最后一次修复请求」。
+ */
+function requestGapPoll(sessionId, targetPort, rt) {
+  const rec = rt.gapPolls.get(sessionId)
+  if (rec?.timer) return
+  const wait = Math.max(0, GAP_POLL_MIN_INTERVAL_MS - (Date.now() - (rec?.at ?? 0)))
+  if (wait === 0) {
+    rt.gapPolls.set(sessionId, { at: Date.now(), timer: null })
+    pollSession(sessionId, targetPort, rt, true)
+    return
+  }
+  const timer = setTimeout(() => {
+    rt.gapPolls.set(sessionId, { at: Date.now(), timer: null })
+    pollSession(sessionId, targetPort, rt, true)
+  }, wait)
+  timer.unref?.()
+  rt.gapPolls.set(sessionId, { at: rec?.at ?? 0, timer })
+}
+
+/**
+ * 拉取并补发落后事件。force=true 用于补洞：跳过"文件未变化"短路，
+ * 因为 mux 推送的事件可能还没落盘，此时 size/mtime 与上次完全一致。
+ */
+async function pollSession(sessionId, targetPort, rt, force = false) {
   const writers = rt.sessionStreams.get(sessionId)
-  if (!writers || writers.size === 0 || rt.inflightPolls.has(sessionId)) return
+  if (!writers || writers.size === 0) return
+  if (rt.inflightPolls.has(sessionId)) {
+    if (force) rt.pendingPolls.add(sessionId)
+    return
+  }
   rt.inflightPolls.add(sessionId)
   try {
     const filePath = await sessionFilePath(targetPort, sessionId, rt)
-    if (!filePath) return
-    let st
-    try {
-      st = statSync(filePath)
-    } catch {
-      return
+    if (!filePath && !force) return
+    let st = null
+    if (filePath) {
+      try {
+        st = statSync(filePath)
+      } catch {
+        if (!force) return
+      }
     }
     const info = rt.sessionFiles.get(sessionId)
-    if (info && info.lastSize === st.size && info.lastMtime === st.mtimeMs) return
+    if (!force && info && st && info.lastSize === st.size && info.lastMtime === st.mtimeMs) return
     const minCursor = Math.min(...[...writers].map((c) => c.lastSeq))
     const { events, projections } = await loadEventsAfter(minCursor, (payload) =>
       callLocalRpc(targetPort, "session.history", { sessionId, ...payload }),
@@ -760,7 +802,7 @@ async function pollSession(sessionId, targetPort, rt) {
         try { conn.res.write(`event: stats\ndata: ${JSON.stringify(projections)}\n\n`) } catch {}
       }
     }
-    if (info) {
+    if (info && st) {
       info.lastSize = st.size
       info.lastMtime = st.mtimeMs
     }
@@ -768,6 +810,9 @@ async function pollSession(sessionId, targetPort, rt) {
     // RPC 失败/会话消失：静默跳过，下个周期重试
   } finally {
     rt.inflightPolls.delete(sessionId)
+    if (rt.pendingPolls.delete(sessionId)) {
+      pollSession(sessionId, targetPort, rt, true)
+    }
   }
 }
 
@@ -797,7 +842,14 @@ async function handleStreamRoute(sessionId, res, targetPort, config, req, rt, de
     rt.sessionStreams.set(sessionId, writers)
   }
   const afterRaw = Number(new URL(req?.url ?? "/", "http://x").searchParams.get("afterSeq") ?? 0)
-  const conn = { res, lastSeq: Number.isFinite(afterRaw) && afterRaw > 0 ? afterRaw : 0, deviceId: device.deviceId }
+  const conn = {
+    res,
+    lastSeq: Number.isFinite(afterRaw) && afterRaw > 0 ? afterRaw : 0,
+    deviceId: device.deviceId,
+    // 补历史完成前不接受 mux 直推，避免与补发交错乱序
+    seeded: false,
+    missedWhileSeeding: false,
+  }
   writers.add(conn)
   res.write(`event: ready\ndata: ${JSON.stringify({ resumeSeq: conn.lastSeq })}\n\n`)
   ;(async () => {
@@ -810,6 +862,7 @@ async function handleStreamRoute(sessionId, res, targetPort, config, req, rt, de
         }),
       )
       for (const e of events) {
+        if (e.seq <= conn.lastSeq) continue
         try {
           conn.res.write(sseMessageFrame(e))
           conn.lastSeq = e.seq
@@ -820,7 +873,11 @@ async function handleStreamRoute(sessionId, res, targetPort, config, req, rt, de
       if (projections) {
         try { conn.res.write(`event: stats\ndata: ${JSON.stringify(projections)}\n\n`) } catch {}
       }
-    } catch {}
+    } catch {} finally {
+      conn.seeded = true
+      // 补历史期间 mux 到的事件没人接，立刻补一次洞
+      if (conn.missedWhileSeeding) pollSession(sessionId, targetPort, rt, true)
+    }
   })()
   res.on("close", () => {
     const set = rt.sessionStreams.get(sessionId)
@@ -1439,7 +1496,12 @@ export function apply(ctx, config) {
       proxy.listen(config.port, "0.0.0.0", () => {
         ctx.logger.info(`dsh-links: 手机接入代理已启动，https 端口 ${config.port}（指纹 ${tls.fingerprint.slice(0, 12)}…）`)
         for (const u of lanUrls(config).urls) ctx.logger.info(`dsh-links: 可访问地址 ${u}`)
-        muxBridge = startMuxQuestionBridge({ targetPort, rt, logger: ctx.logger })
+        muxBridge = startMuxQuestionBridge({
+          targetPort,
+          rt,
+          logger: ctx.logger,
+          requestPoll: (sessionId) => requestGapPoll(sessionId, targetPort, rt),
+        })
         resolve(tls)
       })
     })
@@ -1459,6 +1521,12 @@ export function apply(ctx, config) {
       }
       rt.sessionStreams.clear()
       rt.sessionFiles.clear()
+      rt.inflightPolls.clear()
+      rt.pendingPolls.clear()
+      for (const gap of rt.gapPolls.values()) {
+        if (gap.timer) clearTimeout(gap.timer)
+      }
+      rt.gapPolls.clear()
       rt.reasoningCache.clear()
       for (const rec of [...rt.pendingApprovals.values()]) {
         try { rec.settle("cancelled") } catch {}

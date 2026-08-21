@@ -1,9 +1,15 @@
 /**
- * 把本机 apiproxy 的 mux `question/requested|resolved` 转发给手机 SSE，
- * 并用 /api/respond 回传答案。澄清卡不在 session.history 事件流里。
+ * 把本机 apiproxy 的 mux 帧转发给手机 SSE：
+ * - `question/requested|resolved`：澄清卡不在 session.history 事件流里，只能走 mux。
+ * - `session/event`：与 web 同源的实时推送，绕开"轮询 session.history"的秒级延迟。
+ * 并用 /api/respond 回传答案。
+ *
+ * 传输：新版 apiproxy 的 /api/events.mux 只接受 WebSocket 升级（SSE GET 返回 426），
+ * 旧版只有 SSE。两条都实现，首次连接失败就换另一条，之后固定用能通的那条。
  */
 import { request as httpRequest } from "node:http"
 import { randomBytes } from "node:crypto"
+import { sseMessageFrame } from "./stream-cursor.js"
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms))
@@ -35,7 +41,45 @@ function parseSseBlocks(buf, onBlock) {
   return rest
 }
 
-function handleMuxBlock(block, rt, logger) {
+/**
+ * mux 上的 `session/event` 与 session.history 里的事件同构（seq/type/time/data），
+ * 直接按 SSE 帧下推。只走连号快路径：一旦发现空洞就交给 pollSession 补，
+ * 否则 conn.lastSeq 会跳号，被跳过的事件永远补不回来。
+ */
+function handleSessionEvent(payload, rt, requestPoll) {
+  const sessionId = payload.sessionId
+  const event = payload.event
+  if (!sessionId || !event || typeof event.seq !== "number") return
+  const writers = rt.sessionStreams.get(sessionId)
+  if (!writers || writers.size === 0) return
+  let needsPoll = false
+  for (const conn of [...writers]) {
+    if (!conn.seeded) {
+      conn.missedWhileSeeding = true
+      continue
+    }
+    if (event.seq <= conn.lastSeq) continue
+    if (event.seq > conn.lastSeq + 1) {
+      needsPoll = true
+      continue
+    }
+    try {
+      const ok = conn.res.write(sseMessageFrame(event))
+      conn.lastSeq = event.seq
+      if (ok === false) {
+        writers.delete(conn)
+        try { conn.res.destroy() } catch {}
+      }
+    } catch {
+      writers.delete(conn)
+      try { conn.res.destroy() } catch {}
+    }
+  }
+  if (needsPoll) requestPoll?.(sessionId)
+}
+
+/** SSE 块 → 帧。WebSocket 那条直接拿到帧对象，走 handleMuxFrame。 */
+export function handleMuxBlock(block, rt, logger, requestPoll) {
   const data = block
     .split("\n")
     .filter((line) => line.startsWith("data:"))
@@ -49,8 +93,13 @@ function handleMuxBlock(block, rt, logger) {
   } catch {
     return
   }
+  return handleMuxFrame(frame, rt, logger, requestPoll)
+}
+
+export function handleMuxFrame(frame, rt, logger, requestPoll) {
   const payload = frame?.payload
   const type = payload?.type
+  if (type === "session/event") return handleSessionEvent(payload, rt, requestPoll)
   if (type !== "question/requested" && type !== "question/resolved") return
   const sessionId = payload.sessionId
   if (!sessionId) return
@@ -122,12 +171,68 @@ export function respondQuestion(targetPort, rpcId, sessionId, answer) {
  * 常驻订阅本机 events.mux；断线自动重连。
  * @returns {{ stop: () => void }}
  */
-export function startMuxQuestionBridge({ targetPort, rt, logger }) {
+export function startMuxQuestionBridge({ targetPort, rt, logger, requestPoll }) {
   let stopped = false
   let activeReq = null
+  let activeWs = null
+  // 新版主机走 WebSocket，旧版走 SSE；首连失败会翻到另一条
+  let useWs = typeof globalThis.WebSocket === "function"
 
-  async function connectOnce() {
-    await new Promise((resolve, reject) => {
+  function connectWs() {
+    return new Promise((resolve, reject) => {
+      let ws
+      try {
+        ws = new globalThis.WebSocket(`ws://127.0.0.1:${targetPort}/api/events.mux`)
+      } catch (err) {
+        reject(err)
+        return
+      }
+      activeWs = ws
+      let opened = false
+      let done = false
+      // 插件先于主机 API 就绪时，升级请求会一直悬着：不设超时这个 Promise 永不落地，
+      // 重连循环就死在这里。超时后主动放弃，交给下一轮重试。
+      const handshakeTimer = setTimeout(() => {
+        if (opened || done) return
+        done = true
+        try { ws.close() } catch {}
+        reject(new Error("mux ws 握手超时"))
+      }, 5_000)
+      handshakeTimer.unref?.()
+      const settle = (fn, arg) => {
+        if (done) return
+        done = true
+        clearTimeout(handshakeTimer)
+        fn(arg)
+      }
+      ws.addEventListener("open", () => {
+        opened = true
+        clearTimeout(handshakeTimer)
+        logger?.info?.("dsh-links: mux 桥已连接（WebSocket）")
+      })
+      ws.addEventListener("message", (ev) => {
+        // 超时后被放弃的旧连接不得继续喂帧
+        if (done && !opened) return
+        if (typeof ev.data !== "string") return
+        let frame
+        try {
+          frame = JSON.parse(ev.data)
+        } catch {
+          return
+        }
+        handleMuxFrame(frame, rt, logger, requestPoll)
+      })
+      // undici 的 error 后必定跟 close，统一在 close 里收尾
+      ws.addEventListener("error", () => {})
+      ws.addEventListener("close", (ev) => {
+        if (opened) settle(resolve)
+        else settle(reject, new Error(`mux ws 未能建立（code ${ev?.code ?? "?"}）`))
+      })
+    })
+  }
+
+  function connectSse() {
+    return new Promise((resolve, reject) => {
       const req = httpRequest(
         {
           host: "127.0.0.1",
@@ -141,35 +246,52 @@ export function startMuxQuestionBridge({ targetPort, rt, logger }) {
           },
         },
         (res) => {
+          clearTimeout(connectTimer)
           if (res.statusCode !== 200) {
             reject(new Error("mux HTTP " + res.statusCode))
             res.resume()
             return
           }
+          logger?.info?.("dsh-links: mux 桥已连接（SSE）")
           let buf = ""
           res.on("data", (chunk) => {
             buf += chunk.toString("utf8")
-            buf = parseSseBlocks(buf, (block) => handleMuxBlock(block, rt, logger))
+            buf = parseSseBlocks(buf, (block) => handleMuxBlock(block, rt, logger, requestPoll))
           })
           res.on("end", () => resolve())
           res.on("error", reject)
         },
       )
       activeReq = req
-      req.on("error", reject)
+      req.on("error", (err) => {
+        clearTimeout(connectTimer)
+        reject(err)
+      })
+      // 建流后不设读超时（SSE 本来就长时间静默），但握手阶段必须有超时
       req.setTimeout(0)
+      const connectTimer = setTimeout(() => {
+        req.destroy(new Error("mux sse 握手超时"))
+      }, 5_000)
+      connectTimer.unref?.()
       req.end()
     })
   }
 
   ;(async () => {
+    let everConnected = false
     while (!stopped) {
       try {
-        await connectOnce()
+        await (useWs ? connectWs() : connectSse())
+        everConnected = true
       } catch (err) {
-        if (!stopped) logger?.warn?.(`dsh-links: mux question bridge: ${err?.message ?? err}`)
+        if (!stopped) {
+          logger?.warn?.(`dsh-links: mux 桥（${useWs ? "ws" : "sse"}）：${err?.message ?? err}`)
+          // 首连就失败：可能是主机传输与预期相反，翻到另一条再试
+          if (!everConnected && typeof globalThis.WebSocket === "function") useWs = !useWs
+        }
       }
       activeReq = null
+      activeWs = null
       if (stopped) break
       await sleep(2_000)
     }
@@ -179,7 +301,9 @@ export function startMuxQuestionBridge({ targetPort, rt, logger }) {
     stop() {
       stopped = true
       try { activeReq?.destroy() } catch {}
+      try { activeWs?.close() } catch {}
       activeReq = null
+      activeWs = null
     },
   }
 }
