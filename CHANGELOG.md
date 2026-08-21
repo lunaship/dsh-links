@@ -1,5 +1,10 @@
 # Changelog
 
+## dsh-links 0.1.0-beta.2 — 2026-08-21
+
+- 手机 SSE 转发 Web 澄清卡（`ask_user_question` / mux `question/requested`），并支持 `/question` 回传答案。
+- Android 客户端 `0.5.0-beta.2`：会话竞态、审批确认、澄清卡 UI 等修复。
+
 ## 0.5.0-beta.1 — 2026-08-21
 
 Android App 局域网 Beta。
