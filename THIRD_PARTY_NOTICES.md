@@ -17,12 +17,12 @@ Parts of the Android client UI (icons, workspace copy, color tokens, and panel l
 - Plus Jakarta Sans, SIL Open Font License 1.1
 - Copyright 2020 The Plus Jakarta Sans Project Authors
 - Upstream: https://github.com/tokotype/PlusJakartaSans
-- Local copy: [branding/FONT-LICENSE-PlusJakartaSans.txt](branding/FONT-LICENSE-PlusJakartaSans.txt)
+- Local copy: [app/branding/FONT-LICENSE-PlusJakartaSans.txt](app/branding/FONT-LICENSE-PlusJakartaSans.txt)
 
 ## Project branding
 
-- The chibi orca in `branding/logo-orca.png` and the app launcher icon are original to this project.
-- `branding/logo-01-harness-orbit.svg` includes a leaping whale and DeepSeek-blue palette. Treat that whale mark as derived from DeepSeek visual language, not as an original DSH Links trademark.
+- The chibi orca in `app/branding/logo-orca.png` and the app launcher icon are original to this project.
+- `app/branding/logo-01-harness-orbit.svg` includes a leaping whale and DeepSeek-blue palette. Treat that whale mark as derived from DeepSeek visual language, not as an original DSH Links trademark.
 
 ## Android app direct runtime dependencies
 

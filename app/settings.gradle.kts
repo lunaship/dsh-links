@@ -19,5 +19,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "dsh-links"
+rootProject.name = "dsh-links-app"
 include(":app")

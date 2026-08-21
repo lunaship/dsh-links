@@ -1,11 +1,17 @@
-# --- 本机配置 ---
+# --- 本机 / 私货 ---
 local.properties
+app/local.properties
+.private/
+.private-*/
 
-# --- Gradle / Android 构建产物 ---
+# --- Android ---
 .gradle/
+app/.gradle/
 .kotlin/
+app/.kotlin/
 build/
 app/build/
+app/app/build/
 captures/
 *.apk
 *.aab
@@ -13,7 +19,11 @@ captures/
 *.keystore
 *.jks.backup
 
-# --- 运行时状态与凭据（绝不入库） ---
+# --- Node (dsh-links plugin) ---
+node_modules/
+dsh-links/node_modules/
+
+# --- 凭据与状态 ---
 state.json
 *.state.json
 *.token
@@ -23,10 +33,7 @@ token_*
 secrets*
 .env
 
-# --- Node 依赖 ---
-node_modules/
-
-# --- IDE / 系统 / 本地草稿 ---
+# --- IDE / 系统 ---
 .idea/
 *.iml
 .vscode/
@@ -34,7 +41,7 @@ node_modules/
 .zcode/
 .skill-archive/
 
-# --- 日志与临时 ---
+# --- 日志 / 临时 ---
 *.log
 *.tmp
 *.bak
