@@ -2,7 +2,7 @@
 
 DSH Links connects a phone to [DeepSeek Harness (dsh)](https://github.com/deepseek-ai) instances that can run tools and execute code on the host machine. Treat a paired device as a privileged remote console.
 
-This public Beta supports **trusted LAN only**. Phone access from outside the LAN is out of scope. DSH Links Relay is a public relay service being built and operated by DSH Links; it is not available or supported until it has its own security model and end-to-end acceptance evidence.
+This public Beta supports **trusted LAN only**. Phone access from outside the LAN is out of scope. DSH Links Relay is currently in development; it is not available or supported until it has its own security model and end-to-end acceptance evidence.
 
 If you use an intranet-tunnelling product yourself, treat it as an **experimental personal deployment**: it is not a supported Beta configuration and receives no compatibility or security guarantee. Do not expose port `18640` directly to the public Internet.
 

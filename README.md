@@ -11,7 +11,7 @@ This release is a **trusted-LAN Android Beta**, not a public remote-access produ
 - **Supported:** Android phone and DSH `0.1.0-rc.8` on the same trusted LAN.
 - **Experimental, at your own risk:** a Tailscale or Cloudflare Tunnel path you operate yourself. It is not a supported Beta path and is not covered by the security or compatibility promise.
 - **Not supported:** exposing port `18640` directly to the public Internet or using frp. DSH Links Relay is not available in this Beta.
-- **Planned:** DSH Links Relay is a public relay service being built and operated by DSH Links. It will be released only after its security model and end-to-end acceptance tests are complete.
+- **Planned:** DSH Links Relay is currently in development. It will be released only after its security model and end-to-end acceptance tests are complete.
 
 The Android APK is distributed only as an official signed release. Verify the version and SHA-256 published with that release; do not install repackaged APKs.
 
@@ -21,7 +21,7 @@ The Android APK is distributed only as an official signed release. Verify the ve
 |---|---|
 | **本仓库 `dsh-links`** | 插件 + 手机 API（可公开） |
 | Android 客户端 | **私有**；仅发布官方签名 APK |
-| DSH Links Relay | DSH Links 正在建设的公共中继服务；当前不可用 |
+| DSH Links Relay | 正在建设中；当前不可用 |
 
 ## 安装
 
@@ -36,7 +36,7 @@ dsh web
 dsh plugin --profile web add /path/to/dsh-links
 ```
 
-然后重启 `dsh web`，设置 →「手机连接」扫码或手动配对。
+然后重启 `dsh web`，设置 →「手机连接」扫码或手动配对。扫码中的地址或手动填写的地址可以指向家中电脑或远程服务器上运行的 DSH；当前 Beta 正式支持同一可信局域网，跨网络访问需要你自行配置 Tailscale / Cloudflare Tunnel，或等待正在建设中的 DSH Links Relay。
 
 已验证：DSH `0.1.0-rc.8` + 本插件 `0.1.0-beta.1`。
 
@@ -54,7 +54,7 @@ dsh plugin --profile web add /path/to/dsh-links
 
 - [Tailscale / Cloudflare Tunnel / DSH Links Relay 路线说明](REMOTE_ACCESS.md)
 - 不要把 `18640` 直接做路由器端口转发。
-- DSH Links Relay 尚未发布：将由 DSH Links 建设并运营公共中继服务。电脑 `local-relay` 和手机 App 均主动连接 Relay；Relay 仅实时转发已配对设备的请求与响应，不持久化存储会话内容、文件、工作区数据或设备内容，电脑不接受公网入站连接。
+- DSH Links Relay 正在建设中：计划中电脑 `local-relay` 和手机 App 均主动连接 Relay；Relay 仅实时转发已配对设备的请求与响应，不持久化存储会话内容、文件、工作区数据或设备内容，电脑不接受公网入站连接。
 
 ## 开发
 
