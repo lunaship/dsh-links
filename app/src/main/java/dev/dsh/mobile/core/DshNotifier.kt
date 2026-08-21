@@ -90,7 +90,7 @@ object DshNotifier {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         return NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_dsh_mark)
+            .setSmallIcon(R.drawable.ic_stat_dsh)
             .setContentIntent(pending)
             .setCategory(NotificationCompat.CATEGORY_EVENT)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)

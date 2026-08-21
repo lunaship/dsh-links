@@ -56,7 +56,16 @@ object PinnedSsl {
     fun apply(connection: HttpURLConnection, fingerprint: String?) {
         if (connection !is HttpsURLConnection) return
         val pin = normalizeFingerprint(fingerprint)
-        if (pin.isEmpty()) return
+        if (pin.isEmpty()) {
+            // 私网/回环主机必须钉死证书；空指纹不得静默回退到系统 PKI（fail-closed）
+            if (shouldPin(connection.url.toString())) {
+                throw CertChangedException()
+            }
+            return
+        }
+        if (pin.length != 64 || pin.any { it !in "0123456789abcdef" }) {
+            throw CertChangedException()
+        }
         val tm = object : X509TrustManager {
             override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
             override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) {}

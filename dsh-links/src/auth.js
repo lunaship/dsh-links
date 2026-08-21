@@ -6,11 +6,12 @@
  *
  * 安全约定：
  *   - 配对码明文不落盘
- *   - 失败限流与具体配对码解耦，冷却期内不换发新码
+ *   - 失败限流按客户端 IP 隔离，避免全局锁死配对
+ *   - 冷却期内不换发新码（ensurePairingCode 仍可展示未过期码）
  */
 import * as crypto from "node:crypto"
 
-export const PAIR_FAIL_LIMIT = 5                  // 失败限流阈值
+export const PAIR_FAIL_LIMIT = 5                  // 失败限流阈值（每客户端）
 export const PAIR_COOLDOWN_MS = 15 * 60 * 1000    // 冷却 15 分钟
 
 const liveCodes = new WeakMap()
@@ -46,24 +47,32 @@ export function newAuthStore() {
 /** 吊销设备：插件侧不再维护 ticket/session。 */
 export function revokeDevice(_store, _deviceId) {}
 
-function pairingRate(state) {
-  if (!state.pairingRate) state.pairingRate = { failCount: 0, cooldownUntil: 0 }
-  return state.pairingRate
+function normalizeClientKey(clientKey) {
+  const raw = String(clientKey ?? "unknown").trim() || "unknown"
+  return raw.replace(/^::ffff:/i, "")
+}
+
+/** 按客户端键隔离的限流桶（仅内存，不落盘）。 */
+function pairingRateFor(state, clientKey = "unknown") {
+  if (!state.pairingRates || typeof state.pairingRates !== "object") {
+    state.pairingRates = Object.create(null)
+  }
+  const key = normalizeClientKey(clientKey)
+  if (!state.pairingRates[key]) {
+    state.pairingRates[key] = { failCount: 0, cooldownUntil: 0 }
+  }
+  return state.pairingRates[key]
 }
 
 export function getLivePairingCode(state) {
   return liveCodes.get(state) ?? null
 }
 
-/** 启动时把旧版明文 pairing.code 迁到内存 + hash，并把限流字段拆出。 */
+/** 启动时把旧版明文 pairing.code 迁到内存 + hash。 */
 export function hydratePairing(state) {
   const p = state.pairing ?? {}
-  if (!state.pairingRate) {
-    state.pairingRate = {
-      failCount: p.failCount ?? 0,
-      cooldownUntil: p.cooldownUntil ?? 0,
-    }
-  }
+  // 丢弃旧版全局 pairingRate（已改为 per-client pairingRates）
+  if (state.pairingRate) delete state.pairingRate
   if (p.code) {
     const code = String(p.code)
     liveCodes.set(state, code)
@@ -93,7 +102,6 @@ export function newPairingCode(state, ttlSeconds) {
   const code = String(pairingEntropy.randomInt(0, 1_000_000)).padStart(6, "0")
   const salt = crypto.randomBytes(16).toString("hex")
   liveCodes.set(state, code)
-  pairingRate(state)
   state.pairing = {
     salt,
     codeHash: hashPairing(salt, code).toString("hex"),
@@ -104,21 +112,22 @@ export function newPairingCode(state, ttlSeconds) {
 }
 
 /**
- * 需要展示/使用配对码时调用。冷却期内绝不换发。
+ * 需要展示/使用配对码时调用。
  * @returns {string|null}
  */
 export function ensurePairingCode(state, ttlSeconds) {
-  const rate = pairingRate(state)
   const live = getLivePairingCode(state)
-  if (Date.now() < (rate.cooldownUntil ?? 0)) return live
   const p = state.pairing
   if (live && p && !p.consumed && (p.expiresAt ?? 0) > Date.now()) return live
   return newPairingCode(state, ttlSeconds)
 }
 
-/** 校验配对码：返回 ok/error。成功后由 consumePairingCode 标记一次性消费。 */
-export function verifyPairingCode(state, code) {
-  const rate = pairingRate(state)
+/**
+ * 校验配对码：返回 ok/error。成功后由 consumePairingCode 标记一次性消费。
+ * @param {string} [clientKey] 客户端标识（通常为 remoteAddress），用于隔离失败限流
+ */
+export function verifyPairingCode(state, code, clientKey = "unknown") {
+  const rate = pairingRateFor(state, clientKey)
   if (Date.now() < (rate.cooldownUntil ?? 0)) return { ok: false, error: "尝试过于频繁，请稍后再试" }
   const p = state.pairing ?? {}
   const live = getLivePairingCode(state)
@@ -145,6 +154,8 @@ export function verifyPairingCode(state, code) {
     }
     return { ok: false, error: "配对码无效" }
   }
+  // 成功：清该客户端失败计数
+  rate.failCount = 0
   return { ok: true }
 }
 

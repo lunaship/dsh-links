@@ -43,6 +43,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -82,7 +83,9 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.Placeholder
 import androidx.compose.ui.text.PlaceholderVerticalAlign
@@ -1250,7 +1253,7 @@ fun WorkspaceScreen(
                         .statusBarsPadding()
                         .padding(top = 8.dp)
                 ) {
-                    // 品牌行：侧栏填充（对应 sidebar brand row）
+                    // 品牌行：logo + 名称
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1258,13 +1261,27 @@ fun WorkspaceScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Image(
+                                painter = painterResource(dev.dsh.mobile.R.drawable.ic_dsh_mark_orca),
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .size(28.dp)
+                                    .clip(RoundedCornerShape(8.dp)),
+                            )
+                            Spacer(Modifier.width(10.dp))
                             Text(
                                 "DSH Links",
                                 color = Dsh.labelPrimary,
                                 fontSize = 15.sp,
                                 fontWeight = FontWeight(600),
-                                letterSpacing = (-0.2).sp
+                                letterSpacing = (-0.2).sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                             )
                         }
                         IconButton(
@@ -4116,28 +4133,32 @@ private fun SessionRowItem(
                 )
             }
         }
-        DshMenu(
-            expanded = menuOpen,
-            onDismiss = { menuOpen = false },
-            items = listOf(
-                DshMenuItem(EditOutline16, L.rename) {
-                    menuOpen = false
-                    onRename()
-                },
-                DshMenuItem(BranchOutline16, L.forkSession) {
-                    menuOpen = false
-                    onFork()
-                },
-                DshMenuItem(ArchiveOutline20, L.archiveSession) {
-                    menuOpen = false
-                    onArchive()
-                },
-                DshMenuItem(TrashOutline16, L.deleteSession, danger = true) {
-                    menuOpen = false
-                    onDelete()
-                },
-            ),
-        )
+        // 锚在行尾：菜单靠右弹出，避免贴侧栏左边
+        Box(modifier = Modifier.align(Alignment.CenterEnd)) {
+            DshMenu(
+                expanded = menuOpen,
+                onDismiss = { menuOpen = false },
+                offset = androidx.compose.ui.unit.DpOffset(0.dp, 4.dp),
+                items = listOf(
+                    DshMenuItem(EditOutline16, L.rename) {
+                        menuOpen = false
+                        onRename()
+                    },
+                    DshMenuItem(BranchOutline16, L.forkSession) {
+                        menuOpen = false
+                        onFork()
+                    },
+                    DshMenuItem(ArchiveOutline20, L.archiveSession) {
+                        menuOpen = false
+                        onArchive()
+                    },
+                    DshMenuItem(TrashOutline16, L.deleteSession, danger = true) {
+                        menuOpen = false
+                        onDelete()
+                    },
+                ),
+            )
+        }
     }
 }
 
@@ -4155,10 +4176,12 @@ private fun DshMenu(
     expanded: Boolean,
     onDismiss: () -> Unit,
     items: List<DshMenuItem>,
+    offset: androidx.compose.ui.unit.DpOffset = androidx.compose.ui.unit.DpOffset.Zero,
 ) {
     DropdownMenu(
         expanded = expanded,
         onDismissRequest = onDismiss,
+        offset = offset,
         containerColor = Dsh.bgLayer1,
         shape = RoundedCornerShape(DshRadius.lg),
         tonalElevation = 0.dp,
@@ -5999,139 +6022,145 @@ private fun InputBar(
 
 
 
-            // 底部工具行（padding 2px 8px 6px）—— 对标 web UI toolbar 布局
+            // 底部工具行：左侧控件可压缩，发送键固定在最右，永不被挤出
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(start = 8.dp, end = 8.dp, top = 2.dp, bottom = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // 左侧：+ 按钮（DSH input add：图片/附件）
-                if (!running) {
-                    RoundIconButton(
-                        icon = PlusOutline16,
-                        tint = Dsh.labelPrimary,
-                        contentDescription = L.addAttachment,
-                        onClick = onPickImage
-                    )
-                }
-
-                // 访问模式（DSH input.accessMode）
-                if (!running) {
-                    val permInteraction = remember { MutableInteractionSource() }
-                    val permPressed by permInteraction.collectIsPressedAsState()
-                    Row(
-                        modifier = Modifier
-                            .height(28.dp)
-                            .clip(RoundedCornerShape(DshRadius.full))
-                            .background(if (permPressed) Dsh.hover else Color.Transparent)
-                            .clickable(interactionSource = permInteraction, indication = null, onClick = onOpenPermissionPicker)
-                            .padding(start = 8.dp, end = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            WarningOutline16,
-                            contentDescription = null,
-                            tint = Dsh.labelSecondary,
-                            modifier = Modifier.size(12.dp)
-                        )
-                        Spacer(Modifier.width(4.dp))
-                        Text(
-                            permissionLabel,
-                            color = Dsh.labelSecondary,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight(500),
-                            lineHeight = 20.sp
-                        )
-                        Icon(
-                            ChevronDownOutline14,
-                            contentDescription = null,
-                            tint = Dsh.labelCaption,
-                            modifier = Modifier.size(14.dp)
-                        )
-                    }
-                }
-
-                if (running) {
-                    val stopInteraction = remember { MutableInteractionSource() }
-                    val stopPressed by stopInteraction.collectIsPressedAsState()
-                    val stopBg = if (stopPressed)
-                        if (Dsh.isDark) Dsh.brand400.copy(alpha = 0.28f) else Dsh.brand500.copy(alpha = 0.2f)
-                    else
-                        if (Dsh.isDark) Dsh.brand400.copy(alpha = 0.18f) else Dsh.brand500.copy(alpha = 0.12f)
-                    Box(
-                        modifier = Modifier
-                            .size(26.dp)
-                            .clip(CircleShape)
-                            .background(stopBg)
-                            .clickable(interactionSource = stopInteraction, indication = null, onClick = onStop),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            StopFill16,
-                            contentDescription = L.stopGenerating,
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    // 左侧：+ 按钮（DSH input add：图片/附件）
+                    if (!running) {
+                        RoundIconButton(
+                            icon = PlusOutline16,
                             tint = Dsh.labelPrimary,
-                            modifier = Modifier.size(14.dp)
+                            contentDescription = L.addAttachment,
+                            onClick = onPickImage
                         )
+                    }
+
+                    // 访问模式（DSH input.accessMode）
+                    if (!running) {
+                        val permInteraction = remember { MutableInteractionSource() }
+                        val permPressed by permInteraction.collectIsPressedAsState()
+                        Row(
+                            modifier = Modifier
+                                .height(28.dp)
+                                .clip(RoundedCornerShape(DshRadius.full))
+                                .background(if (permPressed) Dsh.hover else Color.Transparent)
+                                .clickable(interactionSource = permInteraction, indication = null, onClick = onOpenPermissionPicker)
+                                .padding(start = 6.dp, end = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                WarningOutline16,
+                                contentDescription = null,
+                                tint = Dsh.labelSecondary,
+                                modifier = Modifier.size(11.dp)
+                            )
+                            Spacer(Modifier.width(3.dp))
+                            Text(
+                                permissionLabel,
+                                color = Dsh.labelSecondary,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight(500),
+                                lineHeight = 14.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Icon(
+                                ChevronDownOutline14,
+                                contentDescription = null,
+                                tint = Dsh.labelCaption,
+                                modifier = Modifier.size(12.dp)
+                            )
+                        }
+                    }
+
+                    if (running) {
+                        val stopInteraction = remember { MutableInteractionSource() }
+                        val stopPressed by stopInteraction.collectIsPressedAsState()
+                        val stopBg = if (stopPressed)
+                            if (Dsh.isDark) Dsh.brand400.copy(alpha = 0.28f) else Dsh.brand500.copy(alpha = 0.2f)
+                        else
+                            if (Dsh.isDark) Dsh.brand400.copy(alpha = 0.18f) else Dsh.brand500.copy(alpha = 0.12f)
+                        Box(
+                            modifier = Modifier
+                                .size(26.dp)
+                                .clip(CircleShape)
+                                .background(stopBg)
+                                .clickable(interactionSource = stopInteraction, indication = null, onClick = onStop),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                StopFill16,
+                                contentDescription = L.stopGenerating,
+                                tint = Dsh.labelPrimary,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(Modifier.weight(1f))
+
+                    // 模型选择：可收缩省略，不得挤掉发送键
+                    if (!running) {
+                        val modelInteraction = remember { MutableInteractionSource() }
+                        val modelPressed by modelInteraction.collectIsPressedAsState()
+                        Row(
+                            modifier = Modifier
+                                .height(28.dp)
+                                .widthIn(max = 132.dp)
+                                .clip(RoundedCornerShape(DshRadius.xl))
+                                .background(if (modelPressed) Dsh.hover else Color.Transparent)
+                                .clickable(interactionSource = modelInteraction, indication = null, onClick = onOpenModelPicker)
+                                .padding(start = 6.dp, end = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                currentModel ?: L.selectModel,
+                                color = Dsh.labelSecondary,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight(500),
+                                lineHeight = 16.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false),
+                            )
+                            Icon(
+                                ChevronDownOutline14,
+                                contentDescription = null,
+                                tint = Dsh.labelCaption,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+                        Spacer(Modifier.width(6.dp))
+                    }
+
+                    // 上下文计量
+                    if (sessionStats != null && sessionStats.contextWindow > 0) {
+                        ContextMeterButton(stats = sessionStats, running = running)
+                        Spacer(Modifier.width(6.dp))
                     }
                 }
 
-                Spacer(Modifier.weight(1f))
-
-                // 右侧：模型选择（DSH select trigger）+ 发送按钮
-                if (!running) {
-                    val modelInteraction = remember { MutableInteractionSource() }
-                    val modelPressed by modelInteraction.collectIsPressedAsState()
-                    Row(
-                        modifier = Modifier
-                            .height(28.dp)
-                            .clip(RoundedCornerShape(DshRadius.xl))
-                            .background(if (modelPressed) Dsh.hover else Color.Transparent)
-                            .clickable(interactionSource = modelInteraction, indication = null, onClick = onOpenModelPicker)
-                            .padding(start = 8.dp, end = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            currentModel ?: L.selectModel,
-                            color = Dsh.labelSecondary,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight(500),
-                            lineHeight = 20.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.widthIn(max = 180.dp)
-                        )
-                        Icon(
-                            ChevronDownOutline14,
-                            contentDescription = null,
-                            tint = Dsh.labelCaption,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-                    Spacer(Modifier.width(8.dp))
-                }
-
-                // 上下文计量（执行中也显示，running 时环形为浅色脉冲）
-                if (sessionStats != null && sessionStats.contextWindow > 0) {
-                    ContextMeterButton(stats = sessionStats, running = running)
-                    Spacer(Modifier.width(8.dp))
-                }
-
-                // 右侧：发送按钮（26dp 圆形品牌蓝，与 Web 工具栏比例接近）
+                // 发送键：固定在行尾，始终可见
                 val sendInteraction = remember { MutableInteractionSource() }
                 val sendPressed by sendInteraction.collectIsPressedAsState()
                 val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
-                // 背景色按压反馈：120ms 过渡（Material Motion 按压区间 100-150ms）
                 val sendBg by animateColorAsState(
                     targetValue = when {
-                        !canSend && !isSending -> Dsh.brand500.copy(alpha = 0.4f)
+                        !canSend && !isSending -> Dsh.brand500.copy(alpha = 0.55f)
                         sendPressed -> Dsh.brand400
                         else -> Dsh.brand500
                     },
                     animationSpec = tween(motionDuration(120)),
                     label = "sendBg"
                 )
-                Spacer(Modifier.width(4.dp))
                 val sendScale by animateFloatAsState(
                     targetValue = if (sendPressed) 0.88f else 1f,
                     animationSpec = tween(DshDuration.fast),
@@ -6139,7 +6168,8 @@ private fun InputBar(
                 )
                 Box(
                     modifier = Modifier
-                        .size(26.dp)
+                        .padding(start = 4.dp)
+                        .size(28.dp)
                         .graphicsLayer(scaleX = sendScale, scaleY = sendScale)
                         .clip(CircleShape)
                         .background(sendBg)
@@ -6155,7 +6185,6 @@ private fun InputBar(
                     contentAlignment = Alignment.Center
                 ) {
                     if (isSending) {
-                        // 简单旋转圈
                         val angle = rememberMotionSpin(750, label = "spin")
                         Box(
                             modifier = Modifier

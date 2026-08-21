@@ -25,6 +25,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -54,6 +55,8 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -450,18 +453,6 @@ fun DevicesScreen(
                             },
                             onRename = { renameTarget = device.host },
                             onDelete = { deleteTarget = device.host },
-                            onManagePairing = {
-                                when (device.state) {
-                                    DeviceState.OFFLINE -> {
-                                        Toast.makeText(
-                                            context,
-                                            s.deviceOfflineCannotManage,
-                                            Toast.LENGTH_SHORT,
-                                        ).show()
-                                    }
-                                    else -> pairedDevicesHost = device.host
-                                }
-                            },
                         )
                     }
                     item(key = "add-device") {
@@ -621,7 +612,6 @@ private fun DeviceCard(
     onOpen: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
-    onManagePairing: () -> Unit,
 ) {
     val s = DshS
     val interaction = remember { MutableInteractionSource() }
@@ -736,8 +726,6 @@ private fun DeviceCard(
             Spacer(Modifier.width(7.dp))
             CardAction(s.delete, true, modifier = Modifier.weight(1f), onClick = onDelete)
         }
-        Spacer(Modifier.height(7.dp))
-        CardAction(s.pairingManage, false, modifier = Modifier.fillMaxWidth(), onClick = onManagePairing)
     }
 }
 
@@ -893,32 +881,70 @@ private fun Modifier.dashedBorder(width: Dp, color: Color, cornerRadius: Dp): Mo
 private fun EmptyDevicesState(onAdd: () -> Unit) {
     val s = DshS
     Column(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 28.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+        verticalArrangement = Arrangement.Center,
     ) {
-        Text(s.noDevicesYet, color = HStudio.textPrimary, fontSize = 14.sp, fontWeight = FontWeight(600))
-        Spacer(Modifier.height(6.dp))
+        Box(
+            modifier = Modifier
+                .size(88.dp)
+                .clip(RoundedCornerShape(24.dp))
+                .background(Color(0xFF0DEBF3))
+                .border(1.dp, Color(0x330A9EAA), RoundedCornerShape(24.dp)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Image(
+                painter = painterResource(dev.dsh.mobile.R.drawable.ic_dsh_mark_orca),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+        Spacer(Modifier.height(22.dp))
+        Text(
+            s.noDevicesYet,
+            color = HStudio.textPrimary,
+            fontSize = 17.sp,
+            fontWeight = FontWeight(650),
+            letterSpacing = (-0.2).sp,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(Modifier.height(8.dp))
         Text(
             s.noDevicesHint,
             color = HStudio.textMuted,
-            fontSize = 11.sp,
-            lineHeight = 17.sp,
-            textAlign = TextAlign.Center
+            fontSize = 13.sp,
+            lineHeight = 20.sp,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.widthIn(max = 280.dp),
         )
-        Spacer(Modifier.height(20.dp))
-        // 主按钮（HStudio accent 近白底）
+        Spacer(Modifier.height(28.dp))
         Box(
             modifier = Modifier
-                .width(160.dp)
-                .height(44.dp)
-                .clip(RoundedCornerShape(13.dp))
+                .fillMaxWidth()
+                .widthIn(max = 280.dp)
+                .height(48.dp)
+                .clip(RoundedCornerShape(14.dp))
                 .background(HStudio.accent)
                 .clickable(onClick = onAdd),
-            contentAlignment = Alignment.Center
+            contentAlignment = Alignment.Center,
         ) {
-            Text("添加设备", color = HStudio.onAccent, fontSize = 13.sp, fontWeight = FontWeight(600))
+            Text(
+                "添加设备",
+                color = HStudio.onAccent,
+                fontSize = 15.sp,
+                fontWeight = FontWeight(600),
+            )
         }
+        Spacer(Modifier.height(10.dp))
+        Text(
+            "扫码或手动输入配对码",
+            color = HStudio.textMuted,
+            fontSize = 11.sp,
+            textAlign = TextAlign.Center,
+        )
     }
 }
 

@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ORCA — 品牌标识指南</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;800;900&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --orca-dark: #1A1A2E;
+    --orca-cyan: #00B8D4;
+    --orca-cyan-light: #E0F7FA;
+    --page-bg: #F5F5F7;
+    --card-bg: #FFFFFF;
+    --text-primary: #1A1A2E;
+    --text-secondary: #6B7280;
+    --border: #E5E7EB;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Montserrat', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--page-bg);
+    color: var(--text-primary);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ===== Hero ===== */
+  .hero {
+    background: linear-gradient(135deg, #1A1A2E 0%, #16213E 50%, #0F3460 100%);
+    padding: 80px 40px 100px;
+    text-align: center;
+    color: #fff;
+  }
+  .hero-logo {
+    width: 200px;
+    height: 200px;
+    margin: 0 auto 30px;
+    display: block;
+  }
+  .hero h1 {
+    font-size: 3rem;
+    font-weight: 900;
+    letter-spacing: 6px;
+    margin-bottom: 12px;
+  }
+  .hero p {
+    font-size: 1.1rem;
+    color: rgba(255,255,255,0.6);
+    letter-spacing: 1px;
+  }
+
+  /* ===== Container ===== */
+  .container {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 0 24px;
+  }
+
+  /* ===== Section ===== */
+  .section {
+    margin-top: -60px;
+    margin-bottom: 64px;
+  }
+  .section-header {
+    margin-bottom: 32px;
+  }
+  .section-header h2 {
+    font-size: 1.5rem;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+  }
+  .section-header p {
+    color: var(--text-secondary);
+    font-size: 0.95rem;
+  }
+
+  /* ===== Card ===== */
+  .card {
+    background: var(--card-bg);
+    border-radius: 16px;
+    padding: 48px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.03);
+  }
+
+  /* ===== Logo Grid ===== */
+  .logo-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 24px;
+  }
+  .logo-cell {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 40px;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 200px;
+  }
+  .logo-cell.dark {
+    background: var(--orca-dark);
+    border-color: var(--orca-dark);
+  }
+  .logo-cell.cyan {
+    background: var(--orca-cyan);
+    border-color: var(--orca-cyan);
+  }
+  .logo-cell img, .logo-cell svg {
+    width: 120px;
+    height: 120px;
+  }
+  .logo-cell .label {
+    margin-top: 16px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+  .logo-cell.dark .label, .logo-cell.cyan .label {
+    color: rgba(255,255,255,0.6);
+  }
+
+  /* ===== Lockup Display ===== */
+  .lockup-row {
+    display: flex;
+    gap: 32px;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: center;
+  }
+  .lockup-item {
+    text-align: center;
+  }
+  .lockup-item svg {
+    max-width: 100%;
+  }
+  .lockup-item .label {
+    margin-top: 16px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+
+  /* ===== Color Palette ===== */
+  .color-row {
+    display: flex;
+    gap: 24px;
+    flex-wrap: wrap;
+  }
+  .color-swatch {
+    flex: 1;
+    min-width: 140px;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .color-swatch .swatch-top {
+    height: 100px;
+  }
+  .color-swatch .swatch-bottom {
+    padding: 16px;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-top: none;
+    border-radius: 0 0 12px 12px;
+  }
+  .color-swatch .swatch-name {
+    font-weight: 700;
+    font-size: 0.85rem;
+    margin-bottom: 4px;
+  }
+  .color-swatch .swatch-code {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    font-family: 'SF Mono', 'Monaco', monospace;
+  }
+
+  /* ===== Clear Space ===== */
+  .clearspace-demo {
+    position: relative;
+    display: inline-block;
+    padding: 60px;
+    border: 2px dashed var(--orca-cyan);
+    border-radius: 12px;
+    background: var(--orca-cyan-light);
+  }
+  .clearspace-demo svg {
+    width: 140px;
+    height: 140px;
+    display: block;
+  }
+
+  /* ===== Min Size ===== */
+  .minsize-row {
+    display: flex;
+    gap: 48px;
+    align-items: flex-end;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+  .minsize-item {
+    text-align: center;
+  }
+  .minsize-item svg {
+    display: block;
+    margin: 0 auto 12px;
+  }
+  .minsize-item .label {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    font-weight: 600;
+  }
+
+  /* ===== Background Demo ===== */
+  .bg-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+  }
+  .bg-cell {
+    border-radius: 12px;
+    padding: 40px;
+    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 140px;
+  }
+  .bg-cell svg { width: 80px; height: 80px; }
+  .bg-white { background: #FFFFFF; border: 1px solid var(--border); }
+  .bg-light { background: #F0F0F5; }
+  .bg-dark { background: #1A1A2E; }
+  .bg-cyan { background: #00B8D4; }
+  .bg-gradient { background: linear-gradient(135deg, #667eea, #764ba2); }
+  .bg-photo { background: linear-gradient(135deg, #0F3460, #16213E); }
+
+  /* ===== Do / Dont ===== */
+  .do-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+  }
+  .do-item, .dont-item {
+    border-radius: 12px;
+    padding: 32px;
+    text-align: center;
+  }
+  .do-item {
+    background: #ECFDF5;
+    border: 1px solid #A7F3D0;
+  }
+  .dont-item {
+    background: #FEF2F2;
+    border: 1px solid #FECACA;
+  }
+  .do-item .title, .dont-item .title {
+    font-weight: 800;
+    font-size: 0.9rem;
+    margin-bottom: 16px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  .do-item .title { color: #059669; }
+  .dont-item .title { color: #DC2626; }
+  .do-item .demo, .dont-item .demo {
+    background: #fff;
+    border-radius: 8px;
+    padding: 24px;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100px;
+  }
+  .do-item svg, .dont-item svg { width: 70px; height: 70px; }
+  .do-item .desc, .dont-item .desc {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+  }
+
+  /* ===== Footer ===== */
+  .footer {
+    text-align: center;
+    padding: 48px 24px;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    border-top: 1px solid var(--border);
+    margin-top: 48px;
+  }
+
+  /* ===== Responsive ===== */
+  @media (max-width: 768px) {
+    .logo-grid, .do-grid, .bg-grid { grid-template-columns: 1fr; }
+    .hero h1 { font-size: 2rem; }
+    .card { padding: 24px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ===== SVG Symbol Definitions ===== -->
+<svg width="0" height="0" style="position:absolute">
+  <symbol id="orca-full" viewBox="0 0 240 240">
+    <path d="M114 42 C 110 22, 118 10, 120 8 C 122 10, 130 22, 126 42 Z" fill="#1A1A2E"/>
+    <path d="M120 38 C 78 38, 56 63, 56 98 C 56 130, 61 160, 73 180 C 85 196, 100 204, 120 204 C 140 204, 155 196, 167 180 C 179 160, 184 130, 184 98 C 184 63, 162 38, 120 38 Z" fill="#1A1A2E"/>
+    <path d="M56 106 C 40 110, 32 124, 37 138 C 42 136, 49 128, 59 116 Z" fill="#1A1A2E"/>
+    <path d="M184 106 C 200 110, 208 124, 203 138 C 198 136, 191 128, 181 116 Z" fill="#1A1A2E"/>
+    <path d="M80 108 C 76 138, 83 168, 97 183 C 107 192, 133 192, 143 183 C 157 168, 164 138, 160 108 C 150 101, 90 101, 80 108 Z" fill="#FFFFFF"/>
+    <ellipse cx="82" cy="73" rx="13" ry="19" fill="#FFFFFF" transform="rotate(-12 82 73)"/>
+    <ellipse cx="158" cy="73" rx="13" ry="19" fill="#FFFFFF" transform="rotate(12 158 73)"/>
+    <circle cx="84" cy="75" r="5.5" fill="#1A1A2E"/>
+    <circle cx="85.5" cy="73" r="2" fill="#FFFFFF"/>
+    <circle cx="156" cy="75" r="5.5" fill="#1A1A2E"/>
+    <circle cx="157.5" cy="73" r="2" fill="#FFFFFF"/>
+    <path d="M103 118 Q120 134, 137 118" stroke="#1A1A2E" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+  </symbol>
+  <symbol id="orca-mono-dark" viewBox="0 0 240 240">
+    <path d="M114 42 C 110 22, 118 10, 120 8 C 122 10, 130 22, 126 42 Z" fill="#1A1A2E"/>
+    <path d="M120 38 C 78 38, 56 63, 56 98 C 56 130, 61 160, 73 180 C 85 196, 100 204, 120 204 C 140 204, 155 196, 167 180 C 179 160, 184 130, 184 98 C 184 63, 162 38, 120 38 Z" fill="#1A1A2E"/>
+    <path d="M56 106 C 40 110, 32 124, 37 138 C 42 136, 49 128, 59 116 Z" fill="#1A1A2E"/>
+    <path d="M184 106 C 200 110, 208 124, 203 138 C 198 136, 191 128, 181 116 Z" fill="#1A1A2E"/>
+    <path d="M80 108 C 76 138, 83 168, 97 183 C 107 192, 133 192, 143 183 C 157 168, 164 138, 160 108 C 150 101, 90 101, 80 108 Z" fill="none" stroke="#FFF" stroke-width="2.5"/>
+    <ellipse cx="82" cy="73" rx="13" ry="19" fill="none" stroke="#FFF" stroke-width="2.5" transform="rotate(-12 82 73)"/>
+    <ellipse cx="158" cy="73" rx="13" ry="19" fill="none" stroke="#FFF" stroke-width="2.5" transform="rotate(12 158 73)"/>
+    <circle cx="84" cy="75" r="4" fill="#FFF"/>
+    <circle cx="156" cy="75" r="4" fill="#FFF"/>
+    <path d="M103 118 Q120 134, 137 118" stroke="#FFF" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+  </symbol>
+  <symbol id="orca-mono-light" viewBox="0 0 240 240">
+    <path d="M114 42 C 110 22, 118 10, 120 8 C 122 10, 130 22, 126 42 Z" fill="#FFFFFF"/>
+    <path d="M120 38 C 78 38, 56 63, 56 98 C 56 130, 61 160, 73 180 C 85 196, 100 204, 120 204 C 140 204, 155 196, 167 180 C 179 160, 184 130, 184 98 C 184 63, 162 38, 120 38 Z" fill="#FFFFFF"/>
+    <path d="M56 106 C 40 110, 32 124, 37 138 C 42 136, 49 128, 59 116 Z" fill="#FFFFFF"/>
+    <path d="M184 106 C 200 110, 208 124, 203 138 C 198 136, 191 128, 181 116 Z" fill="#FFFFFF"/>
+    <path d="M80 108 C 76 138, 83 168, 97 183 C 107 192, 133 192, 143 183 C 157 168, 164 138, 160 108 C 150 101, 90 101, 80 108 Z" fill="none" stroke="#1A1A2E" stroke-width="2.5"/>
+    <ellipse cx="82" cy="73" rx="13" ry="19" fill="none" stroke="#1A1A2E" stroke-width="2.5" transform="rotate(-12 82 73)"/>
+    <ellipse cx="158" cy="73" rx="13" ry="19" fill="none" stroke="#1A1A2E" stroke-width="2.5" transform="rotate(12 158 73)"/>
+    <circle cx="84" cy="75" r="4" fill="#1A1A2E"/>
+    <circle cx="156" cy="75" r="4" fill="#1A1A2E"/>
+    <path d="M103 118 Q120 134, 137 118" stroke="#1A1A2E" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+  </symbol>
+  <symbol id="orca-simplified" viewBox="0 0 240 240">
+    <path d="M114 42 C 110 22, 118 10, 120 8 C 122 10, 130 22, 126 42 Z" fill="#1A1A2E"/>
+    <path d="M120 38 C 78 38, 56 63, 56 98 C 56 130, 61 160, 73 180 C 85 196, 100 204, 120 204 C 140 204, 155 196, 167 180 C 179 160, 184 130, 184 98 C 184 63, 162 38, 120 38 Z" fill="#1A1A2E"/>
+    <path d="M80 108 C 76 138, 83 168, 97 183 C 107 192, 133 192, 143 183 C 157 168, 164 138, 160 108 C 150 101, 90 101, 80 108 Z" fill="#FFFFFF"/>
+    <circle cx="84" cy="75" r="11" fill="#FFFFFF"/>
+    <circle cx="156" cy="75" r="11" fill="#FFFFFF"/>
+    <circle cx="85" cy="76" r="4.5" fill="#1A1A2E"/>
+    <circle cx="155" cy="76" r="4.5" fill="#1A1A2E"/>
+  </symbol>
+</svg>
+
+<!-- ===== Hero ===== -->
+<div class="hero">
+  <svg class="hero-logo" viewBox="0 0 240 240"><use href="#orca-full"/></svg>
+  <h1>ORCA</h1>
+  <p>品牌标识指南 / Brand Identity Guide</p>
+</div>
+
+<div class="container">
+
+  <!-- ===== Primary Logo ===== -->
+  <div class="section">
+    <div class="card">
+      <div class="section-header">
+        <h2>主标识 / Primary Logo</h2>
+        <p>全色版虎鲸图标，透明背景，适用于大多数场景。基于矢量绘制，可无损缩放至任意尺寸。</p>
+      </div>
+      <div style="text-align:center; padding: 40px 0;">
+        <svg viewBox="0 0 240 240" style="width:200px; height:200px;"><use href="#orca-full"/></svg>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Logo Variations ===== -->
+  <div class="section">
+    <div class="section-header">
+      <h2>图标变体 / Icon Variations</h2>
+      <p>根据不同背景和使用场景选择合适的版本。</p>
+    </div>
+    <div class="logo-grid">
+      <div class="logo-cell">
+        <svg viewBox="0 0 240 240"><use href="#orca-full"/></svg>
+        <div class="label">全色版 / Full Color</div>
+      </div>
+      <div class="logo-cell dark">
+        <svg viewBox="0 0 240 240"><use href="#orca-mono-light"/></svg>
+        <div class="label">反白版 / Reversed</div>
+      </div>
+      <div class="logo-cell">
+        <svg viewBox="0 0 240 240"><use href="#orca-mono-dark"/></svg>
+        <div class="label">黑色单色 / Mono Black</div>
+      </div>
+      <div class="logo-cell cyan">
+        <svg viewBox="0 0 240 240"><use href="#orca-simplified"/></svg>
+        <div class="label">简化版 / Simplified</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Logo Lockups ===== -->
+  <div class="section">
+    <div class="card">
+      <div class="section-header">
+        <h2>文字组合 / Logo Lockups</h2>
+        <p>图标与品牌名称的组合排版，适用于正式场合。</p>
+      </div>
+      <div class="lockup-row" style="margin-bottom: 40px;">
+        <div class="lockup-item">
+          <svg viewBox="0 0 440 140" style="width:360px; height:115px;">
+            <g transform="translate(10, 10) scale(0.5)"><use href="#orca-full"/></g>
+            <text x="155" y="92" font-family="Montserrat, Arial Black, sans-serif" font-size="56" font-weight="900" fill="#1A1A2E" letter-spacing="3">ORCA</text>
+          </svg>
+          <div class="label">横向组合 / Horizontal</div>
+        </div>
+      </div>
+      <div class="lockup-row">
+        <div class="lockup-item">
+          <svg viewBox="0 0 220 280" style="width:180px; height:229px;">
+            <g transform="translate(20, 0) scale(0.75)"><use href="#orca-full"/></g>
+            <text x="110" y="255" font-family="Montserrat, Arial Black, sans-serif" font-size="44" font-weight="900" fill="#1A1A2E" letter-spacing="4" text-anchor="middle">ORCA</text>
+          </svg>
+          <div class="label">竖向组合 / Stacked</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Color Palette ===== -->
+  <div class="section">
+    <div class="section-header">
+      <h2>色彩规范 / Color Palette</h2>
+      <p>品牌标准色系，所有视觉物料应遵循此色彩规范。</p>
+    </div>
+    <div class="color-row">
+      <div class="color-swatch">
+        <div class="swatch-top" style="background: #1A1A2E;"></div>
+        <div class="swatch-bottom">
+          <div class="swatch-name">Orca Dark</div>
+          <div class="swatch-code">#1A1A2E</div>
+        </div>
+      </div>
+      <div class="color-swatch">
+        <div class="swatch-top" style="background: #00B8D4;"></div>
+        <div class="swatch-bottom">
+          <div class="swatch-name">Ocean Cyan</div>
+          <div class="swatch-code">#00B8D4</div>
+        </div>
+      </div>
+      <div class="color-swatch">
+        <div class="swatch-top" style="background: #FFFFFF; border-bottom: 1px solid #E5E7EB;"></div>
+        <div class="swatch-bottom">
+          <div class="swatch-name">Pure White</div>
+          <div class="swatch-code">#FFFFFF</div>
+        </div>
+      </div>
+      <div class="color-swatch">
+        <div class="swatch-top" style="background: #E0F7FA;"></div>
+        <div class="swatch-bottom">
+          <div class="swatch-name">Cyan Light</div>
+          <div class="swatch-code">#E0F7FA</div>
+        </div>
+      </div>
+      <div class="color-swatch">
+        <div class="swatch-top" style="background: #6B7280;"></div>
+        <div class="swatch-bottom">
+          <div class="swatch-name">Slate Gray</div>
+          <div class="swatch-code">#6B7280</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Clear Space ===== -->
+  <div class="section">
+    <div class="card">
+      <div class="section-header">
+        <h2>安全空间 / Clear Space</h2>
+        <p>标识周围需保留最小安全空间，确保视觉识别度。安全空间等于图标高度的 1/4。</p>
+      </div>
+      <div style="text-align:center; padding: 20px 0;">
+        <div class="clearspace-demo">
+          <svg viewBox="0 0 240 240"><use href="#orca-full"/></svg>
+        </div>
+        <p style="margin-top:20px; color: var(--text-secondary); font-size: 0.85rem;">
+          虚线区域为最小安全空间，内部不可放置其他元素
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Minimum Size ===== -->
+  <div class="section">
+    <div class="card">
+      <div class="section-header">
+        <h2>最小尺寸 / Minimum Size</h2>
+        <p>为确保辨识度，标识在不同场景下不应小于以下尺寸。小尺寸请使用简化版。</p>
+      </div>
+      <div class="minsize-row">
+        <div class="minsize-item">
+          <svg viewBox="0 0 240 240" style="width:120px; height:120px;"><use href="#orca-full"/></svg>
+          <div class="label">数字 / Digital: 120px</div>
+        </div>
+        <div class="minsize-item">
+          <svg viewBox="0 0 240 240" style="width:48px; height:48px;"><use href="#orca-full"/></svg>
+          <div class="label">标准最小 / Min: 48px</div>
+        </div>
+        <div class="minsize-item">
+          <svg viewBox="0 0 240 240" style="width:24px; height:24px;"><use href="#orca-simplified"/></svg>
+          <div class="label">Favicon: 24px (简化版)</div>
+        </div>
+        <div class="minsize-item">
+          <svg viewBox="0 0 240 240" style="width:16px; height:16px;"><use href="#orca-simplified"/></svg>
+          <div class="label">极限最小 / 16px (简化版)</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Background Usage ===== -->
+  <div class="section">
+    <div class="section-header">
+      <h2>背景适配 / Background Usage</h2>
+      <p>浅色背景使用全色版或黑色单色版；深色背景使用反白版。</p>
+    </div>
+    <div class="bg-grid">
+      <div class="bg-cell bg-white">
+        <svg viewBox="0 0 240 240"><use href="#orca-full"/></svg>
+      </div>
+      <div class="bg-cell bg-light">
+        <svg viewBox="0 0 240 240"><use href="#orca-full"/></svg>
+      </div>
+      <div class="bg-cell bg-dark">
+        <svg viewBox="0 0 240 240"><use href="#orca-mono-light"/></svg>
+      </div>
+      <div class="bg-cell bg-cyan">
+        <svg viewBox="0 0 240 240"><use href="#orca-mono-dark"/></svg>
+      </div>
+      <div class="bg-cell bg-gradient">
+        <svg viewBox="0 0 240 240"><use href="#orca-mono-light"/></svg>
+      </div>
+      <div class="bg-cell bg-photo">
+        <svg viewBox="0 0 240 240"><use href="#orca-mono-light"/></svg>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Do's and Don'ts ===== -->
+  <div class="section">
+    <div class="section-header">
+      <h2>使用规范 / Do's & Don'ts</h2>
+      <p>正确使用品牌标识，保持一致的视觉形象。</p>
+    </div>
+    <div class="do-grid">
+      <div class="do-item">
+        <div class="title">✓ 正确</div>
+        <div class="demo">
+          <svg viewBox="0 0 240 240"><use href="#orca-full"/></svg>
+        </div>
+        <div class="desc">使用原始配色和比例</div>
+      </div>
+      <div class="dont-item">
+        <div class="title">✗ 错误</div>
+        <div class="demo">
+          <svg viewBox="0 0 240 240" style="filter: hue-rotate(120deg);"><use href="#orca-full"/></svg>
+        </div>
+        <div class="desc">不要更改原始配色</div>
+      </div>
+      <div class="do-item">
+        <div class="title">✓ 正确</div>
+        <div class="demo" style="background:#1A1A2E;">
+          <svg viewBox="0 0 240 240"><use href="#orca-mono-light"/></svg>
+        </div>
+        <div class="desc">深色背景使用反白版</div>
+      </div>
+      <div class="dont-item">
+        <div class="title">✗ 错误</div>
+        <div class="demo" style="background:#1A1A2E;">
+          <svg viewBox="0 0 240 240"><use href="#orca-full"/></svg>
+        </div>
+        <div class="desc">深色背景不要用全色版</div>
+      </div>
+      <div class="do-item">
+        <div class="title">✓ 正确</div>
+        <div class="demo">
+          <svg viewBox="0 0 240 240" style="width:50px; height:50px;"><use href="#orca-simplified"/></svg>
+        </div>
+        <div class="desc">小尺寸使用简化版</div>
+      </div>
+      <div class="dont-item">
+        <div class="title">✗ 错误</div>
+        <div class="demo">
+          <svg viewBox="0 0 240 240" style="width:50px; height:50px;"><use href="#orca-full"/></svg>
+        </div>
+        <div class="desc">小尺寸不要用完整版</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ===== Footer ===== -->
+<div class="footer">
+  ORCA Brand Identity Guide &middot; Vector Logo System &middot; 2026
+</div>
+
+</body>
+</html>

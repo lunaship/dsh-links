@@ -1,16 +1,18 @@
 package dev.dsh.mobile.core
-import dev.dsh.mobile.core.Dsh
-import dev.dsh.mobile.core.DshTheme
-import dev.dsh.mobile.core.ThemeManager
 
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.LocalTextStyle
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.font.FontFamily
 import androidx.core.view.WindowCompat
 
 /**
@@ -223,13 +225,47 @@ fun DshTheme(
         }
     }
 
-    CompositionLocalProvider(
-        LocalDshColors provides colors,
-        LocalDshStrings provides strings,
+    val materialColors = if (isDark) {
+        darkColorScheme(
+            primary = colors.brand400,
+            onPrimary = Color.White,
+            secondary = colors.brand450,
+            background = colors.bgBase,
+            surface = colors.bgSurface,
+            onBackground = colors.labelPrimary,
+            onSurface = colors.labelPrimary,
+            error = colors.error,
+        )
+    } else {
+        lightColorScheme(
+            primary = colors.brand400,
+            onPrimary = Color.White,
+            secondary = colors.brand450,
+            background = colors.bgBase,
+            surface = colors.bgSurface,
+            onBackground = colors.labelPrimary,
+            onSurface = colors.labelPrimary,
+            error = colors.error,
+        )
+    }
+
+    MaterialTheme(
+        colorScheme = materialColors,
+        typography = DshTypography,
     ) {
-        content()
+        CompositionLocalProvider(
+            LocalDshColors provides colors,
+            LocalDshStrings provides strings,
+            LocalTextStyle provides DshTypography.bodyMedium,
+            LocalDshFontFamily provides DshFontFamily,
+        ) {
+            content()
+        }
     }
 }
+
+/** App-wide UI font (Plus Jakarta Sans). Code blocks keep [FontFamily.Monospace]. */
+val LocalDshFontFamily = staticCompositionLocalOf<FontFamily> { FontFamily.Default }
 
 private tailrec fun Context.findActivity(): Activity? = when (this) {
     is Activity -> this

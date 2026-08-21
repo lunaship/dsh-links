@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 自适应图标背景：亮色 launcher 用 #FFFFFF。 -->
+<!-- Adaptive icon background: matches orca-4 cyan field (#0DEBF3). -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
-    <solid android:color="#FFFFFFFF" />
+    <solid android:color="#FF0DEBF3" />
 </shape>

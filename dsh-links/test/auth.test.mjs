@@ -51,7 +51,7 @@ function loopbackHost() {
   return `127.0.0.1:${upstream.address().port}`
 }
 
-function callRoute(route, { body, headers = {}, method } = {}) {
+function callRoute(route, { body, headers = {}, method, remoteAddress = "127.0.0.1" } = {}) {
   let status = 0, outHeaders = {}, out = ""
   const res = {
     writeHead(c, h) { status = c; outHeaders = h || {} },
@@ -67,6 +67,7 @@ function callRoute(route, { body, headers = {}, method } = {}) {
   } else {
     req = { method: method || "GET", headers: { host, ...headers } }
   }
+  req.socket = { remoteAddress }
   return Promise.resolve(route.handler(req, res)).then(() => ({
     status,
     headers: outHeaders,
@@ -175,6 +176,15 @@ test("主端口 Host 非回环 → 403", async () => {
     assert.equal(r.status, 403, route.path)
     assert.equal(r.body?.pairingCode, undefined)
   }
+})
+
+test("主端口伪造 Host 回环但 remote 非回环 → 403", async () => {
+  const r = await callRoute(pairInfoRoute(), {
+    headers: { host: loopbackHost() },
+    remoteAddress: "192.168.1.50",
+  })
+  assert.equal(r.status, 403)
+  assert.equal(r.body?.pairingCode, undefined)
 })
 
 test("主端口 sec-fetch-site: cross-site → 403", async () => {
@@ -423,5 +433,21 @@ test("错误指纹拒绝 TLS", async () => {
   await assert.rejects(
     () => proxyFetch("/dsh-link/health", { agent: pinAgent("0".repeat(64)) }),
   )
+})
+
+test("配对失败限流按 IP 隔离，不全局锁死", async () => {
+  const { PAIR_FAIL_LIMIT, newPairingCode, verifyPairingCode } = await import("../src/auth.js")
+  const state = {}
+  const code = newPairingCode(state, 600)
+  for (let i = 0; i < PAIR_FAIL_LIMIT; i++) {
+    const r = verifyPairingCode(state, "000000", "10.0.0.1")
+    assert.equal(r.ok, false)
+  }
+  const locked = verifyPairingCode(state, code, "10.0.0.1")
+  assert.equal(locked.ok, false)
+  assert.match(locked.error, /频繁|稍后再试/)
+  // 另一 IP 仍可用正确码配对
+  const other = verifyPairingCode(state, code, "10.0.0.2")
+  assert.equal(other.ok, true)
 })
 

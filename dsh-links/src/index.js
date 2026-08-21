@@ -115,6 +115,8 @@ function saveState(file, state) {
     ...state,
     pairing: persistablePairing(state.pairing),
   }
+  delete persist.pairingRate
+  delete persist.pairingRates
   const data = JSON.stringify(persist, null, 2)
   const tmp = `${file}.${process.pid}.tmp`
   writeFileSync(tmp, data, { mode: 0o600 })
@@ -201,9 +203,20 @@ function isLoopbackHostname(hostname) {
 
 /**
  * 对齐 dsh-client-connection isTrustedApiRequest（trustedHosts 为空，只认回环）。
- * 依赖 dsh 内部信任围栏语义，dsh 升级时需复查。
+ * Host/Origin 之外必须校验 TCP 对端地址，防止伪造 Host: 127.0.0.1 绕过围栏。
  */
+function isLoopbackAddress(addr) {
+  if (!addr) return false
+  const a = String(addr).replace(/^::ffff:/i, "").toLowerCase()
+  return a === "127.0.0.1" || a === "::1" || a === "localhost"
+}
+
 function requireLoopbackSameOrigin(req, res) {
+  const remote = req.socket?.remoteAddress ?? req.connection?.remoteAddress
+  if (!isLoopbackAddress(remote)) {
+    json(res, 403, { error: "forbidden" })
+    return false
+  }
   const host = headerVal(req.headers, "host")
   if (!host) {
     json(res, 403, { error: "forbidden" })
@@ -362,9 +375,10 @@ async function handlePair(req, res, config, state, stateFile) {
   if (!body) return
   const code = String(body.code ?? "").trim()
   const deviceName = (String(body.deviceName ?? "手机").trim().slice(0, 32) || "手机")
-  const ver = verifyPairingCode(state, code)
+  const clientKey = String(req.socket?.remoteAddress ?? req.connection?.remoteAddress ?? "unknown")
+  const ver = verifyPairingCode(state, code, clientKey)
   if (!ver.ok) {
-    saveState(stateFile, state)
+    // pairingRates 仅内存；勿写入 state.json
     json(res, 401, { error: ver.error })
     return
   }
