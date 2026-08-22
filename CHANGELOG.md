@@ -1,5 +1,12 @@
 # Changelog
 
+## dsh-links 0.1.0-beta.4 — 2026-08-22
+
+- 电脑插件可凭维护者发放的接入码接入 DSH Links Relay；接入成功后才显示单独的云端配对码。
+- 局域网设备与云端设备分开列出、分开吊销。
+- Android 客户端 `0.5.0-beta.9`：扫云端码走 Relay，与局域网入口并存。
+- 公开文档标明 Relay 仍为内测；接入码、Relay 凭据和 `state.json` 不入库、不随 Release / npm 发布。
+
 ## dsh-links 0.1.0-beta.3 — 2026-08-22
 
 - Web ↔ 手机实时同步：mux `session/event` 直推到手机 SSE，绕开 1s `session.history` 轮询与「文件未变化」短路。

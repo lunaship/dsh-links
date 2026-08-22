@@ -1,10 +1,10 @@
 # Beta 发布核对
 
-GitHub `lunaship/dsh-links` = **仅插件源码与文档**。Android App 保持私有，只发布官方签名 APK；DSH Links Relay 仍在建设中，不属于本次 Beta。
+GitHub `lunaship/dsh-links` = **仅插件源码与文档**。Android App 保持私有，只发布官方签名 APK。DSH Links Relay 为维护者内测：文档可以说明流程，但不得提交接入码、Relay 主机凭据或 `state.json`。
 
 ## 发布前
 
-- [ ] 本仓 `git ls-files` 不得出现 Android/`app/src`、keystore、token、`state.json`、`local.properties` 或任何私密配置。
+- [ ] 本仓 `git ls-files` 不得出现 Android/`app/src`、keystore、token、`state.json`、接入码、Relay 主机凭据、`local.properties` 或任何私密配置。
 - [ ] `npm test` 通过，`npm pack --dry-run` 的文件清单仅包含声明的插件发布文件。
 - [ ] npm 已登录，包名与版本正确；发布后在干净 profile 以 `dsh plugin --profile web add dsh-links@<version>` 成功安装。
 - [ ] 用真实 Android 设备完成扫码配对、会话/SSE、审批、吊销、重启后重连验收。
@@ -24,6 +24,6 @@ GitHub `lunaship/dsh-links` = **仅插件源码与文档**。Android App 保持�
 
 ## 对外口径
 
-- **Beta / Android only / Trusted LAN only / DSH rc.8**。
+- **Beta / Android only / Trusted LAN / Relay 内测（需接入码）/ DSH rc.8**。
 - 用户自行使用内网穿透仅为实验性个人部署，不是支持路径，也不提供安全或兼容承诺。
-- 不得将 `18640` 直接暴露到公网；DSH Links Relay 完成独立安全与端到端验收前，不宣传其为已可用的云端连接。
+- 不得将 `18640` 直接暴露到公网。Relay 已跑通但仍是邀请制内测；不要把接入码写进 README、Release 说明或 npm 包。

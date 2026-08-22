@@ -457,7 +457,7 @@ const createPanelModule = (require) => {
               id: 'dsh-relay-invite',
               className: 'dshlink-field',
               value: invite,
-              placeholder: '在 Relay 控制台生成的一次性接入码',
+              placeholder: '由维护者发放的一次性接入码',
               onChange: (event) => setInvite(event.target.value),
               autoComplete: 'off',
             }),
@@ -507,7 +507,7 @@ const createPanelModule = (require) => {
       children: [
         jsx('p', {
           className: 'dshlink-remote-intro',
-          children: '出门用手机前，电脑要先用接入码连上 Relay。接入成功后才会出现给手机扫的云端码；这张码不含接入码。',
+          children: '出门用手机前，电脑要先用接入码连上 Relay。接入码只由维护者发放，公开文档和安装包里都没有。接入成功后才会出现给手机扫的云端码；那张码也不含接入码。',
         }),
         jsxs('section', {
           className: 'dshlink-step',
@@ -557,7 +557,7 @@ const createPanelModule = (require) => {
                     })
                   : jsx('div', {
                       className: 'dshlink-qr-pending',
-                      children: '接入成功后才会显示二维码。新用户请先完成上一步：远端必须有接入码。',
+                      children: '接入成功后才会显示二维码。没有维护者发放的接入码无法接入远端。',
                     }),
               ],
             }),
