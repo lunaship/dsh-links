@@ -21,6 +21,10 @@ const (
 	maxIPCConnections      = 32
 	ipcPartialFrameTimeout = 5 * time.Second
 	ipcWriteTimeout        = 5 * time.Second
+	// ipcAuthTotalTimeout is an absolute wall-clock bound on the whole auth
+	// frame. Per-segment timeouts alone allowed a byte-trickling peer to hold
+	// an unauthenticated connection slot indefinitely.
+	ipcAuthTotalTimeout = 10 * time.Second
 )
 
 var errIPCFrameTooLarge = errors.New("ipc frame too large")
@@ -146,7 +150,8 @@ func (s *IPCServer) handleConn(conn net.Conn) {
 	reader := bufio.NewReaderSize(conn, maxIPCFrameBytes)
 	// Auth check: first message must be an auth frame with valid HMAC.
 	if s.authToken != "" {
-		authLine, err := readIPCFrame(conn, reader, 5*time.Second)
+		_ = conn.SetDeadline(time.Now().Add(ipcAuthTotalTimeout))
+		authLine, err := readIPCFrame(conn, reader, ipcAuthTotalTimeout)
 		if err != nil {
 			return
 		}
@@ -166,6 +171,7 @@ func (s *IPCServer) handleConn(conn net.Conn) {
 		if !hmac.Equal([]byte(ap.Hmac), []byte(expectedHmac)) {
 			return
 		}
+		_ = conn.SetDeadline(time.Time{})
 	}
 	s.mu.Lock()
 	s.clients[conn] = struct{}{}
@@ -300,11 +306,31 @@ func (s *IPCServer) handleRenew(conn net.Conn, payload json.RawMessage) {
 		s.sendIPCError(conn, "bad_request", err.Error())
 		return
 	}
-	routeId, _ := base64.RawURLEncoding.DecodeString(req.RouteId)
-	hostPub, _ := base64.RawURLEncoding.DecodeString(req.HostPublicKey)
-	nonce, _ := base64.RawURLEncoding.DecodeString(req.Nonce)
-	proof, _ := base64.RawURLEncoding.DecodeString(req.Proof)
-	chal, _ := base64.RawURLEncoding.DecodeString(req.Challenge)
+	routeId, err := base64.RawURLEncoding.DecodeString(req.RouteId)
+	if err != nil {
+		s.sendIPCError(conn, "bad_request", "routeId")
+		return
+	}
+	hostPub, err := base64.RawURLEncoding.DecodeString(req.HostPublicKey)
+	if err != nil {
+		s.sendIPCError(conn, "bad_request", "hostPublicKey")
+		return
+	}
+	nonce, err := base64.RawURLEncoding.DecodeString(req.Nonce)
+	if err != nil {
+		s.sendIPCError(conn, "bad_request", "nonce")
+		return
+	}
+	proof, err := base64.RawURLEncoding.DecodeString(req.Proof)
+	if err != nil {
+		s.sendIPCError(conn, "bad_request", "proof")
+		return
+	}
+	chal, err := base64.RawURLEncoding.DecodeString(req.Challenge)
+	if err != nil {
+		s.sendIPCError(conn, "bad_request", "challenge")
+		return
+	}
 	capStr, err := s.control.Renew(&RenewRequest{
 		RouteId: routeId, HostId: req.HostId, HostPubKey: hostPub, Ts: req.Ts, Nonce: nonce, Challenge: chal, Proof: proof, OldCapability: req.OldCapability,
 	})

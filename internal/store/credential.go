@@ -64,3 +64,16 @@ func (s *Store) ListCredentials(hostID string) ([]Credential, error) {
 	}
 	return out, rows.Err()
 }
+
+// PruneCredentials removes all but the newest keep credentials for a host,
+// bounding storage when capabilities are renewed repeatedly.
+func (s *Store) PruneCredentials(hostID string, keep int) error {
+	if keep < 1 {
+		keep = 1
+	}
+	_, err := s.db.Exec(
+		`DELETE FROM credentials WHERE host_id=? AND id NOT IN (
+			SELECT id FROM credentials WHERE host_id=? ORDER BY issued_at DESC, id DESC LIMIT ?
+		)`, hostID, hostID, keep)
+	return err
+}

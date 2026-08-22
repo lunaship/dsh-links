@@ -126,46 +126,6 @@ func (s *Store) CreateInvite(userID string, ttl time.Duration) (code string, rec
 	return code, &Invite{ID: id, UserID: userID, CodeHash: codeHash, ExpiresAt: exp, CreatedAt: now}, nil
 }
 
-// ConsumeInvite verifies and consumes invite atomically.
-// Returns invite ID if success.
-func (s *Store) ConsumeInvite(code string) (*Invite, error) {
-	h := sha256.Sum256([]byte(code))
-	hash := h[:]
-	now := time.Now().Unix()
-	tx, err := s.db.Begin()
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-	var inv Invite
-	var consumed sql.NullInt64
-	var revoked sql.NullInt64
-	err = tx.QueryRow(`SELECT id, user_id, code_hash, expires_at, consumed_at, revoked_at, created_at FROM invites WHERE code_hash=?`, hash).
-		Scan(&inv.ID, &inv.UserID, &inv.CodeHash, &inv.ExpiresAt, &consumed, &revoked, &inv.CreatedAt)
-	if err != nil {
-		return nil, err
-	}
-	if consumed.Valid {
-		return nil, ErrInviteConsumed
-	}
-	if revoked.Valid {
-		return nil, ErrInviteRevoked
-	}
-	if inv.ExpiresAt < now {
-		return nil, ErrInviteExpired
-	}
-	_, err = tx.Exec(`UPDATE invites SET consumed_at=? WHERE id=?`, now, inv.ID)
-	if err != nil {
-		return nil, err
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-	v := now
-	inv.ConsumedAt = &v
-	return &inv, nil
-}
-
 func (s *Store) ListInvites() ([]Invite, error) {
 	rows, err := s.db.Query(`SELECT id, user_id, code_hash, expires_at, consumed_at, revoked_at, created_at FROM invites ORDER BY created_at DESC`)
 	if err != nil {

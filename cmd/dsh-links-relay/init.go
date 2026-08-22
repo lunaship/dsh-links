@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/dsh-links/dsh-links-relay/internal/cryptoutil"
@@ -198,7 +199,18 @@ func requireAdminPassword(password string) error {
 }
 
 func writeSecretFile(path string, data []byte) error {
-	return os.WriteFile(path, data, 0600)
+	// O_NOFOLLOW refuses to write through a pre-planted symlink, and the
+	// explicit chmod repairs pre-existing files with looser modes (WriteFile
+	// only applies the mode when creating a new file).
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, 0600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if _, err := f.Write(data); err != nil {
+		return err
+	}
+	return f.Chmod(0600)
 }
 
 func tomlQuote(s string) string {

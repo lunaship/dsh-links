@@ -8,12 +8,14 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/dsh-links/dsh-links-relay/internal/cryptoutil"
+	"github.com/dsh-links/dsh-links-relay/internal/registry"
 )
 
 //go:embed web/*
@@ -25,6 +27,11 @@ const (
 	maxAdminBodyBytes = 64 << 10
 	sessionTTL        = 24 * time.Hour
 	maxAdminSessions  = 64
+
+	// loginBurstAttempts bounds password-guessing per source IP. The admin
+	// panel is loopback-only, but tunnels and reverse proxies are common in
+	// self-hosting, so the endpoint must survive exposure.
+	loginBurstAttempts = 10
 )
 
 // Admin API: only 127.0.0.1:8080 + Bearer token or session cookie
@@ -34,6 +41,7 @@ type Server struct {
 	adminToken    string // legacy token auth
 	adminUser     string
 	adminPassword string
+	loginLimiter  *registry.RateLimiter
 	sessionsMu    sync.Mutex
 	sessions      map[[sha256.Size]byte]time.Time
 }
@@ -41,7 +49,8 @@ type Server struct {
 func NewServer(ctrl *Control, adminToken, adminUser, adminPassword string) *Server {
 	return &Server{
 		control: ctrl, adminToken: adminToken, adminUser: adminUser, adminPassword: adminPassword,
-		sessions: make(map[[sha256.Size]byte]time.Time),
+		loginLimiter: registry.NewRateLimiter(loginBurstAttempts, 5),
+		sessions:     make(map[[sha256.Size]byte]time.Time),
 	}
 }
 
@@ -58,14 +67,19 @@ func (s *Server) Handler() http.Handler {
 		if r.Body != nil {
 			r.Body = http.MaxBytesReader(w, r.Body, maxAdminBodyBytes)
 		}
-		// Login/logout are public, everything else under /v1/ requires auth
+		// Baseline security headers for every response.
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "no-referrer")
+		if r.URL.Path == "/login" || r.URL.Path == "/logout" || strings.HasPrefix(r.URL.Path, "/v1/") {
+			// API bodies carry invite codes and route data; never cacheable.
+			h.Set("Cache-Control", "no-store")
+		}
+		// Login/logout are public but must go through the same content-type
+		// gate as /v1/ so a cross-site text/plain POST cannot smuggle JSON.
 		if r.URL.Path == "/login" || r.URL.Path == "/logout" {
-			switch r.URL.Path {
-			case "/login":
-				s.handleLogin(w, r)
-			case "/logout":
-				s.handleLogout(w, r)
-			}
+			s.checkContentType(w, r, http.HandlerFunc(s.handleAuthRoutes))
 			return
 		}
 		if strings.HasPrefix(r.URL.Path, "/v1/") {
@@ -74,6 +88,15 @@ func (s *Server) Handler() http.Handler {
 		}
 		s.handleUI(w, r)
 	})
+}
+
+func (s *Server) handleAuthRoutes(w http.ResponseWriter, r *http.Request) {
+	switch r.URL.Path {
+	case "/login":
+		s.handleLogin(w, r)
+	case "/logout":
+		s.handleLogout(w, r)
+	}
 }
 
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
@@ -106,8 +129,13 @@ func (s *Server) checkContentType(w http.ResponseWriter, r *http.Request, next h
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "POST" {
+	if r.Method != http.MethodPost {
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.loginLimiter.Allow(clientIP(r)) {
+		w.Header().Set("Retry-After", "12")
+		http.Error(w, `{"error":"rate limited"}`, http.StatusTooManyRequests)
 		return
 	}
 	type req struct {
@@ -119,7 +147,9 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"bad request"}`, http.StatusBadRequest)
 		return
 	}
-	if s.adminPassword == "" || form.User != s.adminUser || !secretEqual(form.Password, s.adminPassword) {
+	// Both comparisons are constant-time: user first would otherwise let a
+	// timing oracle confirm the username before the password is touched.
+	if s.adminPassword == "" || !secretEqual(form.User, s.adminUser) || !secretEqual(form.Password, s.adminPassword) {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
@@ -256,6 +286,14 @@ func secretEqual(got, want string) bool {
 	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
 }
 
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
 func decodeOneJSON(r io.Reader, dst any, allowEmpty bool) error {
 	dec := json.NewDecoder(r)
 	dec.DisallowUnknownFields()
@@ -361,6 +399,9 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUI(w http.ResponseWriter, r *http.Request) {
+	// The UI loads only same-origin script/style and renders via textContent,
+	// so CSP can stay strict without unsafe-inline.
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
 	assets := map[string]string{
 		"/tokens.css": "text/css; charset=utf-8",
 		"/app.css":    "text/css; charset=utf-8",

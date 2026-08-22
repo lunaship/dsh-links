@@ -4,6 +4,8 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
+	"strings"
 	"testing"
 	"time"
 
@@ -93,5 +95,50 @@ func TestInvalidInviteRejectedBeforeProofVerification(t *testing.T) {
 	req.Proof[0] ^= 1
 	if _, err := ctrl.Enroll(req); err == nil || err.Error() != "invite unavailable" {
 		t.Fatalf("invalid invite did not hit the early availability gate: %v", err)
+	}
+}
+
+func TestRenewRejectsExpiredCapability(t *testing.T) {
+	ctrl, st := newTestControl(t)
+	defer st.Close()
+
+	invite, err := ctrl.CreateInvite(30 * time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostID := "host-expired-renew"
+	enrollReq := enrollRequest(t, invite, hostID, priv)
+	enrolled, err := ctrl.Enroll(enrollReq)
+	if err != nil {
+		t.Fatalf("enroll: %v", err)
+	}
+
+	// Forge an already-expired capability for the same host, properly signed
+	// by the issuer: renewal must still be refused.
+	jti, _ := cryptoutil.RandomBytes(16)
+	now := time.Now().Unix()
+	expired, err := cryptoutil.SignCapability(ctrl.issuerPriv, cryptoutil.CapabilityPayload{
+		Iss: "dsh-links-relay", Jti: base64.RawURLEncoding.EncodeToString(jti),
+		Host: hostID, Route: base64.RawURLEncoding.EncodeToString(enrolled.RouteId),
+		HostPK:     base64.RawURLEncoding.EncodeToString(enrollReq.HostPublicKey),
+		Generation: enrolled.Generation, MaxStreams: 8,
+		Iat: now - 7200, Exp: now - 60,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonce, _ := cryptoutil.RandomBytes(16)
+	chal, _ := cryptoutil.RandomBytes(32)
+	proof := ed25519.Sign(priv, cryptoutil.BuildRenewTranscript(expired, now, nonce, chal))
+	_, err = ctrl.Renew(&RenewRequest{
+		RouteId: enrolled.RouteId, HostId: hostID, HostPubKey: enrollReq.HostPublicKey,
+		Ts: now, Nonce: nonce, Challenge: chal, Proof: proof, OldCapability: expired,
+	})
+	if err == nil || !strings.Contains(err.Error(), "expired") {
+		t.Fatalf("expired capability renewed: err=%v", err)
 	}
 }

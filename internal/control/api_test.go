@@ -122,3 +122,72 @@ func TestLoginRejectsEmptyPassword(t *testing.T) {
 		t.Fatalf("empty password login status=%d, want 401", recorder.Code)
 	}
 }
+
+func TestLoginRateLimitedAfterBurst(t *testing.T) {
+	server := NewServer(nil, "legacy-token-0123456789", "admin", "correct horse battery staple")
+	handler := server.Handler()
+
+	for i := 0; i < loginBurstAttempts; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(`{"user":"admin","password":"wrong password"}`))
+		req.Header.Set("Content-Type", "application/json")
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+		if recorder.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d status=%d, want 401", i+1, recorder.Code)
+		}
+	}
+
+	// Even the correct password is refused once the burst is spent.
+	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(`{"user":"admin","password":"correct horse battery staple"}`))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusTooManyRequests {
+		t.Fatalf("post-burst login status=%d, want 429", recorder.Code)
+	}
+	if recorder.Header().Get("Retry-After") == "" {
+		t.Fatal("429 response is missing Retry-After")
+	}
+}
+
+func TestLoginRejectsNonJSONContentType(t *testing.T) {
+	server := NewServer(nil, "legacy-token-0123456789", "admin", "correct horse battery staple")
+	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(`{"user":"admin","password":"correct horse battery staple"}`))
+	req.Header.Set("Content-Type", "text/plain")
+	recorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("text/plain login status=%d, want 400", recorder.Code)
+	}
+}
+
+func TestSecurityAndCachingHeaders(t *testing.T) {
+	server := NewServer(nil, "legacy-token-0123456789", "admin", "correct horse battery staple")
+	handler := server.Handler()
+
+	apiRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(apiRecorder, httptest.NewRequest(http.MethodGet, "/v1/overview", nil))
+	if apiRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated overview status=%d, want 401", apiRecorder.Code)
+	}
+	apiHeader := apiRecorder.Header()
+	if got := apiHeader.Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("API Cache-Control=%q, want no-store", got)
+	}
+	if got := apiHeader.Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("X-Content-Type-Options=%q, want nosniff", got)
+	}
+	if got := apiHeader.Get("X-Frame-Options"); got != "DENY" {
+		t.Fatalf("X-Frame-Options=%q, want DENY", got)
+	}
+
+	uiRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(uiRecorder, httptest.NewRequest(http.MethodGet, "/", nil))
+	csp := uiRecorder.Header().Get("Content-Security-Policy")
+	if !strings.Contains(csp, "default-src 'self'") || !strings.Contains(csp, "frame-ancestors 'none'") {
+		t.Fatalf("UI CSP=%q, want strict self-only policy", csp)
+	}
+	if got := uiRecorder.Header().Get("Cache-Control"); got == "no-store" {
+		t.Fatal("static UI assets must remain cacheable")
+	}
+}

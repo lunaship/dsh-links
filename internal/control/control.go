@@ -24,6 +24,10 @@ type Control struct {
 	revokeFn func(routeId, hostId string)
 }
 
+// maxCredentialsPerHost caps stored credentials per host so repeated renewals
+// (legitimate or abusive) cannot grow the table without bound.
+const maxCredentialsPerHost = 8
+
 // New creates control.
 func New(st *store.Store, issuerPriv []byte, routeMasterKey []byte, defaultMaxStreams int) (*Control, error) {
 	var priv ed25519.PrivateKey
@@ -171,6 +175,19 @@ func (c *Control) Renew(req *RenewRequest) (string, error) {
 	if string(host.HostPubKey) != string(req.HostPubKey) {
 		return "", errors.New("pubkey mismatch")
 	}
+	// The old capability itself must verify: signature, binding to this
+	// host/route, and unexpired. Without the expiry check a holder of the
+	// host key could renew forever past every capability deadline.
+	oldPayload, err := cryptoutil.VerifyCapability(c.issuerPub, req.OldCapability)
+	if err != nil {
+		return "", errors.New("old capability invalid")
+	}
+	if oldPayload.Exp < time.Now().Unix() {
+		return "", errors.New("old capability expired")
+	}
+	if oldPayload.Host != req.HostId || oldPayload.Route != base64.RawURLEncoding.EncodeToString(req.RouteId) {
+		return "", errors.New("old capability mismatch")
+	}
 	transcript := cryptoutil.BuildRenewTranscript(req.OldCapability, req.Ts, req.Nonce, req.Challenge)
 	if !ed25519.Verify(ed25519.PublicKey(req.HostPubKey), transcript, req.Proof) {
 		return "", errors.New("renew proof invalid")
@@ -193,7 +210,14 @@ func (c *Control) Renew(req *RenewRequest) (string, error) {
 		return "", err
 	}
 	hash := sha256.Sum256([]byte(capStr))
-	_, _ = c.store.CreateCredential(req.HostId, hash[:], int64(payload.Generation), payload.Iat, payload.Exp)
+	if _, err := c.store.CreateCredential(req.HostId, hash[:], int64(payload.Generation), payload.Iat, payload.Exp); err != nil {
+		// A capability that is not recorded must not be handed out: revocation
+		// audits and credential tracking would silently diverge.
+		return "", fmt.Errorf("record credential: %w", err)
+	}
+	// Housekeeping only: renewal already succeeded, so a prune failure is not
+	// worth failing the exchange over. Bounds credential rows per host.
+	_ = c.store.PruneCredentials(req.HostId, maxCredentialsPerHost)
 	return capStr, nil
 }
 
