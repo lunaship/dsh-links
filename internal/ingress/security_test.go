@@ -1,18 +1,28 @@
 package ingress
 
 import (
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"math/big"
 	"net"
 	"testing"
 	"time"
 
 	"github.com/dsh-links/dsh-links-relay/internal/control"
 	"github.com/dsh-links/dsh-links-relay/internal/cryptoutil"
+	"github.com/dsh-links/dsh-links-relay/internal/metrics"
 	"github.com/dsh-links/dsh-links-relay/internal/protocol"
 	"github.com/dsh-links/dsh-links-relay/internal/registry"
+	"github.com/dsh-links/dsh-links-relay/internal/store"
 	"github.com/dsh-links/dsh-links-relay/internal/testkit"
 )
 
@@ -747,4 +757,173 @@ func TestRenewSuccess(t *testing.T) {
 	}
 	conn.Close()
 	_ = ing
+}
+
+func TestControlLoopRateLimitsFrameFlood(t *testing.T) {
+	ing, ctrl, cleanup := setupIngress(t)
+	defer cleanup()
+	_, agentAddr := getAddrs(ing)
+
+	invite, _ := ctrl.CreateInvite(30 * time.Minute)
+	_, priv, _ := ed25519.GenerateKey(rand.Reader)
+	hostId := "host-frameflood"
+	agent := testkit.NewSimAgent(agentAddr, hostId, priv, "127.0.0.1:9")
+	if err := agent.Enroll(invite); err != nil {
+		t.Fatalf("enroll: %v", err)
+	}
+	conn, err := net.Dial("tcp", agentAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	fr := protocol.NewFrameReader(conn)
+	helloRaw, err := fr.ReadFrame(protocol.MaxHello)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hello protocol.HelloFrame
+	if err := json.Unmarshal(helloRaw, &hello); err != nil {
+		t.Fatal(err)
+	}
+	chal, _ := base64.RawURLEncoding.DecodeString(hello.Challenge)
+	nonce, _ := cryptoutil.GenerateNonce()
+	ts := time.Now().Unix()
+	proof := ed25519.Sign(priv, cryptoutil.BuildRegisterTranscript(agent.Capability, ts, nonce, chal))
+	register := protocol.RegisterFrame{
+		Type: protocol.TypeRegister, Capability: agent.Capability, Ts: ts,
+		Nonce: base64.RawURLEncoding.EncodeToString(nonce), Proof: base64.RawURLEncoding.EncodeToString(proof),
+	}
+	registerLine, _ := json.Marshal(register)
+	registerLine = append(registerLine, '\n')
+	if _, err := conn.Write(registerLine); err != nil {
+		t.Fatal(err)
+	}
+	respRaw, err := fr.ReadFrame(protocol.MaxRegistered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reged protocol.RegisteredFrame
+	if err := json.Unmarshal(respRaw, &reged); err != nil || reged.Type != protocol.TypeRegistered {
+		t.Fatalf("register failed: %s", string(respRaw))
+	}
+
+	// Flood PING frames: the per-connection bucket admits controlFrameBurst
+	// frames and must then reject with RATE_LIMITED.
+	pingLine, _ := json.Marshal(protocol.PingFrame{Type: protocol.TypePing})
+	pingLine = append(pingLine, '\n')
+	for i := 0; i < controlFrameBurst+5; i++ {
+		if _, err := conn.Write(pingLine); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	sawRateLimited := false
+	for i := 0; i < controlFrameBurst+10 && !sawRateLimited; i++ {
+		respRaw, err := fr.ReadFrame(2048)
+		if err != nil {
+			t.Fatalf("read response %d: %v", i, err)
+		}
+		var e protocol.ErrorFrame
+		if err := json.Unmarshal(respRaw, &e); err != nil {
+			continue // PONG frame
+		}
+		if e.Type != protocol.TypeError {
+			continue
+		}
+		if e.Code != protocol.ErrRateLimited {
+			t.Fatalf("control-loop error code=%s, want RATE_LIMITED", e.Code)
+		}
+		sawRateLimited = true
+	}
+	if !sawRateLimited {
+		t.Fatal("frame flood was never rate limited")
+	}
+}
+
+func TestNonceBudgetBounded(t *testing.T) {
+	ctx := &connContext{nonces: make(map[string]bool)}
+	for i := 0; i < maxConnNonces; i++ {
+		if got := ctx.markNonce(fmt.Sprintf("nonce-%d", i)); got != nonceNew {
+			t.Fatalf("nonce %d verdict=%d, want nonceNew", i, got)
+		}
+	}
+	if got := ctx.markNonce("fresh-nonce"); got != nonceExhausted {
+		t.Fatalf("fresh nonce after budget verdict=%d, want nonceExhausted", got)
+	}
+	if got := ctx.markNonce("nonce-1"); got != nonceDuplicate {
+		t.Fatalf("duplicate nonce verdict=%d, want nonceDuplicate", got)
+	}
+}
+
+// A TCP connection that never completes the TLS handshake must not hold its
+// connection slot forever: the HELLO write runs the handshake, which starts
+// by reading ClientHello, so only a read deadline bounds it.
+func TestTLSHandshakeStallReleasesSlot(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "dsh-test"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
+		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		IPAddresses: []net.IP{net.ParseIP("127.0.0.1")},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tpl, tpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tlsCfg := &tls.Config{
+		Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}},
+		MinVersion:   tls.VersionTLS12,
+	}
+
+	st, err := store.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	routeMaster := make([]byte, 32)
+	if _, err := rand.Read(routeMaster); err != nil {
+		t.Fatal(err)
+	}
+	issuerSeed := sha256.Sum256([]byte("tls stall issuer"))
+	ctrl, err := control.New(st, issuerSeed[:], routeMaster, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	issuerPub := ed25519.NewKeyFromSeed(issuerSeed[:]).Public().(ed25519.PublicKey)
+	reg := registry.New(100)
+	// maxConns=1: the stalled connection occupies the entire budget.
+	ing := New("127.0.0.1:0", "127.0.0.1:0", tlsCfg, reg, NewInProcessControl(ctrl), metrics.New(), routeMaster, issuerPub, 20*time.Second, 10*time.Second, 65*time.Second, 100, 1, 0, nil)
+	if err := ing.Start(); err != nil {
+		t.Fatalf("start ingress: %v", err)
+	}
+	defer ing.Close()
+	clientAddr := ing.listeners[0].Addr().String()
+
+	stalled, err := net.Dial("tcp", clientAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stalled.Close() // never handshakes, never sends a byte
+
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		c, err := tls.Dial("tcp", clientAddr, &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12})
+		if err == nil {
+			c.SetReadDeadline(time.Now().Add(3 * time.Second))
+			fr := protocol.NewFrameReader(c)
+			raw, err := fr.ReadFrame(protocol.MaxHello)
+			c.Close()
+			var hello protocol.HelloFrame
+			if err == nil && json.Unmarshal(raw, &hello) == nil && len(hello.Challenge) > 0 {
+				return // slot was released to a legitimate client
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("stalled TLS handshake held the only connection slot")
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
 }

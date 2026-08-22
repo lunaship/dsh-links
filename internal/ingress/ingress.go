@@ -127,9 +127,10 @@ func New(clientListen, agentListen string, tlsConfig *tls.Config, reg *registry.
 		agentDeadAfter:    deadAfter,
 		maxTotalStreams:   maxTotal,
 		maxConns:          maxConns,
-		// App 每个 HTTP 请求都会新建一条 CONNECT（进工作台约 8 条 + SSE）。
-		// 单用户自托管按「一部手机」来留余量，仍在 MAC 校验之后按路由计。
-		ipLimiter:         registry.NewRateLimiter(96, 60),
+		// 预认证（MAC 之前）按 IP 计：burst 收紧到 32，只用于挡连接洪水，
+		// 避免未认证流量以每 IP 96 连接的速度消耗全局连接预算。
+		// 认证后再按路由放宽到 96/60，容纳「进工作台约 8 条 CONNECT + SSE」。
+		ipLimiter:         registry.NewRateLimiter(32, 30),
 		routeLimiter:      registry.NewRateLimiter(96, 60),
 		enrollLimiter:     registry.NewRateLimiter(6, 2),
 		admissionLimiter:  registry.NewRateLimiter(120, 120),
@@ -251,6 +252,19 @@ func (ing *Ingress) releaseConnection(remoteIP string, isClient bool) {
 	}
 }
 
+// maxConnNonces bounds per-connection replay bookkeeping. Without a cap a
+// peer could grow the nonce map without limit on a long-lived connection.
+const maxConnNonces = 1024
+
+// Authenticated control-loop frames (PING/RENEW) are token-bucket limited per
+// connection. A compliant agent sends one PING per heartbeat interval
+// (default 3/min) and renews roughly monthly, so burst 30 at 30/min refill
+// leaves an order of magnitude of headroom while capping floods.
+const (
+	controlFrameBurst        = 30
+	controlFrameRefillPerMin = 30
+)
+
 // connContext holds per-connection state
 type connContext struct {
 	conn         net.Conn
@@ -258,7 +272,41 @@ type connContext struct {
 	challengeStr string
 	fr           *protocol.FrameReader
 	nonces       map[string]bool // replay protection per conn
+	frameLimiter *registry.TokenBucket
 	remoteIP     string
+}
+
+type nonceVerdict int
+
+const (
+	nonceNew nonceVerdict = iota
+	nonceDuplicate
+	nonceExhausted
+)
+
+func (c *connContext) markNonce(nonce string) nonceVerdict {
+	if c.nonces[nonce] {
+		return nonceDuplicate
+	}
+	if len(c.nonces) >= maxConnNonces {
+		return nonceExhausted
+	}
+	c.nonces[nonce] = true
+	return nonceNew
+}
+
+// acceptNonce enforces the per-connection nonce rules, sending the matching
+// error frame itself when the nonce is stale or the budget is exhausted.
+func acceptNonce(ctx *connContext, nonce string) bool {
+	switch ctx.markNonce(nonce) {
+	case nonceDuplicate:
+		sendError(ctx.conn, protocol.ErrReplayRejected, "replay")
+		return false
+	case nonceExhausted:
+		sendError(ctx.conn, protocol.ErrRateLimited, "nonce budget exhausted")
+		return false
+	}
+	return true
 }
 
 func (ing *Ingress) handleConn(rawConn net.Conn, isClient bool) {
@@ -278,10 +326,15 @@ func (ing *Ingress) handleConn(rawConn net.Conn, isClient bool) {
 		challenge:    chal,
 		challengeStr: chalStr,
 		nonces:       make(map[string]bool),
+		frameLimiter: registry.NewTokenBucket(controlFrameBurst, controlFrameRefillPerMin),
 		remoteIP:     remoteIP,
 	}
 
-	// HELLO must be sent within 3s
+	// Bound the entire pre-auth phase. The TLS handshake runs inside this
+	// Write and starts by reading ClientHello, so a read deadline is required
+	// as well: a write deadline alone lets stalled handshakes hold their
+	// connection slot forever.
+	_ = rawConn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	_ = rawConn.SetWriteDeadline(time.Now().Add(3 * time.Second))
 	hello := protocol.HelloFrame{Type: protocol.TypeHello, V: 1, Challenge: chalStr}
 	helloBytes, _ := json.Marshal(hello)
@@ -357,11 +410,9 @@ func (ing *Ingress) handleEnroll(ctx *connContext, raw []byte) {
 		return
 	}
 	// Replay check per conn
-	if ctx.nonces[enroll.Nonce] {
-		sendError(ctx.conn, protocol.ErrReplayRejected, "replay")
+	if !acceptNonce(ctx, enroll.Nonce) {
 		return
 	}
-	ctx.nonces[enroll.Nonce] = true
 
 	// Decode proof fields
 	hostPub, _ := base64.RawURLEncoding.DecodeString(enroll.HostPublicKey)
@@ -411,11 +462,9 @@ func (ing *Ingress) handleRegister(ctx *connContext, raw []byte) {
 		sendError(ctx.conn, protocol.ErrBadRequest, "invalid register")
 		return
 	}
-	if ctx.nonces[reg.Nonce] {
-		sendError(ctx.conn, protocol.ErrReplayRejected, "replay")
+	if !acceptNonce(ctx, reg.Nonce) {
 		return
 	}
-	ctx.nonces[reg.Nonce] = true
 
 	// Verify capability
 	payload, err := cryptoutil.VerifyCapability(ing.issuerPub, reg.Capability)
@@ -530,6 +579,19 @@ func (ing *Ingress) handleRegister(ctx *connContext, raw []byte) {
 			sendError(ctx.conn, protocol.ErrBadRequest, "frame too large")
 			return
 		}
+		if !ctx.frameLimiter.Allow() {
+			ing.logger.Printf("control frame rate reached route=%s", payload.Route[:8])
+			sendError(ctx.conn, protocol.ErrRateLimited, "rate limited control")
+			return
+		}
+		// Expiry applies to the whole session, not only the REGISTER moment
+		// (60s grace absorbs clock skew against the frame ts window). A cut
+		// session must RENEW before the deadline to stay online.
+		if now := time.Now().Unix(); now > payload.Exp+60 {
+			ing.logger.Printf("agent capability expired route=%s", payload.Route[:8])
+			sendError(ctx.conn, protocol.ErrAuthFailed, "capability expired")
+			return
+		}
 		switch typ {
 		case protocol.TypePing:
 			pong := protocol.PongFrame{Type: protocol.TypePong}
@@ -566,11 +628,9 @@ func (ing *Ingress) handleRenew(ctx *connContext, raw []byte, currentPayload *cr
 		sendError(ctx.conn, protocol.ErrBadRequest, "invalid renew")
 		return "", err
 	}
-	if ctx.nonces[renew.Nonce] {
-		sendError(ctx.conn, protocol.ErrReplayRejected, "replay")
-		return "", fmt.Errorf("replay")
+	if !acceptNonce(ctx, renew.Nonce) {
+		return "", fmt.Errorf("nonce rejected")
 	}
-	ctx.nonces[renew.Nonce] = true
 
 	hostPubRaw, _ := base64.RawURLEncoding.DecodeString(currentPayload.HostPK)
 	nonce, _ := base64.RawURLEncoding.DecodeString(renew.Nonce)
@@ -612,11 +672,9 @@ func (ing *Ingress) handleConnect(ctx *connContext, raw []byte) {
 		sendError(ctx.conn, protocol.ErrBadRequest, "invalid connect")
 		return
 	}
-	if ctx.nonces[connFrame.Nonce] {
-		sendError(ctx.conn, protocol.ErrReplayRejected, "replay")
+	if !acceptNonce(ctx, connFrame.Nonce) {
 		return
 	}
-	ctx.nonces[connFrame.Nonce] = true
 
 	routeIdRaw, _ := base64.RawURLEncoding.DecodeString(connFrame.Route)
 	nonce, _ := base64.RawURLEncoding.DecodeString(connFrame.Nonce)
@@ -775,11 +833,9 @@ func (ing *Ingress) handleBind(ctx *connContext, raw []byte) {
 		sendError(ctx.conn, protocol.ErrBadRequest, "invalid bind")
 		return
 	}
-	if ctx.nonces[bind.Nonce] {
-		sendError(ctx.conn, protocol.ErrReplayRejected, "replay")
+	if !acceptNonce(ctx, bind.Nonce) {
 		return
 	}
-	ctx.nonces[bind.Nonce] = true
 
 	routeIdRaw, _ := base64.RawURLEncoding.DecodeString(bind.Route)
 	streamIdRaw, _ := base64.RawURLEncoding.DecodeString(bind.Stream)
