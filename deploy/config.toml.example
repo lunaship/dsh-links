@@ -1,6 +1,11 @@
-# DSH Links Relay - Example Config
+# DSH Links Relay - Example Config (combined, single-user layout)
 # Copy to /etc/dsh-links-relay/config.toml and adjust.
 # All paths must be owned by dsh-relay user, mode 0600 for secrets.
+#
+# NOTE: this combined layout lets the relay process read the issuer private
+# key and admin credentials. For any public deployment use the split layout
+# instead: config-control.toml.example + config-relay.toml.example with the
+# two-user setup described in deploy/README.md.
 
 client_listen = "0.0.0.0:8443"
 agent_listen = "0.0.0.0:8444"
@@ -23,8 +28,11 @@ route_master_key = "/etc/dsh-links-relay/route-master.key"
 admin_token_file = "/etc/dsh-links-relay/admin.token"
 admin_user = "admin"
 # Required. Control refuses to start if this is empty or shorter than 12 characters.
-# Prefer `dsh-links-relay init` which writes a random password into a local config.
-admin_password = "change-me-now"
+# Leave empty on first deploy so startup fails until you set your own secret,
+# or run `dsh-links-relay init` which generates a random password.
+# Never ship a publicly-known value: the loopback bind is the only thing that
+# keeps a guessable password safe.
+admin_password = ""
 
 # SQLite database (only control writes)
 database = "/var/lib/dsh-links-relay/control.db"

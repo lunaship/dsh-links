@@ -1,0 +1,24 @@
+# Control-plane only config (split-users production layout, see deploy/README.md).
+# This file holds every high-value secret. It must be readable ONLY by dsh-ctl:
+# owner root:dsh-ctl, mode 0640. Never point the relay at this file.
+
+admin_listen = "127.0.0.1:8080"
+control_socket = "/run/dsh-links-relay/control.sock"
+ipc_auth_token_file = "/etc/dsh-links-relay/ipc.auth"
+
+# Capability issuer key (Ed25519). Relay gets only the public half.
+issuer_private_key = "/etc/dsh-links-relay/issuer.key"
+
+# Shared with the relay (group-readable by dsh-shared, 0640 root:dsh-shared).
+route_master_key = "/etc/dsh-links-relay/route-master.key"
+
+admin_token_file = "/etc/dsh-links-relay/admin.token"
+admin_user = "admin"
+# Required. Control refuses to start if empty or shorter than 12 characters.
+# Set a unique random secret, or run `dsh-links-relay init` and copy the
+# generated value. A publicly-known password is never acceptable.
+admin_password = ""
+
+database = "/var/lib/dsh-links-relay/control.db"
+
+default_max_streams_per_route = 8

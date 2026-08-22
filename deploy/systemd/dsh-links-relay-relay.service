@@ -5,9 +5,12 @@ Requires=dsh-links-relay-control.service
 
 [Service]
 Type=simple
+# The relay is the internet-facing crash surface: it runs as its own user and
+# its config must not reference any control-only secret (issuer private key,
+# admin token/password). Expects the layout from deploy/README.md.
 User=dsh-relay
-Group=dsh-relay
-ExecStart=/usr/local/bin/dsh-links-relay relay --config /etc/dsh-links-relay/config.toml
+Group=dsh-shared
+ExecStart=/usr/local/bin/dsh-links-relay relay --config /etc/dsh-links-relay/relay.toml
 Restart=on-failure
 RestartSec=3s
 NoNewPrivileges=true
@@ -20,7 +23,9 @@ UMask=0077
 LimitNOFILE=65535
 LimitCORE=0
 ReadOnlyPaths=/etc/dsh-links-relay
-ReadWritePaths=/run/dsh-links-relay
+# Read-write, not read-only: even a read-only SQLite connection must maintain
+# the -wal/-shm sidecars next to the shared control database.
+ReadWritePaths=/var/lib/dsh-links-relay /run/dsh-links-relay
 AmbientCapabilities=
 
 [Install]

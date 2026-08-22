@@ -50,3 +50,16 @@ ipc_auth_token_file = "/tmp/ipc.auth"
 		t.Fatalf("admin_password = %q", cfg.AdminPassword)
 	}
 }
+
+// The deploy examples must stay loadable with the current config schema.
+func TestDeployExamplesLoad(t *testing.T) {
+	for _, name := range []string{"config.toml.example", "config-control.toml.example", "config-relay.toml.example"} {
+		cfg, err := Load(filepath.Join("..", "..", "deploy", name))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if cfg.ControlSocket == "" || cfg.Database == "" || cfg.AdminListen == "" {
+			t.Fatalf("%s: required listen/socket/database fields missing", name)
+		}
+	}
+}

@@ -1,0 +1,31 @@
+# Relay-only config (split-users production layout, see deploy/README.md).
+# Contains no admin credentials and no issuer private key: a compromised
+# relay process must not be able to mint capabilities or log into the
+# control plane. Owner root:dsh-relay, mode 0640.
+
+client_listen = "0.0.0.0:8443"
+agent_listen = "0.0.0.0:8444"
+control_socket = "/run/dsh-links-relay/control.sock"
+ipc_auth_token_file = "/etc/dsh-links-relay/ipc.auth"
+
+# TLS for the outer layer (public CA, e.g. Let's Encrypt).
+tls_cert = "/etc/dsh-links-relay/relay.crt"
+tls_key = "/etc/dsh-links-relay/relay.key"
+
+# Only the issuer PUBLIC key: capability verification, never signing.
+issuer_public_key = "/etc/dsh-links-relay/issuer.pub"
+
+# Shared with control (group-readable by dsh-shared, 0640 root:dsh-shared).
+route_master_key = "/etc/dsh-links-relay/route-master.key"
+
+# Shared read-only view of the control database (WAL sidecars need write
+# access, hence the group-writable data dir - see deploy/README.md).
+database = "/var/lib/dsh-links-relay/control.db"
+
+max_total_streams = 1000
+default_max_streams_per_route = 8
+max_conns = 2000
+bridge_max_lifetime = "30m"
+heartbeat_interval = "20s"
+agent_dead_after = "65s"
+bind_timeout = "10s"
