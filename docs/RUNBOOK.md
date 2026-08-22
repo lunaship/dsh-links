@@ -117,5 +117,3 @@ curl -H "Authorization: Bearer $(cat /etc/dsh-links-relay/admin.token)" -X POST 
 - 替换二进制, `systemctl restart`
 - 验证: 模拟 App/Agent 贯通, LAN 回归
 
-试验机（`/opt/dsh-links-relay-test`）由 GitHub Actions 在 `main` 推送后自动升级：跑测试、交叉编译 linux/amd64，经 SSH 只替换该目录里的二进制，并只重启 `dsh-links-relay-test-control` / `dsh-links-relay-test-relay`。不会执行 `init`，也不会动 Relens、Beszel。密钥存在仓库 Secrets：`DEPLOY_SSH_KEY`、`DEPLOY_KNOWN_HOSTS`、`DEPLOY_HOST`、`DEPLOY_USER`。手动跑一次：Actions → Deploy test relay → Run workflow。
-

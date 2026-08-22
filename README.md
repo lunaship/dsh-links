@@ -70,7 +70,6 @@ CGO_ENABLED=0 go test ./internal/ingress -run TestSequential -v
 - `deploy/config.toml.example` — 配置模板
 - `deploy/systemd/` — `dsh-links-relay-control.service`, `dsh-links-relay-relay.service`
 - 先用 `dsh-links-relay init` 生成密钥与配置；容量需实测后才能写进承诺
-- 试验机自动部署：推 `main` 后 GitHub Actions 只更新 `/opt/dsh-links-relay-test`（见 `docs/RUNBOOK.md` 第 9 节）
 
 ## 兼容
 
