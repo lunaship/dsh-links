@@ -168,6 +168,38 @@ test("工具事件、todo、compaction 保持稳定 id 与顺序", () => {
   for (const m of messages) assert.equal(typeof m.seq, "number")
 })
 
+test("reasoning-delta + block-end + 文件补全只产出一行，不重复已思考", () => {
+  const events = [
+    userMsg(10, "问题"),
+    ev(11, "assistant/chunk", { chunk: { type: "reasoning-delta", text: "先看" } }),
+    ev(12, "assistant/chunk", { chunk: { type: "reasoning-delta", text: "一下" } }),
+    blockEnd(13, "reasoning", "先看一下"),
+    blockEnd(14, "text", "回答"),
+    assistantMsg(15, "回答", [14]),
+  ]
+  const reasoningBySeq = new Map([[13, { seq: 13, time: T + 13, text: "先看一下" }]])
+  const { messages } = projectHistoryPage({ events, reasoningBySeq, hasMore: false })
+  const reasons = messages.filter((m) => m.role === "reasoning")
+  assert.equal(reasons.length, 1)
+  assert.equal(reasons[0].id, "reason-13")
+  assert.equal(reasons[0].text, "先看一下")
+  assert.equal(reasons[0].running, undefined)
+})
+
+test("进行中的 reasoning-delta 投影为 running 思考行", () => {
+  const events = [
+    userMsg(10, "问题"),
+    ev(11, "assistant/chunk", { chunk: { type: "reasoning-delta", text: "先看" } }),
+    ev(12, "assistant/chunk", { chunk: { type: "reasoning-delta", text: "一下" } }),
+  ]
+  const { messages } = projectHistoryPage({ events, reasoningBySeq: new Map(), hasMore: false })
+  assert.equal(messages.length, 2)
+  assert.equal(messages[0].role, "user")
+  assert.equal(messages[1].role, "reasoning")
+  assert.equal(messages[1].text, "先看一下")
+  assert.equal(messages[1].running, true)
+})
+
 test("重复请求同一页：结果与 id 完全一致（幂等）", () => {
   const events = [
     userMsg(800, "问题"),

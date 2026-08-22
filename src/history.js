@@ -50,6 +50,7 @@ export function projectHistoryPage({ events, reasoningBySeq = new Map(), hasMore
           text,
           time: pendingReasoning.time || time,
           type: "reasoning",
+          ...(pendingReasoning.running ? { running: true } : {}),
         })
       }
       pendingReasoning = null
@@ -77,14 +78,33 @@ export function projectHistoryPage({ events, reasoningBySeq = new Map(), hasMore
       push({ id: `msg-${e.seq}`, seq: e.seq, role, text, time: e.time, type: "text" })
     } else if (e.type === "assistant/chunk" || e.type === "assistant/message") {
       const chunk = e.data?.chunk
+      if (chunk?.type === "reasoning-delta") {
+        const piece = String(chunk.text ?? "")
+        if (piece) {
+          if (pendingReasoning) pendingReasoning.text += piece
+          else pendingReasoning = { seq: e.seq, time: e.time, text: piece }
+          pendingReasoning.running = true
+        }
+      }
       if (chunk?.type === "block-end" && chunk.block?.text) {
         if (chunk.block.type === "reasoning") {
           // 连续 reasoning block-end 追加文本，保留首块 seq/time（与文件侧分组一致）
           const piece = chunk.block.text || reasoningBySeq.get(e.seq)?.text || ""
           if (pendingReasoning) {
-            if (piece) pendingReasoning.text = pendingReasoning.text ? pendingReasoning.text + "\n" + piece : piece
+            const current = pendingReasoning.text || ""
+            if (piece) {
+              if (!current) pendingReasoning.text = piece
+              else if (piece === current || piece.startsWith(current) || current.startsWith(piece)) {
+                // delta 累积与 block-end 定稿是同一段：取更长全文，seq 对齐文件，避免双「已思考」
+                if (piece.length > current.length) pendingReasoning.text = piece
+                pendingReasoning.seq = e.seq
+              } else {
+                pendingReasoning.text = current + "\n" + piece
+              }
+            }
+            pendingReasoning.running = false
           } else {
-            pendingReasoning = { seq: e.seq, time: e.time, text: piece }
+            pendingReasoning = { seq: e.seq, time: e.time, text: piece, running: false }
           }
         } else {
           flushReasoning(e.time)
@@ -186,12 +206,16 @@ export function projectHistoryPage({ events, reasoningBySeq = new Map(), hasMore
   // 文件补全：只合并 seq 落在本页窗口内的 reasoning 块，按 seq 逆序插入
   // （插到紧随其后的消息之前；页尾没有后继消息时留在页尾，客户端按 id 去重）
   if (reasoningBySeq.size > 0 && typeof pageFirstSeq === "number" && typeof pageLastSeq === "number") {
+    const emittedReasoningTexts = new Set(
+      messages.filter((m) => m.role === "reasoning").map((m) => String(m.text ?? "").trim()).filter(Boolean),
+    )
     const inWindow = [...reasoningBySeq.values()]
       .filter((r) => r && typeof r.seq === "number" && r.seq >= pageFirstSeq && r.seq <= pageLastSeq && !emittedIds.has(`reason-${r.seq}`))
       .sort((a, b) => a.seq - b.seq)
     for (const r of inWindow.reverse()) {
       const text = String(r.text ?? "").trim()
       if (!text) continue
+      if (emittedReasoningTexts.has(text)) continue
       let idx = messages.findIndex((m) => m.seq > r.seq)
       if (idx < 0) idx = messages.length
       messages.splice(idx, 0, {

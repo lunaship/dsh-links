@@ -51,7 +51,7 @@ function loopbackHost() {
   return `127.0.0.1:${upstream.address().port}`
 }
 
-function callRoute(route, { body, headers = {}, method, remoteAddress = "127.0.0.1" } = {}) {
+function callRoute(route, { body, headers = {}, method, remoteAddress = "127.0.0.1", url } = {}) {
   let status = 0, outHeaders = {}, out = ""
   const res = {
     writeHead(c, h) { status = c; outHeaders = h || {} },
@@ -67,6 +67,7 @@ function callRoute(route, { body, headers = {}, method, remoteAddress = "127.0.0
   } else {
     req = { method: method || "GET", headers: { host, ...headers } }
   }
+  req.url = url || route.path || "/"
   req.socket = { remoteAddress }
   return Promise.resolve(route.handler(req, res)).then(() => ({
     status,
@@ -251,6 +252,26 @@ test("同名设备不能静默替换", async () => {
   assert.equal(r.status, 409)
 })
 
+test("pair via=relay 与局域网设备分开列出", async () => {
+  const info = await callRoute(pairInfoRoute())
+  const code = info.body.pairingCode
+  const pair = await proxyFetch(`/dsh-link/pair`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code, deviceName: "测试机-云端·云", via: "relay" }),
+  })
+  assert.equal(pair.status, 200)
+  const extra = await pair.json()
+  const list = await callRoute(devicesRoute())
+  assert.equal(list.status, 200)
+  const cloud = list.body.devices.find((d) => d.deviceId === extra.deviceId)
+  const lan = list.body.devices.find((d) => d.deviceId === globalThis.__testDevice.deviceId)
+  assert.equal(cloud?.via, "relay")
+  assert.equal(lan?.via, "lan")
+  const rev = await callRoute(revokeRoute(), { body: { deviceId: extra.deviceId } })
+  assert.equal(rev.status, 200)
+})
+
 test("带 token 的 POST pair-info 不得返回配对码", async () => {
   const r = await proxyFetch(`/dsh-link/pair-info`, {
     method: "POST",
@@ -284,7 +305,9 @@ test("mobile GET /devices 列出已配对设备", async () => {
   assert.equal(r.status, 200)
   const body = await r.json()
   assert.ok(Array.isArray(body.devices))
-  assert.ok(body.devices.some((d) => d.deviceId === globalThis.__testDevice.deviceId))
+  const self = body.devices.find((d) => d.deviceId === globalThis.__testDevice.deviceId)
+  assert.ok(self)
+  assert.equal(self.via, "lan")
 })
 
 test("mobile POST /revoke 可吊销其他设备", async () => {
@@ -428,6 +451,13 @@ test("pair-info 含证书指纹且局域网 URL 为 https", async () => {
   for (const url of info.body.urls ?? []) {
     if (url.includes(`:${proxyPort}`)) assert.match(url, /^https:\/\//)
   }
+  assert.equal(info.body.relay, undefined)
+})
+
+test("pair-info via=relay 无中继时仍不含 relay", async () => {
+  const info = await callRoute(pairInfoRoute(), { url: "/dsh-link/pair-info?via=relay" })
+  assert.equal(info.status, 200)
+  assert.equal(info.body.relay, undefined)
 })
 
 test("明文 HTTP 访问 18640 被拒绝", async () => {

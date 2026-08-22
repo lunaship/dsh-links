@@ -23,7 +23,9 @@ import {
 } from "./auth.js"
 import { loadOrCreateTls } from "./tls.js"
 import { loadEventsAfter, sseMessageFrame } from "./stream-cursor.js"
-import { respondQuestion, startMuxQuestionBridge } from "./question-bridge.js"
+import { flushSeedQueue, respondQuestion, startMuxQuestionBridge } from "./question-bridge.js"
+import { deriveAddresses, generateHostKey, hostKeyFromSeed, unb64u } from "./relay/crypto.js"
+import { enroll as enrollRelay, RelayAgent } from "./relay/agent.js"
 
 export const name = "dsh-links"
 export const inject = ["webServer"]
@@ -131,6 +133,25 @@ function now() {
   return Date.now()
 }
 
+/** 局域网 / 云端是两套配对。旧记录没有 via 时，用设备名里的云端后缀兜底。 */
+function normalizeDeviceVia(device) {
+  if (device?.via === "relay") return "relay"
+  if (device?.via === "lan") return "lan"
+  const name = String(device?.name ?? "")
+  if (name.endsWith("·云") || name.includes(" · 云端")) return "relay"
+  return "lan"
+}
+
+function publicDevice(device) {
+  return {
+    deviceId: device.deviceId,
+    name: device.name,
+    createdAt: device.createdAt,
+    lastSeenAt: device.lastSeenAt,
+    via: normalizeDeviceVia(device),
+  }
+}
+
 /** extraUrls 只接受 https；http 一律升为 https。非法项丢弃。 */
 function requireHttpsUrl(raw) {
   const s = String(raw ?? "").trim()
@@ -189,9 +210,18 @@ function lanUrls(config) {
   return { urls: [...urls], infos: urlInfos }
 }
 
-function pairInfo(config, state, certFingerprint) {
+function pairVia(req) {
+  try {
+    const via = new URL(req?.url ?? "/", "http://x").searchParams.get("via")
+    return via === "relay" ? "relay" : "lan"
+  } catch {
+    return "lan"
+  }
+}
+
+function pairInfo(config, state, certFingerprint, via = "lan") {
   const lan = lanUrls(config)
-  return {
+  const info = {
     v: 1,
     type: "dsh-link",
     deviceId: state.deviceId,
@@ -202,11 +232,27 @@ function pairInfo(config, state, certFingerprint) {
     pairingCode: ensurePairingCode(state, config.pairingTtlSeconds),
     certFingerprint,
   }
+  const relay = state.relay
+  if (via === "relay" && relay?.routeId && relay?.routeSecret && relay?.clientAddress) {
+    info.relay = {
+      v: 2,
+      client: relay.clientAddress,
+      routeId: relay.routeId,
+      routeSecret: relay.routeSecret,
+    }
+    if (relay.tlsFingerprint) info.relay.tlsFingerprint = relay.tlsFingerprint
+  }
+  return info
 }
 
 function json(res, code, obj) {
-  res.writeHead(code, { "content-type": "application/json; charset=utf-8" })
-  res.end(JSON.stringify(obj))
+  const body = Buffer.from(JSON.stringify(obj), "utf8")
+  res.writeHead(code, {
+    "content-type": "application/json; charset=utf-8",
+    "content-length": String(body.length),
+    connection: "close",
+  })
+  res.end(body)
 }
 
 function headerVal(headers, name) {
@@ -377,9 +423,9 @@ function touchDevice(state, device, file) {
   }
 }
 
-async function qrPng(res, config, state, certFingerprint) {
+async function qrPng(res, config, state, certFingerprint, via = "lan") {
   try {
-    const payload = pairInfo(config, state, certFingerprint)
+    const payload = pairInfo(config, state, certFingerprint, via)
     const buf = await QRCode.toBuffer(JSON.stringify(payload), { type: "png", margin: 2, width: 320 })
     res.writeHead(200, { "content-type": "image/png", "cache-control": "no-store" })
     res.end(buf)
@@ -413,10 +459,11 @@ async function handlePair(req, res, config, state, stateFile) {
     json(res, 409, { error: "已存在同名设备，请先吊销旧设备或更换名称" })
     return
   }
+  const via = String(body.via ?? "").trim() === "relay" ? "relay" : "lan"
   const token = randomToken(24)
   const deviceId = `dev-${randomToken(8)}`
   state.devices = state.devices ?? []
-  state.devices.push({ deviceId, name: deviceName, tokenHash: sha256(token), createdAt: now(), lastSeenAt: now() })
+  state.devices.push({ deviceId, name: deviceName, tokenHash: sha256(token), createdAt: now(), lastSeenAt: now(), via })
   consumePairingCode(state) // 配对码一次性：成功后立即失效
   saveState(stateFile, state)
   json(res, 200, { ok: true, token, deviceId, name: deviceName, urls: lanUrls(config).urls })
@@ -619,7 +666,7 @@ function callLocalRpc(targetPort, method, payload) {
         })
       },
     )
-    request.setTimeout(10_000, () => request.destroy(new Error("RPC " + method + " timed out")))
+    request.setTimeout(25_000, () => request.destroy(new Error("RPC " + method + " timed out")))
     request.on("error", reject)
     request.end(body)
   })
@@ -717,6 +764,7 @@ function writeSse(writers, frame) {
   for (const conn of [...writers]) {
     try {
       const ok = conn.res.write(frame)
+      try { conn.res.flush?.() } catch {}
       if (ok === false) {
         writers.delete(conn)
         try { conn.res.destroy() } catch {}
@@ -786,6 +834,7 @@ async function pollSession(sessionId, targetPort, rt, force = false) {
       for (const e of forConn) {
         try {
           const ok = conn.res.write(sseMessageFrame(e))
+          try { conn.res.flush?.() } catch {}
           conn.lastSeq = e.seq
           if (ok === false) {
             writers.delete(conn)
@@ -836,6 +885,7 @@ async function handleStreamRoute(sessionId, res, targetPort, config, req, rt, de
     "x-accel-buffering": "no",
   })
   res.flushHeaders?.()
+  try { res.socket?.setNoDelay?.(true) } catch {}
   let writers = rt.sessionStreams.get(sessionId)
   if (!writers) {
     writers = new Set()
@@ -849,9 +899,11 @@ async function handleStreamRoute(sessionId, res, targetPort, config, req, rt, de
     // 补历史完成前不接受 mux 直推，避免与补发交错乱序
     seeded: false,
     missedWhileSeeding: false,
+    seedQueue: [],
   }
   writers.add(conn)
   res.write(`event: ready\ndata: ${JSON.stringify({ resumeSeq: conn.lastSeq })}\n\n`)
+  try { res.flush?.() } catch {}
   ;(async () => {
     try {
       const { events, projections } = await loadEventsAfter(conn.lastSeq, (payload) =>
@@ -865,6 +917,7 @@ async function handleStreamRoute(sessionId, res, targetPort, config, req, rt, de
         if (e.seq <= conn.lastSeq) continue
         try {
           conn.res.write(sseMessageFrame(e))
+          try { conn.res.flush?.() } catch {}
           conn.lastSeq = e.seq
         } catch {
           return
@@ -875,6 +928,7 @@ async function handleStreamRoute(sessionId, res, targetPort, config, req, rt, de
       }
     } catch {} finally {
       conn.seeded = true
+      flushSeedQueue(conn, sessionId, (id) => requestGapPoll(id, targetPort, rt))
       // 补历史期间 mux 到的事件没人接，立刻补一次洞
       if (conn.missedWhileSeeding) pollSession(sessionId, targetPort, rt, true)
     }
@@ -1112,12 +1166,7 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
     if (req.method === "GET" && pathname === "/dsh-link/mobile/devices") {
       const devices = [...(state.devices ?? [])]
         .sort((a, b) => (b.lastSeenAt ?? 0) - (a.lastSeenAt ?? 0))
-        .map(({ deviceId, name, createdAt, lastSeenAt }) => ({
-          deviceId,
-          name,
-          createdAt,
-          lastSeenAt,
-        }))
+        .map(publicDevice)
       return json(res, 200, {
         version: 1,
         devices,
@@ -1286,7 +1335,15 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
   }
 }
 
-const PANEL_ONLY_PATHS = new Set(["/dsh-link/pair-info", "/dsh-link/qr.png", "/dsh-link/revoke", "/dsh-link/devices"])
+const PANEL_ONLY_PATHS = new Set([
+  "/dsh-link/pair-info",
+  "/dsh-link/qr.png",
+  "/dsh-link/revoke",
+  "/dsh-link/devices",
+  "/dsh-link/relay-status",
+  "/dsh-link/relay-enroll",
+  "/dsh-link/relay-disconnect",
+])
 
 const APPROVAL_OUTCOMES = new Set(["allowed-once", "rejected", "cancelled", "unavailable"])
 const APPROVAL_TIMEOUT_MS = 5 * 60 * 1000
@@ -1326,11 +1383,39 @@ export function apply(ctx, config) {
       d.deviceId = `dev-${randomToken(8)}`
       migrated = true
     }
+    const via = normalizeDeviceVia(d)
+    if (d.via !== via) {
+      d.via = via
+      migrated = true
+    }
   }
   saveState(stateFile, state)
   if (migrated) ctx.logger.info("dsh-links: 已为旧设备补发 deviceId")
 
   const fp = () => tlsHolder.fingerprint
+  let relayAgent = null
+  const stopRelayAgent = () => {
+    try { relayAgent?.stop() } catch {}
+    relayAgent = null
+  }
+  const startRelayAgent = () => {
+    stopRelayAgent()
+    if (!state.relay?.routeSecret || !state.relay?.agentAddress) return
+    relayAgent = new RelayAgent({
+      address: state.relay.agentAddress,
+      credentials: {
+        keys: hostKeyFromSeed(unb64u(state.relay.hostSeed), unb64u(state.relay.hostPublicKey)),
+        routeId: state.relay.routeId,
+        routeSecret: state.relay.routeSecret,
+        capability: state.relay.capability,
+        generation: state.relay.generation || 1,
+      },
+      pluginPort: config.port,
+      logger: ctx.logger,
+      insecureTls: Boolean(state.relay.insecureTls),
+    })
+    relayAgent.start().catch((err) => ctx.logger.warn(`dsh-links relay: ${err?.message ?? err}`))
+  }
 
   // ---------- 主 web 服务上的路由（网页界面「手机连接」面板用；回环同源围栏） ----------
   const disposers = [
@@ -1339,7 +1424,7 @@ export function apply(ctx, config) {
       path: "/dsh-link/pair-info",
       handler: (req, res) => {
         if (!requireLoopbackSameOrigin(req, res)) return
-        json(res, 200, pairInfo(config, state, fp()))
+        json(res, 200, pairInfo(config, state, fp(), pairVia(req)))
       },
     }),
     web.register({
@@ -1347,7 +1432,7 @@ export function apply(ctx, config) {
       path: "/dsh-link/qr.png",
       handler: (req, res) => {
         if (!requireLoopbackSameOrigin(req, res)) return
-        return qrPng(res, config, state, fp())
+        return qrPng(res, config, state, fp(), pairVia(req))
       },
     }),
     web.register({
@@ -1371,8 +1456,87 @@ export function apply(ctx, config) {
       handler: (req, res) => {
         if (!requireLoopbackSameOrigin(req, res)) return
         json(res, 200, {
-          devices: state.devices.map(({ deviceId, name, createdAt, lastSeenAt }) => ({ deviceId, name, createdAt, lastSeenAt })),
+          devices: state.devices.map(publicDevice),
         })
+      },
+    }),
+    web.register({
+      kind: "exact",
+      path: "/dsh-link/relay-status",
+      handler: (req, res) => {
+        if (!requireLoopbackSameOrigin(req, res)) return
+        json(res, 200, {
+          status: relayAgent?.status ?? (state.relay?.routeId ? "offline" : "idle"),
+          error: relayAgent?.error ?? "",
+          agentAddress: state.relay?.agentAddress ?? "",
+          clientAddress: state.relay?.clientAddress ?? "",
+          insecureTls: Boolean(state.relay?.insecureTls),
+        })
+      },
+    }),
+    web.register({
+      kind: "exact",
+      path: "/dsh-link/relay-enroll",
+      handler: async (req, res) => {
+        if (!requireLoopbackSameOrigin(req, res)) return
+        if (!requireJsonWrite(req, res)) return
+        const body = await readJson(req, res)
+        if (!body) return
+        const inviteCode = String(body.inviteCode ?? "").trim()
+        const address = String(body.address ?? "").trim()
+        const insecureTls = body.insecureTls !== false
+        if (!inviteCode || !address) return json(res, 400, { error: "请填写 Relay 地址和接入码" })
+        try {
+          const derived = deriveAddresses(address)
+          let keys
+          if (state.relay?.hostSeed && state.relay?.hostPublicKey) {
+            keys = hostKeyFromSeed(unb64u(state.relay.hostSeed), unb64u(state.relay.hostPublicKey))
+          } else {
+            keys = generateHostKey()
+          }
+          const enrolled = await enrollRelay({
+            address: derived.agentAddress,
+            inviteCode,
+            hostId: state.deviceId,
+            keys,
+            insecureTls,
+          })
+          state.relay = {
+            agentAddress: derived.agentAddress,
+            clientAddress: derived.clientAddress,
+            hostSeed: keys.seed.toString("base64url"),
+            hostPublicKey: keys.publicKey.toString("base64url"),
+            routeId: enrolled.routeId,
+            routeSecret: enrolled.routeSecret,
+            capability: enrolled.capability,
+            generation: enrolled.generation,
+            tlsFingerprint: enrolled.tlsFingerprint,
+            insecureTls,
+          }
+          saveState(stateFile, state)
+          startRelayAgent()
+          json(res, 200, { ok: true, agentAddress: derived.agentAddress, clientAddress: derived.clientAddress })
+        } catch (err) {
+          json(res, 400, { error: err?.message ?? "接入失败" })
+        }
+      },
+    }),
+    web.register({
+      kind: "exact",
+      path: "/dsh-link/relay-disconnect",
+      handler: async (req, res) => {
+        if (!requireLoopbackSameOrigin(req, res)) return
+        if (req.method !== "POST") return json(res, 405, { error: "method not allowed" })
+        stopRelayAgent()
+        if (state.relay) {
+          delete state.relay.routeId
+          delete state.relay.routeSecret
+          delete state.relay.capability
+          delete state.relay.generation
+          delete state.relay.tlsFingerprint
+        }
+        saveState(stateFile, state)
+        json(res, 200, { ok: true })
       },
     }),
   ]
@@ -1496,6 +1660,7 @@ export function apply(ctx, config) {
       proxy.listen(config.port, "0.0.0.0", () => {
         ctx.logger.info(`dsh-links: 手机接入代理已启动，https 端口 ${config.port}（指纹 ${tls.fingerprint.slice(0, 12)}…）`)
         for (const u of lanUrls(config).urls) ctx.logger.info(`dsh-links: 可访问地址 ${u}`)
+        startRelayAgent()
         muxBridge = startMuxQuestionBridge({
           targetPort,
           rt,
@@ -1514,6 +1679,7 @@ export function apply(ctx, config) {
       if (keepAliveTimer) clearInterval(keepAliveTimer)
       try { muxBridge?.stop() } catch {}
       muxBridge = null
+      stopRelayAgent()
       for (const writers of rt.sessionStreams.values()) {
         for (const conn of writers) {
           try { conn.res.end() } catch {}

@@ -4,7 +4,7 @@
  */
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { handleMuxBlock } from "../src/question-bridge.js"
+import { handleMuxBlock, flushSeedQueue } from "../src/question-bridge.js"
 
 function muxBlock(payload, rpcId = "rpc-1") {
   return `data: ${JSON.stringify({ rpcId, payload })}`
@@ -75,13 +75,15 @@ test("已下发过的 seq 不重复下推，也不触发补洞", () => {
   assert.deepEqual(polled, [])
 })
 
-test("补历史未完成的连接只打标记，等 seed 结束再补", () => {
+test("补历史未完成的连接把事件排队，不立刻下推也不补洞", () => {
   const a = fakeConn(0, { seeded: false })
   const rt = runtimeWith("s1", [a.conn])
   const polled = []
   handleMuxBlock(sessionEventBlock("s1", 1), rt, null, (id) => polled.push(id))
   assert.equal(a.written.length, 0)
   assert.equal(a.conn.missedWhileSeeding, true)
+  assert.equal(a.conn.seedQueue.length, 1)
+  assert.equal(a.conn.seedQueue[0].seq, 1)
   assert.deepEqual(polled, [])
 })
 
@@ -109,6 +111,19 @@ test("无订阅者 / 非本会话 / 坏帧一律忽略", () => {
   handleMuxBlock(muxBlock({ type: "session/event", sessionId: "s1" }), rt, null, push)
   handleMuxBlock(muxBlock({ type: "session/jobs", sessionId: "s1", jobs: [] }), rt, null, push)
   assert.equal(a.written.length, 0)
+  assert.deepEqual(polled, [])
+})
+
+test("补历史结束后把排队事件按序补发", () => {
+  const a = fakeConn(0, { seeded: false })
+  const rt = runtimeWith("s1", [a.conn])
+  handleMuxBlock(sessionEventBlock("s1", 1), rt, null, () => {})
+  handleMuxBlock(sessionEventBlock("s1", 2), rt, null, () => {})
+  const polled = []
+  flushSeedQueue(a.conn, "s1", (id) => polled.push(id))
+  assert.equal(a.conn.seeded, true)
+  assert.equal(a.written.length, 2)
+  assert.equal(a.conn.lastSeq, 2)
   assert.deepEqual(polled, [])
 })
 

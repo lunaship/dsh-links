@@ -15,10 +15,15 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms))
 }
 
+function flushSse(res) {
+  try { res.flush?.() } catch {}
+}
+
 function writeSse(writers, frame) {
   for (const conn of [...writers]) {
     try {
       const ok = conn.res.write(frame)
+      flushSse(conn.res)
       if (ok === false) {
         writers.delete(conn)
         try { conn.res.destroy() } catch {}
@@ -56,6 +61,8 @@ function handleSessionEvent(payload, rt, requestPoll) {
   for (const conn of [...writers]) {
     if (!conn.seeded) {
       conn.missedWhileSeeding = true
+      if (!Array.isArray(conn.seedQueue)) conn.seedQueue = []
+      conn.seedQueue.push(event)
       continue
     }
     if (event.seq <= conn.lastSeq) continue
@@ -65,6 +72,7 @@ function handleSessionEvent(payload, rt, requestPoll) {
     }
     try {
       const ok = conn.res.write(sseMessageFrame(event))
+      flushSse(conn.res)
       conn.lastSeq = event.seq
       if (ok === false) {
         writers.delete(conn)
@@ -94,6 +102,33 @@ export function handleMuxBlock(block, rt, logger, requestPoll) {
     return
   }
   return handleMuxFrame(frame, rt, logger, requestPoll)
+}
+
+/** 补历史结束后把排队的 mux 事件按序补发，避免思考中的 delta 被丢掉。 */
+export function flushSeedQueue(conn, sessionId, requestPoll) {
+  const queued = conn.seedQueue ?? []
+  conn.seedQueue = []
+  conn.seeded = true
+  queued.sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0))
+  for (const event of queued) {
+    if (typeof event?.seq !== "number" || event.seq <= conn.lastSeq) continue
+    if (event.seq > conn.lastSeq + 1) {
+      requestPoll?.(sessionId)
+      return
+    }
+    try {
+      const ok = conn.res.write(sseMessageFrame(event))
+      flushSse(conn.res)
+      conn.lastSeq = event.seq
+      if (ok === false) {
+        try { conn.res.destroy() } catch {}
+        return
+      }
+    } catch {
+      try { conn.res.destroy() } catch {}
+      return
+    }
+  }
 }
 
 export function handleMuxFrame(frame, rt, logger, requestPoll) {

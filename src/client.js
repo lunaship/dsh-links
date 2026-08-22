@@ -6,19 +6,13 @@
  */
 /**
  * dsh-links 客户端面 · 面板模块（作为 createPanelModule 工厂被主模块组合调用）
- * 「手机连接」：局域网配对与远端连接路线（Tailscale / Cloudflare Tunnel / DSH Links Relay）。
+ * 「手机连接」：局域网配对与远端 Relay（接入成功后才显示云端二维码）。
  *
  * Hallmark pre-emit critique: P5 H5 E5 S5 R5 V5
  */
 const createPanelModule = (require) => {
   const React = require('react')
   const { jsx, jsxs } = require('react/jsx-runtime')
-
-  function formatFingerprint(fp) {
-    const hex = String(fp || '').replace(/[^0-9a-f]/gi, '').toLowerCase()
-    if (hex.length !== 64) return fp || ''
-    return hex.match(/.{1,4}/g).join(' ')
-  }
 
   function deviceSeenLabel(lastSeenAt) {
     if (!lastSeenAt) return '暂未连接'
@@ -187,36 +181,22 @@ const createPanelModule = (require) => {
     .dshlink-remote-intro {
       margin: 0; font-size: 12px; line-height: 1.5; color: var(--dl-muted);
     }
-    .dshlink-remote-card {
-      display: flex; flex-direction: column; gap: 10px; padding: 14px;
-      border-radius: 12px; border: 1px solid var(--dl-line); background: var(--dl-paper);
+    .dshlink-step {
+      display: flex; gap: 12px; align-items: flex-start;
+      padding: 14px; border-radius: 12px; border: 1px solid var(--dl-line); background: var(--dl-paper);
     }
-    .dshlink-remote-card-head { display: flex; align-items: flex-start; gap: 9px }
-    .dshlink-remote-icon {
-      display: grid; place-items: center; flex: none; width: 27px; height: 27px; border-radius: 8px;
-      color: #7050c4; background: rgba(112, 78, 196, 0.11); font-size: 14px; font-weight: 700;
+    .dshlink-step.is-pending { opacity: 0.78; }
+    .dshlink-step-num {
+      display: grid; place-items: center; flex: none; width: 22px; height: 22px; margin-top: 1px;
+      border-radius: 999px; font-size: 11px; font-weight: 700; color: #fff; background: var(--dl-accent);
     }
-    .dshlink-remote-title { font-size: 13px; font-weight: 650; color: var(--dl-ink) }
-    .dshlink-remote-summary { margin: 2px 0 0; font-size: 11px; line-height: 1.45; color: var(--dl-muted) }
-    .dshlink-remote-badge {
-      flex: none; margin-left: auto; font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
-      color: #7050c4; background: rgba(112, 78, 196, 0.1); border-radius: 999px; padding: 3px 7px;
-    }
-    .dshlink-remote-steps { margin: 0; padding-left: 19px; font-size: 11px; line-height: 1.55; color: var(--dl-muted) }
-    .dshlink-remote-steps li + li { margin-top: 4px }
-    .dshlink-remote-code, .dshlink-remote-fingerprint {
-      margin: 0; overflow-x: auto; white-space: pre-wrap; word-break: break-word;
-      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 10px; line-height: 1.5;
-      color: var(--dl-muted); background: var(--dl-soft); border: 1px solid var(--dl-line); border-radius: 8px; padding: 9px 10px;
-    }
-    .dshlink-remote-fingerprint { color: var(--dl-ink); letter-spacing: 0.02em }
-    .dshlink-remote-note {
-      margin: 0; padding: 9px 10px; font-size: 11px; line-height: 1.5; color: var(--dl-muted);
-      background: rgba(185, 124, 18, 0.08); border: 1px solid rgba(185, 124, 18, 0.19); border-radius: 8px;
-    }
-    .dshlink-relay-flow {
-      margin: 0; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 10px;
-      line-height: 1.5; color: var(--dl-muted); text-align: center;
+    .dshlink-step.is-pending .dshlink-step-num { background: var(--dl-muted); color: var(--dl-paper); }
+    .dshlink-step-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+    .dshlink-step-title { font-size: 13px; font-weight: 650; color: var(--dl-ink) }
+    .dshlink-qr-pending {
+      display: grid; place-items: center; min-height: 168px; border-radius: 12px;
+      border: 1px dashed var(--dl-line); background: var(--dl-soft);
+      color: var(--dl-muted); font-size: 12px; line-height: 1.55; text-align: center; padding: 18px 16px;
     }
 
     .dshlink-urls {
@@ -278,6 +258,32 @@ const createPanelModule = (require) => {
       border: 1px dashed var(--dl-line); text-align: center;
     }
 
+    .dshlink-field {
+      width: 100%; box-sizing: border-box;
+      border: 1px solid var(--dl-line); border-radius: 10px;
+      padding: 9px 11px; font: inherit; font-size: 13px;
+      background: var(--dl-paper); color: var(--dl-ink);
+    }
+    .dshlink-field:focus { outline: 2px solid var(--dl-accent); outline-offset: 1px }
+    .dshlink-relay-form { display: flex; flex-direction: column; gap: 10px; margin: 0 }
+    .dshlink-relay-row { display: flex; flex-direction: column; gap: 4px }
+    .dshlink-relay-row label { font-size: 12px; font-weight: 600; color: var(--dl-muted) }
+    .dshlink-relay-actions { display: flex; gap: 8px; flex-wrap: wrap }
+    .dshlink-relay-check { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--dl-muted) }
+    .dshlink-relay-status { font-size: 12px; color: var(--dl-muted) }
+    .dshlink-relay-status.is-ok { color: var(--dl-ok) }
+    .dshlink-relay-status.is-error { color: var(--dl-danger) }
+    .dshlink-primary {
+      appearance: none; cursor: pointer; border: 0; border-radius: 10px;
+      padding: 8px 14px; background: var(--dl-ink); color: #f7f8fa;
+      font: inherit; font-size: 13px; font-weight: 600;
+    }
+    .dshlink-secondary {
+      appearance: none; cursor: pointer; border: 1px solid var(--dl-line);
+      border-radius: 10px; padding: 8px 14px; background: var(--dl-paper);
+      font: inherit; font-size: 13px; font-weight: 600; color: var(--dl-ink);
+    }
+
     .dshlink-status { font-size: 12px; color: var(--dl-muted); padding: 4px 0 }
     .dshlink-status.is-error { color: var(--dl-danger) }
 
@@ -301,8 +307,45 @@ const createPanelModule = (require) => {
         jsx('div', { className: 'dshlink-brand-title', children: '手机连接' }),
         jsx('p', {
           className: 'dshlink-brand-lede',
-          children: '局域网 Beta 可立即扫码配对；扫码地址或手动地址可连接家中或远程服务器上的 DSH。跨网络可自管 Tunnel，DSH Links Relay 正在建设中。',
+          children: '局域网和云端是两张码、两个设备。云端码只在电脑用接入码连上 Relay 之后才会出现。',
         }),
+      ],
+    })
+  }
+
+  function devicesVia(devices, via) {
+    return (devices ?? []).filter((d) => (d.via === 'relay' ? 'relay' : 'lan') === via)
+  }
+
+  function DeviceList({ devices, revoke, empty }) {
+    return jsxs('div', {
+      className: 'dshlink-devices',
+      children: [
+        jsx('div', { className: 'dshlink-section-label', children: '已配对设备' }),
+        devices.length
+          ? devices.map((d) =>
+              jsxs('div', {
+                className: 'dshlink-device',
+                key: d.deviceId || d.name,
+                children: [
+                  jsx('span', { className: 'dshlink-device-dot', 'aria-hidden': true }),
+                  jsxs('div', {
+                    className: 'dshlink-device-copy',
+                    children: [
+                      jsx('div', { className: 'dshlink-device-name', children: d.name }),
+                      jsx('div', { className: 'dshlink-device-time', children: deviceSeenLabel(d.lastSeenAt) }),
+                    ],
+                  }),
+                  jsx('button', {
+                    type: 'button',
+                    className: 'dshlink-revoke',
+                    onClick: () => revoke(d.name),
+                    children: '吊销',
+                  }),
+                ],
+              }),
+            )
+          : jsx('div', { className: 'dshlink-empty', children: empty }),
       ],
     })
   }
@@ -319,8 +362,8 @@ const createPanelModule = (require) => {
               className: 'dshlink-qr-plate',
               children: jsx('img', {
                 className: 'dshlink-qr',
-                src: '/dsh-link/qr.png',
-                alt: '配对二维码',
+                src: '/dsh-link/qr.png?via=lan&t=' + encodeURIComponent(info.pairingCode || ''),
+                alt: '局域网配对二维码',
               }),
             }),
             jsxs('div', {
@@ -330,7 +373,7 @@ const createPanelModule = (require) => {
                 jsx('p', { className: 'dshlink-code', children: info.pairingCode }),
                 jsx('p', {
                   className: 'dshlink-hint',
-                  children: '10 分钟内有效。用 DSH Links App 扫码即可；二维码已包含地址、配对码和安全指纹。',
+                  children: '只授权局域网。扫完后配对码会作废，云端请再打开「远端连接」扫第二张码。',
                 }),
               ],
             }),
@@ -359,140 +402,177 @@ const createPanelModule = (require) => {
           className: 'dshlink-tunnel-note',
           children: '请让手机与电脑连上同一可信 Wi‑Fi 后扫码。丢失手机时在此立即吊销设备。勿将 18640 裸暴露到公网。',
         }),
-        jsxs('div', {
-          className: 'dshlink-devices',
-          children: [
-            jsx('div', { className: 'dshlink-section-label', children: '已配对设备' }),
-            devices.length
-              ? devices.map((d) =>
-                  jsxs('div', {
-                    className: 'dshlink-device',
-                    key: d.deviceId || d.name,
-                    children: [
-                      jsx('span', { className: 'dshlink-device-dot', 'aria-hidden': true }),
-                      jsxs('div', {
-                        className: 'dshlink-device-copy',
-                        children: [
-                          jsx('div', { className: 'dshlink-device-name', children: d.name }),
-                          jsx('div', { className: 'dshlink-device-time', children: deviceSeenLabel(d.lastSeenAt) }),
-                        ],
-                      }),
-                      jsx('button', {
-                        type: 'button',
-                        className: 'dshlink-revoke',
-                        onClick: () => revoke(d.name),
-                        children: '吊销',
-                      }),
-                    ],
-                  }),
-                )
-              : jsx('div', { className: 'dshlink-empty', children: '暂无已配对设备' }),
-          ],
+        jsx(DeviceList, {
+          devices: devicesVia(devices, 'lan'),
+          revoke,
+          empty: '暂无已配对的局域网设备',
         }),
       ],
     })
   }
 
-  function RemoteBody({ info }) {
-    const pairingCode = info?.pairingCode || '本页加载完成后显示'
-    const fingerprint = info?.certFingerprint ? formatFingerprint(info.certFingerprint) : '本页加载完成后显示'
-    const cloudflaredConfig = `tunnel: <你的 Tunnel UUID>
-credentials-file: <cloudflared 凭据文件>
-ingress:
-  - hostname: dsh.example.com
-    service: https://127.0.0.1:18640
-    originRequest:
-      noTLSVerify: true
-  - service: http_status:404`
+  function RelayForm({ relay, onEnroll, onDisconnect }) {
+    const [address, setAddress] = React.useState(relay?.agentAddress || '')
+    const [invite, setInvite] = React.useState('')
+    const [insecureTls, setInsecureTls] = React.useState(relay?.insecureTls !== false)
+    const [busy, setBusy] = React.useState(false)
+    const [message, setMessage] = React.useState('')
+    React.useEffect(() => {
+      if (relay?.agentAddress) setAddress((cur) => cur || relay.agentAddress)
+      if (relay && 'insecureTls' in relay) setInsecureTls(relay.insecureTls !== false)
+    }, [relay?.agentAddress, relay?.insecureTls])
+    const online = relay?.status === 'online'
+    const canSubmit = address.trim() && invite.trim() && !busy
+    const submit = async (event) => {
+      event.preventDefault()
+      if (!canSubmit) return
+      setBusy(true)
+      setMessage('')
+      try {
+        await onEnroll({ address, inviteCode: invite, insecureTls })
+        setInvite('')
+      } catch (err) {
+        setMessage(String(err?.message ?? err))
+      } finally {
+        setBusy(false)
+      }
+    }
+    return jsxs('form', {
+      className: 'dshlink-relay-form',
+      onSubmit: submit,
+      children: [
+        jsxs('div', {
+          className: 'dshlink-relay-row',
+          children: [
+            jsx('label', { htmlFor: 'dsh-relay-addr', children: 'Relay 地址' }),
+            jsx('input', {
+              id: 'dsh-relay-addr',
+              className: 'dshlink-field',
+              value: address,
+              placeholder: 'host 或 host:8444',
+              onChange: (event) => setAddress(event.target.value),
+              autoComplete: 'off',
+            }),
+          ],
+        }),
+        jsxs('div', {
+          className: 'dshlink-relay-row',
+          children: [
+            jsx('label', { htmlFor: 'dsh-relay-invite', children: '接入码' }),
+            jsx('input', {
+              id: 'dsh-relay-invite',
+              className: 'dshlink-field',
+              value: invite,
+              placeholder: '在 Relay 控制台生成的一次性接入码',
+              onChange: (event) => setInvite(event.target.value),
+              autoComplete: 'off',
+            }),
+          ],
+        }),
+        jsxs('label', {
+          className: 'dshlink-relay-check',
+          children: [
+            jsx('input', {
+              type: 'checkbox',
+              checked: insecureTls,
+              onChange: (event) => setInsecureTls(event.target.checked),
+            }),
+            '允许自签 TLS（自托管试验）',
+          ],
+        }),
+        jsxs('div', {
+          className: 'dshlink-relay-actions',
+          children: [
+            jsx('button', {
+              type: 'submit',
+              className: 'dshlink-primary',
+              disabled: !canSubmit,
+              children: busy ? '接入中…' : '接入',
+            }),
+            online ? jsx('button', {
+              type: 'button',
+              className: 'dshlink-secondary',
+              onClick: onDisconnect,
+              children: '断开',
+            }) : null,
+          ],
+        }),
+        jsx('p', {
+          className: 'dshlink-relay-status' + (relay?.status === 'error' || message ? ' is-error' : online ? ' is-ok' : ''),
+          children: message || (online ? `已在线 ${relay.agentAddress}` : (relay?.error || '未接入')),
+        }),
+      ],
+    })
+  }
 
+  function RemoteBody({ info, devices, revoke, relay, onEnroll, onDisconnect }) {
+    const pairingCode = info?.pairingCode || ''
+    const online = relay?.status === 'online'
     return jsxs('div', {
       className: 'dshlink-remote',
       children: [
         jsx('p', {
           className: 'dshlink-remote-intro',
-          children: '扫码中的地址或手动填写的地址可以指向家中电脑或远程服务器上的 DSH。当前跨网络可使用自管 Tunnel；它们不改变配对码、设备 Token 或吊销机制，只改变手机抵达 DSH 的网络路径。',
+          children: '出门用手机前，电脑要先用接入码连上 Relay。接入成功后才会出现给手机扫的云端码；这张码不含接入码。',
         }),
         jsxs('section', {
-          className: 'dshlink-remote-card',
+          className: 'dshlink-step',
           children: [
+            jsx('span', { className: 'dshlink-step-num', 'aria-hidden': true, children: '1' }),
             jsxs('div', {
-              className: 'dshlink-remote-card-head',
+              className: 'dshlink-step-body',
               children: [
-                jsx('span', { className: 'dshlink-remote-icon', 'aria-hidden': true, children: 'T' }),
-                jsxs('div', {
-                  children: [
-                    jsx('div', { className: 'dshlink-remote-title', children: 'Tailscale 私网连接' }),
-                    jsx('p', { className: 'dshlink-remote-summary', children: '推荐个人使用：手机和电脑加入同一 tailnet，不开放公网入口。' }),
-                  ],
-                }),
-                jsx('span', { className: 'dshlink-remote-badge', children: '推荐' }),
-              ],
-            }),
-            jsxs('ol', {
-              className: 'dshlink-remote-steps',
-              children: [
-                jsx('li', { children: '在电脑和手机安装 Tailscale，并登录同一个 tailnet。' }),
-                jsx('li', { children: '电脑执行 `tailscale ip -4`，取得 100.x.y.z 地址。' }),
-                jsx('li', { children: `在 DSH Links App 选择“手动添加”，填入 https://100.x.y.z:18640 与本页配对码 ${pairingCode}。` }),
-                jsx('li', { children: '首次连接会要求核对证书指纹；核对一致后再继续。' }),
-              ],
-            }),
-            jsxs('div', {
-              children: [
-                jsx('div', { className: 'dshlink-section-label', children: 'Tailscale 手动连接时核对的 TLS 指纹' }),
-                jsx('pre', { className: 'dshlink-remote-fingerprint', children: fingerprint }),
+                jsx('div', { className: 'dshlink-step-title', children: '填入地址和接入码' }),
+                jsx(RelayForm, { relay, onEnroll, onDisconnect }),
               ],
             }),
           ],
         }),
         jsxs('section', {
-          className: 'dshlink-remote-card',
+          className: 'dshlink-step' + (online ? '' : ' is-pending'),
           children: [
+            jsx('span', { className: 'dshlink-step-num', 'aria-hidden': true, children: '2' }),
             jsxs('div', {
-              className: 'dshlink-remote-card-head',
+              className: 'dshlink-step-body',
               children: [
-                jsx('span', { className: 'dshlink-remote-icon', 'aria-hidden': true, children: 'C' }),
-                jsxs('div', {
-                  children: [
-                    jsx('div', { className: 'dshlink-remote-title', children: 'Cloudflare Tunnel' }),
-                    jsx('p', { className: 'dshlink-remote-summary', children: '使用你自己的域名把公开 HTTPS 请求转入本机；不需要路由器端口转发。' }),
-                  ],
-                }),
-                jsx('span', { className: 'dshlink-remote-badge', children: '实验性' }),
+                jsx('div', { className: 'dshlink-step-title', children: '用手机扫云端码' }),
+                online
+                  ? jsxs('div', {
+                      className: 'dshlink-pair',
+                      children: [
+                        jsx('div', {
+                          className: 'dshlink-qr-plate',
+                          children: jsx('img', {
+                            className: 'dshlink-qr',
+                            src: '/dsh-link/qr.png?via=relay&t=' + encodeURIComponent(pairingCode),
+                            alt: '云端配对二维码',
+                          }),
+                        }),
+                        jsxs('div', {
+                          className: 'dshlink-pair-meta',
+                          children: [
+                            jsx('div', { className: 'dshlink-pair-label', children: '云端配对码' }),
+                            jsx('p', { className: 'dshlink-code', children: pairingCode || '本页加载完成后显示' }),
+                            jsx('p', {
+                              className: 'dshlink-hint',
+                              children: '与局域网不是同一张码。扫这张会在手机上多一条「云端」设备，只走 Relay。',
+                            }),
+                          ],
+                        }),
+                      ],
+                    })
+                  : jsx('div', {
+                      className: 'dshlink-qr-pending',
+                      children: '接入成功后才会显示二维码。新用户请先完成上一步：远端必须有接入码。',
+                    }),
               ],
-            }),
-            jsxs('ol', {
-              className: 'dshlink-remote-steps',
-              children: [
-                jsx('li', { children: '创建你自己的 Tunnel 和 hostname，再将 hostname 仅指向本机 18640。' }),
-                jsx('li', { children: '使用下面的 ingress；不要把 DSH Web 管理台 3080 一起发布。' }),
-                jsx('li', { children: `在 App“手动添加”中填入 https://你的域名 与本页配对码 ${pairingCode}。` }),
-              ],
-            }),
-            jsx('pre', { className: 'dshlink-remote-code', children: cloudflaredConfig }),
-            jsx('p', {
-              className: 'dshlink-remote-note',
-              children: '当前 App 不会完成 Cloudflare Access 登录，也不会携带 Access JWT；启用 `originRequest.access.required` 会导致配对与运行请求失败，请勿在当前 Beta 启用。',
             }),
           ],
         }),
-        jsxs('section', {
-          className: 'dshlink-roadmap',
-          children: [
-            jsx('span', { className: 'dshlink-roadmap-mark', 'aria-hidden': true, children: '↗' }),
-            jsxs('div', {
-              className: 'dshlink-roadmap-copy',
-              children: [
-                jsx('div', { className: 'dshlink-roadmap-title', children: 'DSH Links Relay' }),
-                jsx('p', {
-                  className: 'dshlink-roadmap-text',
-                  children: '正在建设中。计划中电脑侧 local-relay 与手机 App 均主动连接 Relay；Relay 仅实时转发已配对设备的请求与响应，不持久化存储会话内容、文件、工作区数据或设备内容。这样个人电脑不接受公网入站连接，设备吊销会切断后续远端请求。',
-                }),
-                jsx('p', { className: 'dshlink-relay-flow', children: '手机 App ⇄ DSH Links Relay（建设中）⇄ local-relay ⇄ 127.0.0.1:18640' }),
-              ],
-            }),
-            jsx('span', { className: 'dshlink-roadmap-status', children: '建设中' }),
-          ],
+        jsx(DeviceList, {
+          devices: devicesVia(devices, 'relay'),
+          revoke,
+          empty: '暂无已配对的云端设备',
         }),
       ],
     })
@@ -518,15 +598,16 @@ ingress:
     })
   }
 
-  function ConnectionBody({ info, devices, err, revoke }) {
+  function ConnectionBody({ info, devices, err, revoke, relay, onEnroll, onDisconnect, load }) {
     const [active, setActive] = React.useState('lan')
+    React.useEffect(() => { load?.() }, [active, load])
     if (err) return jsx('div', { className: 'dshlink-status is-error', children: `加载失败：${err}` })
     if (!info) return jsx('div', { className: 'dshlink-status', children: '加载中…' })
     return jsxs('div', {
       className: 'dshlink-connection',
       children: [
         jsx(ConnectionTabs, { active, onChange: setActive }),
-        active === 'lan' ? jsx(LanBody, { info, devices, revoke }) : jsx(RemoteBody, { info }),
+        active === 'lan' ? jsx(LanBody, { info, devices, revoke }) : jsx(RemoteBody, { info, devices, revoke, relay, onEnroll, onDisconnect }),
       ],
     })
   }
@@ -534,16 +615,19 @@ ingress:
   function usePairData(active) {
     const [info, setInfo] = React.useState(null)
     const [devices, setDevices] = React.useState([])
+    const [relay, setRelay] = React.useState(null)
     const [err, setErr] = React.useState('')
 
     const load = React.useCallback(async () => {
       try {
         const resInfo = await fetch('/dsh-link/pair-info')
         const resDevices = await fetch('/dsh-link/devices')
+        const resRelay = await fetch('/dsh-link/relay-status')
         if (!resInfo.ok || !resDevices.ok) throw new Error(`HTTP ${resInfo.status}/${resDevices.status}`)
         setInfo(await resInfo.json())
         const data = await resDevices.json()
         setDevices(data.devices ?? [])
+        if (resRelay.ok) setRelay(await resRelay.json())
         setErr('')
       } catch (e) {
         setErr(String(e?.message ?? e))
@@ -569,12 +653,27 @@ ingress:
       }
     }
 
-    return { info, devices, err, revoke }
+    const onEnroll = async ({ address, inviteCode, insecureTls }) => {
+      const res = await fetch('/dsh-link/relay-enroll', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ address, inviteCode, insecureTls }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
+      await load()
+    }
+    const onDisconnect = async () => {
+      await fetch('/dsh-link/relay-disconnect', { method: 'POST' })
+      await load()
+    }
+
+    return { info, devices, err, revoke, relay, onEnroll, onDisconnect, load }
   }
 
   function LinkPanel() {
     const [open, setOpen] = React.useState(false)
-    const { info, devices, err, revoke } = usePairData(open)
+    const { info, devices, err, revoke, relay, onEnroll, onDisconnect, load } = usePairData(open)
 
     React.useEffect(() => {
       window.__dshlinkOpenPanel = () => setOpen(true)
@@ -595,7 +694,7 @@ ingress:
                 onClick: (e) => e.stopPropagation(),
                 children: [
                   jsx(BrandHeader, {}),
-                  jsx(ConnectionBody, { info, devices, err, revoke }),
+                  jsx(ConnectionBody, { info, devices, err, revoke, relay, onEnroll, onDisconnect, load }),
                   jsx('button', {
                     type: 'button',
                     className: 'dshlink-close',
@@ -611,7 +710,7 @@ ingress:
   }
 
   function DshLinkSettingsSection() {
-    const { info, devices, err, revoke } = usePairData(true)
+    const { info, devices, err, revoke, relay, onEnroll, onDisconnect, load } = usePairData(true)
 
     return jsxs(React.Fragment, {
       children: [
@@ -620,7 +719,7 @@ ingress:
           className: 'dshlink-settings dshlink-root',
           children: [
             jsx(BrandHeader, {}),
-            jsx(ConnectionBody, { info, devices, err, revoke }),
+            jsx(ConnectionBody, { info, devices, err, revoke, relay, onEnroll, onDisconnect, load }),
           ],
         }),
       ],
