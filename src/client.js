@@ -362,7 +362,9 @@ const createPanelModule = (require) => {
               className: 'dshlink-qr-plate',
               children: jsx('img', {
                 className: 'dshlink-qr',
-                src: '/dsh-link/qr.png?via=lan&t=' + encodeURIComponent(info.pairingCode || ''),
+                // URL 不带配对码（避免进访问日志）；配对码轮换时靠 key 重挂载强制重新取图
+                key: info.pairingCode || '',
+                src: '/dsh-link/qr.png?via=lan',
                 alt: '局域网配对二维码',
               }),
             }),
@@ -544,7 +546,9 @@ const createPanelModule = (require) => {
                           className: 'dshlink-qr-plate',
                           children: jsx('img', {
                             className: 'dshlink-qr',
-                            src: '/dsh-link/qr.png?via=relay&t=' + encodeURIComponent(pairingCode),
+                            // 同局域网码：URL 不带配对码，轮换时靠 key 重挂载重新取图
+                            key: pairingCode || '',
+                            src: '/dsh-link/qr.png?via=relay',
                             alt: '云端配对二维码',
                           }),
                         }),

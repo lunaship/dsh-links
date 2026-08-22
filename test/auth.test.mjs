@@ -500,3 +500,35 @@ test("配对码跨 IP 总失败次数达到上限后作废", async () => {
   assert.equal(after.ok, false)
   assert.match(after.error, /失效|已使用|频繁/)
 })
+
+test("设备 token 落盘哈希为每安装 HMAC：跨安装不同、同安装稳定", async () => {
+  const { hmacDeviceToken } = await import("../src/auth.js")
+  const a = {}
+  const b = {}
+  const token = "a".repeat(48)
+  const hashA = hmacDeviceToken(a, token)
+  assert.match(hashA, /^[0-9a-f]{64}$/)
+  assert.equal(hashA, hmacDeviceToken(a, token))
+  assert.notEqual(hashA, hmacDeviceToken(b, token))
+  assert.ok(a.tokenKey && b.tokenKey && a.tokenKey !== b.tokenKey)
+})
+
+test("旧版裸 SHA-256 tokenHash 命中标记 legacy，迁移为 HMAC 后走新格式", async () => {
+  const { createHash } = await import("node:crypto")
+  const { findDeviceByToken, hmacDeviceToken } = await import("../src/auth.js")
+  const token = "legacy-token-0123456789abcdef"
+  const state = {
+    devices: [
+      { deviceId: "dev-1", tokenHash: createHash("sha256").update(token).digest("hex") },
+    ],
+  }
+  const hit = findDeviceByToken(state, token)
+  assert.equal(hit.device?.deviceId, "dev-1")
+  assert.equal(hit.legacy, true)
+  // 与 authorize 相同的迁移写回
+  hit.device.tokenHash = hmacDeviceToken(state, token)
+  const again = findDeviceByToken(state, token)
+  assert.equal(again.device?.deviceId, "dev-1")
+  assert.equal(again.legacy, false)
+  assert.equal(findDeviceByToken(state, "wrong-token").device, null)
+})

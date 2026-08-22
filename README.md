@@ -23,7 +23,7 @@ DSH Links 是 [DeepSeek Harness](https://github.com/deepseek-ai) 的 Android 配
 - 扫描电脑端二维码，或手动输入地址和一次性配对码添加 DSH。
 - 保存多个已配对设备，显示连接状态，并可随时移除本机记录。
 - 在原生工作台中浏览会话与历史、继续对话、查看工具/思考事件，并通过 SSE 接收实时更新。
-- 在手机上处理 DSH 的审批请求；丢失设备时，可从电脑端立即吊销该设备。
+- 在手机上处理 DSH 的审批请求；手机在线但超过 5 分钟未处理的审批会按「不可用」结束，该次工具调用失败，可重试。丢失设备时，可从电脑端立即吊销该设备。
 - 使用手机本地加密保存配对 Token 与 TLS 证书指纹；App 禁用云备份和明文 HTTP。完整说明见 [`PRIVACY.md`](PRIVACY.md)。
 
 Android App 当前最低支持 Android 8.0（API 26）。源码不在本仓库；请只安装 GitHub Release 随版本号和 SHA-256 发布的官方签名 APK。
@@ -111,7 +111,7 @@ dsh plugin --profile web add /path/to/dsh-links
 
 - [Tailscale / Cloudflare Tunnel / DSH Links Relay 说明](REMOTE_ACCESS.md)
 - 不要把 `18640` 直接做路由器端口转发。
-- **DSH Links Relay 正在内测。** 电脑和手机都主动连接 Relay；Relay 只实时转发已配对设备的请求与响应，不持久化会话内容、文件、工作区或设备内容。没有维护者发放的接入码无法接入；请不要在 issue、截图或 PR 里张贴接入码。
+- **DSH Links Relay 正在内测。** 电脑和手机都主动连接 Relay；Relay 只实时转发已配对设备的请求与响应，不持久化会话内容、文件、工作区或设备内容。没有维护者发放的接入码无法接入；请不要在 issue、截图或 PR 里张贴接入码。云端二维码本身内含 Relay 路由凭据（`routeSecret`），与接入码同等敏感：请勿截图、录屏或投屏分享；怀疑泄露时立即在电脑面板点「断开」作废该凭据（重新接入需要新的接入码）。
 
 ![电脑与手机经配对握手相连的示意。](docs/images/dsh-links-system-illustration.png)
 

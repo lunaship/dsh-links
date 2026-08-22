@@ -6,7 +6,6 @@
  *   2. 在 0.0.0.0:<port> 起一个带 token 校验的手机 API（只服务 App：health / pair / mobile/*）；
  *   3. 配对采用一次性 6 位配对码（默认 10 分钟有效），扫码即自动批准。
  */
-import { request as httpRequest } from "node:http"
 import { createServer as createHttpsServer } from "node:https"
 import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs"
 import { readFile as readFileAsync } from "node:fs/promises"
@@ -18,12 +17,13 @@ import z from "@deepseek-ai/schemastery"
 import QRCode from "qrcode"
 import { clampHistoryMaxMessages, projectHistoryPage } from "./history.js"
 import {
-  consumePairingCode, ensurePairingCode, hydratePairing, persistablePairing,
-  randomToken, revokeDevice, sha256, verifyPairingCode,
+  consumePairingCode, ensurePairingCode, findDeviceByToken, hmacDeviceToken, hydratePairing,
+  persistablePairing, randomToken, revokeDevice, verifyPairingCode,
 } from "./auth.js"
 import { loadOrCreateTls } from "./tls.js"
 import { loadEventsAfter, sseMessageFrame } from "./stream-cursor.js"
 import { flushSeedQueue, respondQuestion, startMuxQuestionBridge } from "./question-bridge.js"
+import { callLocalRpc } from "./local-rpc.js"
 import { deriveAddresses, generateHostKey, hostKeyFromSeed, unb64u } from "./relay/crypto.js"
 import { enroll as enrollRelay, RelayAgent } from "./relay/agent.js"
 
@@ -409,11 +409,17 @@ async function readJson(req, res, limit) {
   }
 }
 
-function authorize(req, state) {
+function authorize(req, state, stateFile) {
   const token = typeof req.headers[HEADER_NAME] === "string" ? req.headers[HEADER_NAME] : null
   if (!token) return null
-  const hash = sha256(token)
-  return (state.devices ?? []).find((d) => d.tokenHash === hash) ?? null
+  const { device, legacy } = findDeviceByToken(state, token)
+  if (!device) return null
+  if (legacy) {
+    // 旧版裸 SHA-256 哈希命中：用原始 token 重算 HMAC 落盘，下次走新格式
+    device.tokenHash = hmacDeviceToken(state, token)
+    saveState(stateFile, state)
+  }
+  return device
 }
 
 function touchDevice(state, device, file) {
@@ -463,7 +469,7 @@ async function handlePair(req, res, config, state, stateFile) {
   const token = randomToken(24)
   const deviceId = `dev-${randomToken(8)}`
   state.devices = state.devices ?? []
-  state.devices.push({ deviceId, name: deviceName, tokenHash: sha256(token), createdAt: now(), lastSeenAt: now(), via })
+  state.devices.push({ deviceId, name: deviceName, tokenHash: hmacDeviceToken(state, token), createdAt: now(), lastSeenAt: now(), via })
   consumePairingCode(state) // 配对码一次性：成功后立即失效
   saveState(stateFile, state)
   json(res, 200, { ok: true, token, deviceId, name: deviceName, urls: lanUrls(config).urls })
@@ -619,58 +625,9 @@ async function selectSessionModel(targetPort, sessionId, provider, model, reason
 }
 
 /**
- * 向本机 dsh /api 发 RPC。刻意把 Host/Origin 写成回环：dsh 的 PRIVILEGED_METHODS
- * 只认 isTrustedApiRequest(req, [])，插件代调的方法名是写死的闭集（session.* /
- * workspace.* / settings.describe|update / agentPreset.list / llm.models|balance），
- * 不是 18640 上的开放转发。依赖 dsh 内部 API，升级时需复查。
+ * 向本机 dsh /api 发 RPC 统一走 ./local-rpc.js 的 callLocalRpc：
+ * 方法闭集在该模块的 RPC_METHOD_ALLOWLIST 锁定并有单测覆盖。
  */
-const MAX_RPC_RESPONSE_BYTES = 8 * 1024 * 1024
-
-function callLocalRpc(targetPort, method, payload) {
-  return new Promise((resolve, reject) => {
-    const rpcId = "mobile-" + randomBytes(12).toString("hex")
-    const body = Buffer.from(JSON.stringify({ type: "client-request", rpcId, method, payload }))
-    const request = httpRequest(
-      {
-        host: "127.0.0.1",
-        port: targetPort,
-        method: "POST",
-        path: "/api/" + method,
-        headers: {
-          host: "127.0.0.1:" + targetPort,
-          origin: "http://127.0.0.1:" + targetPort,
-          "content-type": "application/json",
-          "content-length": String(body.length),
-        },
-      },
-      (response) => {
-        const chunks = []
-        let received = 0
-        response.on("data", (chunk) => {
-          received += chunk.length
-          if (received > MAX_RPC_RESPONSE_BYTES) {
-            request.destroy(new Error("RPC " + method + " response too large"))
-            return
-          }
-          chunks.push(chunk)
-        })
-        response.on("end", () => {
-          try {
-            const frame = JSON.parse(Buffer.concat(chunks).toString("utf8"))
-            if (frame?.result?.ok) return resolve(frame.result.value)
-            const error = frame?.result?.error
-            reject(new Error(error?.message || ("RPC " + method + " failed")))
-          } catch (error) {
-            reject(error)
-          }
-        })
-      },
-    )
-    request.setTimeout(25_000, () => request.destroy(new Error("RPC " + method + " timed out")))
-    request.on("error", reject)
-    request.end(body)
-  })
-}
 
 // ---------- SSE 实时推送（/dsh-link/mobile/sessions/:id/stream） ----------
 // 数据流：DSH 产生事件 → 写入 JSONL → 插件轮询 session.history RPC（增量 seq）→
@@ -1582,7 +1539,7 @@ export function apply(ctx, config) {
       if (PANEL_ONLY_PATHS.has(pathname)) {
         return json(res, 404, { error: "not found" })
       }
-      const device = authorize(req, state)
+      const device = authorize(req, state, stateFile)
       if (config.debug) {
         ctx.logger.info(`dsh-links: ${req.method} ${pathname} → ${device ? `device:${device.deviceId}` : "denied"}`)
       }

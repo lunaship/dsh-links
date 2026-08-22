@@ -4,7 +4,7 @@
  */
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { handleMuxBlock, flushSeedQueue } from "../src/question-bridge.js"
+import { handleMuxBlock, flushSeedQueue, SEED_QUEUE_MAX } from "../src/question-bridge.js"
 
 function muxBlock(payload, rpcId = "rpc-1") {
   return `data: ${JSON.stringify({ rpcId, payload })}`
@@ -112,6 +112,19 @@ test("无订阅者 / 非本会话 / 坏帧一律忽略", () => {
   handleMuxBlock(muxBlock({ type: "session/jobs", sessionId: "s1", jobs: [] }), rt, null, push)
   assert.equal(a.written.length, 0)
   assert.deepEqual(polled, [])
+})
+
+test("补历史队列有容量上限，超限丢新事件并保留强制轮询兜底", () => {
+  const a = fakeConn(0, { seeded: false })
+  const rt = runtimeWith("s1", [a.conn])
+  for (let seq = 1; seq <= SEED_QUEUE_MAX + 50; seq++) {
+    handleMuxBlock(sessionEventBlock("s1", seq), rt, null, () => {})
+  }
+  assert.equal(a.conn.seedQueue.length, SEED_QUEUE_MAX)
+  assert.equal(a.conn.seedQueue[0].seq, 1)
+  assert.equal(a.conn.seedQueue[SEED_QUEUE_MAX - 1].seq, SEED_QUEUE_MAX)
+  assert.equal(a.conn.missedWhileSeeding, true)
+  assert.equal(a.written.length, 0)
 })
 
 test("补历史结束后把排队事件按序补发", () => {

@@ -27,6 +27,7 @@ If you use an intranet-tunnelling product yourself, treat it as an **experimenta
 - Treat Cloudflare Tunnel, Tailscale, frp, or invite-only Relay testing as a supported public Beta feature.
 - Commit `local.properties`, keystores, `state.json`, invite codes, Relay host credentials, or any `*.token` / `*.pem` files.
 - Paste invite codes into README, issues, screenshots, or pull requests.
+- Screenshot or share the **cloud pairing QR**: it embeds the Relay route credential (`routeSecret`) and is as sensitive as an invite code. If it leaks, disconnect Relay on the「手机连接」panel to invalidate the credential.
 - Rely on Host/Origin rewriting as authentication — auth is the device token.
 
 ## Source and APK trust

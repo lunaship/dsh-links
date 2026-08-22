@@ -44,6 +44,36 @@ export function randomToken(bytes = 24) {
   return crypto.randomBytes(bytes).toString("hex")
 }
 
+/**
+ * 设备 token 落盘哈希：HMAC-SHA256，密钥每安装随机一次（state.tokenKey）。
+ * token 本身是 192 位随机数，爆破不可行；加 per-install 密钥是稳健性加固
+ * （同 token 在不同安装下哈希不同），不是为了抵御算力。
+ */
+export function ensureTokenKey(state) {
+  if (typeof state.tokenKey !== "string" || !state.tokenKey) {
+    state.tokenKey = crypto.randomBytes(32).toString("base64url")
+  }
+  return state.tokenKey
+}
+
+export function hmacDeviceToken(state, token) {
+  const key = Buffer.from(ensureTokenKey(state), "base64url")
+  return crypto.createHmac("sha256", key).update(String(token)).digest("hex")
+}
+
+/**
+ * 按 token 找已配对设备。先按现行 HMAC 匹配；旧安装的裸 SHA-256 哈希命中时
+ * 返回 legacy=true，调用方用原始 token 重算 HMAC 落盘完成迁移，手机无需重新配对。
+ */
+export function findDeviceByToken(state, token) {
+  const devices = state.devices ?? []
+  const byHmac = devices.find((d) => d.tokenHash === hmacDeviceToken(state, token))
+  if (byHmac) return { device: byHmac, legacy: false }
+  const byLegacy = devices.find((d) => d.tokenHash === sha256Hex(token))
+  if (byLegacy) return { device: byLegacy, legacy: true }
+  return { device: null, legacy: false }
+}
+
 /** 内存认证存储（吊销时关闭流等由调用方处理；票据/Web session 已移除）。 */
 export function newAuthStore() {
   return {}

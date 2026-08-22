@@ -35,6 +35,13 @@ function writeSse(writers, frame) {
   }
 }
 
+/**
+ * 补历史期间 mux 事件排队的容量上限。正常补历史是短窗口（10 页 × 50 条封顶），
+ * 队列打到上限说明补历史异常拖长；此时丢新事件、保留 missedWhileSeeding，
+ * 由补历史结束后的强制轮询兜底补洞，不让内存无限涨。
+ */
+export const SEED_QUEUE_MAX = 2000
+
 function parseSseBlocks(buf, onBlock) {
   let rest = buf
   let idx
@@ -62,7 +69,7 @@ function handleSessionEvent(payload, rt, requestPoll) {
     if (!conn.seeded) {
       conn.missedWhileSeeding = true
       if (!Array.isArray(conn.seedQueue)) conn.seedQueue = []
-      conn.seedQueue.push(event)
+      if (conn.seedQueue.length < SEED_QUEUE_MAX) conn.seedQueue.push(event)
       continue
     }
     if (event.seq <= conn.lastSeq) continue
