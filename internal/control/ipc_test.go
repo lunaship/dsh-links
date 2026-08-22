@@ -1,0 +1,209 @@
+package control
+
+import (
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/base64"
+	"net"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/dsh-links/dsh-links-relay/internal/cryptoutil"
+)
+
+func TestIPCClientKeepsIdleConnectionAndReceivesResponsesAndPushes(t *testing.T) {
+	ctrl, st := newTestControl(t)
+	defer st.Close()
+	tempDir, err := os.MkdirTemp("", "dlr-ipc-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tempDir)
+	socket := filepath.Join(tempDir, "control.sock")
+	server := NewIPCServer(ctrl, socket, "0123456789abcdef0123456789abcdef")
+	if err := server.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+
+	client := NewIPCClient(socket, "0123456789abcdef0123456789abcdef")
+	push := make(chan string, 1)
+	client.SetRevokeFn(func(routeID, _ string) { push <- routeID })
+	if err := client.Connect(); err != nil {
+		t.Fatal(err)
+	}
+	client.StartReconnect()
+	defer client.Close()
+
+	// The previous implementation destroyed every healthy idle connection after
+	// its 500 ms read deadline. Keep this connection idle beyond that boundary.
+	time.Sleep(750 * time.Millisecond)
+	if got := server.BroadcastRevoke("route-push", "host-push"); got != 1 {
+		t.Fatalf("broadcast reached %d clients, want 1", got)
+	}
+	select {
+	case got := <-push:
+		if got != "route-push" {
+			t.Fatalf("push route=%q", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("revoke push not received")
+	}
+
+	invite, err := ctrl.CreateInvite(time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonce, _ := cryptoutil.RandomBytes(16)
+	challenge, _ := cryptoutil.RandomBytes(32)
+	ts := time.Now().Unix()
+	proof := ed25519.Sign(priv, cryptoutil.BuildEnrollTranscript(invite, "ipc-host", pub, ts, nonce, challenge))
+	resp, err := client.Enroll(EnrollIPCRequest{
+		InviteCode:    invite,
+		HostId:        "ipc-host",
+		HostPublicKey: base64.RawURLEncoding.EncodeToString(pub),
+		Ts:            ts,
+		Nonce:         base64.RawURLEncoding.EncodeToString(nonce),
+		Proof:         base64.RawURLEncoding.EncodeToString(proof),
+		Challenge:     base64.RawURLEncoding.EncodeToString(challenge),
+	})
+	if err != nil {
+		t.Fatalf("enroll over IPC: %v", err)
+	}
+	if resp.RouteId == "" || resp.RouteSecret == "" || resp.Capability == "" {
+		t.Fatalf("incomplete enroll response: %+v", resp)
+	}
+}
+
+func TestIPCServerRejectsOversizedPostAuthFrame(t *testing.T) {
+	ctrl, st := newTestControl(t)
+	defer st.Close()
+	tempDir, err := os.MkdirTemp("", "dlr-ipc-frame-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tempDir)
+	socket := filepath.Join(tempDir, "control.sock")
+	server := NewIPCServer(ctrl, socket, "")
+	if err := server.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+
+	conn, err := net.Dial("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := conn.Write([]byte(strings.Repeat("x", maxIPCFrameBytes+1) + "\n")); err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	buf := make([]byte, 1)
+	if _, err := conn.Read(buf); err == nil {
+		t.Fatal("oversized IPC frame did not close the connection")
+	}
+}
+
+func TestIPCServerCapsConcurrentClients(t *testing.T) {
+	ctrl, st := newTestControl(t)
+	defer st.Close()
+	tempDir, err := os.MkdirTemp("", "dlr-ipc-cap-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tempDir)
+	socket := filepath.Join(tempDir, "control.sock")
+	server := NewIPCServer(ctrl, socket, "")
+	if err := server.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+
+	connections := make([]net.Conn, 0, maxIPCConnections)
+	defer func() {
+		for _, conn := range connections {
+			_ = conn.Close()
+		}
+	}()
+	for i := 0; i < maxIPCConnections; i++ {
+		conn, err := net.Dial("unix", socket)
+		if err != nil {
+			t.Fatal(err)
+		}
+		connections = append(connections, conn)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		server.mu.Lock()
+		count := len(server.connections)
+		server.mu.Unlock()
+		if count == maxIPCConnections {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("server tracked %d connections, want %d", count, maxIPCConnections)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	extra, err := net.Dial("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer extra.Close()
+	_ = extra.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := extra.Write([]byte("x")); err != nil {
+		return // immediate rejection is also acceptable
+	}
+	buf := make([]byte, 1)
+	if _, err := extra.Read(buf); err == nil {
+		t.Fatal("connection above IPC client cap remained open")
+	}
+}
+
+func TestIPCClientReconnectsAfterServerRestart(t *testing.T) {
+	ctrl, st := newTestControl(t)
+	defer st.Close()
+	tempDir, err := os.MkdirTemp("", "dlr-ipc-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tempDir)
+	socket := filepath.Join(tempDir, "control.sock")
+	token := "0123456789abcdef0123456789abcdef"
+	server := NewIPCServer(ctrl, socket, token)
+	if err := server.Start(); err != nil {
+		t.Fatal(err)
+	}
+	client := NewIPCClient(socket, token)
+	if err := client.Connect(); err != nil {
+		t.Fatal(err)
+	}
+	client.StartReconnect()
+	defer client.Close()
+	if err := server.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	restarted := NewIPCServer(ctrl, socket, token)
+	if err := restarted.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.Close()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if restarted.BroadcastRevoke("after-restart", "host") == 1 {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("client did not reconnect after server restart")
+}

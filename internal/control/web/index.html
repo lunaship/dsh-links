@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light">
+  <title>DSH Links Relay — Control</title>
+  <link rel="stylesheet" href="app.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#mainContent">跳到主要内容</a>
+  <div id="appStatus" class="sr-only" aria-live="polite"></div>
+
+  <section id="loginPanel" class="auth-shell hidden" aria-labelledby="loginTitle">
+    <aside class="auth-brand">
+      <div class="brand-lockup" aria-label="DSH Links Relay">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-name">DSH Links<span class="brand-subtitle">Relay control</span></span>
+      </div>
+      <p class="auth-statement">一条可控的远程连接路径。</p>
+      <div class="auth-meta">
+        <span>DLR/1</span>
+        <span>Control · loopback</span>
+      </div>
+    </aside>
+
+    <main class="auth-main">
+      <form id="loginForm" class="auth-form">
+        <div class="auth-heading">
+          <h1 id="loginTitle">登录控制台</h1>
+          <p>管理邀请码、Host 路由与吊销状态。</p>
+        </div>
+        <div class="field-group">
+          <label for="inpUser">管理账号</label>
+          <input class="field" id="inpUser" name="username" autocomplete="username" placeholder="admin" required>
+        </div>
+        <div class="field-group">
+          <label for="inpPass">管理密码</label>
+          <input class="field" id="inpPass" name="password" type="password" autocomplete="current-password" placeholder="config.toml 中的 admin_password" required>
+        </div>
+        <button class="button button--primary" id="btnLogin" type="submit">登录</button>
+        <p id="loginErr" class="form-error" role="alert"></p>
+        <p class="form-help">默认账号为 <code>admin</code>。控制台应仅通过本机或 SSH 隧道访问。</p>
+      </form>
+    </main>
+  </section>
+
+  <div id="mainPanel" class="app-shell hidden">
+    <aside class="rail">
+      <div class="rail-header">
+        <a class="brand-lockup" href="#overviewSection" aria-label="返回概览">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span class="brand-name">DSH Links<span class="brand-subtitle">Relay control</span></span>
+        </a>
+        <details class="rail-menu">
+          <summary>导航</summary>
+          <div class="rail-menu-panel">
+            <nav class="rail-nav" aria-label="移动端导航">
+              <a class="rail-link" href="#overviewSection">概览</a>
+              <a class="rail-link" href="#hostsSection">Host 路由</a>
+              <a class="rail-link" href="#invitesSection">邀请记录</a>
+            </nav>
+          </div>
+        </details>
+      </div>
+
+      <nav class="rail-nav" aria-label="控制台导航">
+        <a class="rail-link" href="#overviewSection" aria-current="page"><span>概览</span><span class="rail-link-indicator" aria-hidden="true"></span></a>
+        <a class="rail-link" href="#hostsSection"><span>Host 路由</span><span class="rail-link-indicator" aria-hidden="true"></span></a>
+        <a class="rail-link" href="#invitesSection"><span>邀请记录</span><span class="rail-link-indicator" aria-hidden="true"></span></a>
+      </nav>
+
+      <section class="rail-context" aria-labelledby="railContextTitle">
+        <h2 id="railContextTitle">控制面边界</h2>
+        <p>Secret 不在此界面显示。只展示 route 短哈希与必要的运行状态。</p>
+      </section>
+      <div class="rail-footer"><span>DLR/1</span><span>127.0.0.1</span></div>
+    </aside>
+
+    <main class="workspace" id="mainContent">
+      <div class="workspace-inner">
+        <header class="topbar" id="overviewSection">
+          <div>
+            <p class="page-context">DSH Links Relay / Control</p>
+            <h1>Relay control</h1>
+            <p class="topbar-copy">查看控制面是否响应，创建一次性邀请，并管理已登记的 Host 路由。</p>
+          </div>
+          <div class="topbar-actions">
+            <div class="connection-pill" id="connectionState" data-state="online" role="status">
+              <span class="connection-dot" aria-hidden="true"></span>
+              <span id="connectionLabel">控制面已响应</span>
+            </div>
+            <button class="button button--quiet" id="btnLogout" type="button">退出</button>
+          </div>
+        </header>
+
+        <section class="stat-strip" aria-label="Relay 概览">
+          <article class="stat-item">
+            <span class="stat-label">Host 总数</span>
+            <strong class="stat-value tnum" id="statHosts">—</strong>
+            <span class="stat-note">包含已吊销记录</span>
+          </article>
+          <article class="stat-item">
+            <span class="stat-label">邀请总数</span>
+            <strong class="stat-value tnum" id="statInvites">—</strong>
+            <span class="stat-note">包含消费、过期与吊销记录</span>
+          </article>
+          <article class="stat-item">
+            <span class="stat-label">控制面</span>
+            <strong class="stat-value" id="statControl">正常</strong>
+            <span class="stat-note" id="statUpdated">等待首次刷新</span>
+          </article>
+        </section>
+
+        <section class="operation-grid" aria-label="常用操作">
+          <article class="panel invite-panel" id="inviteCreateSection">
+            <header class="panel-header">
+              <div class="panel-heading">
+                <h2>创建邀请码</h2>
+                <p>30 分钟有效 · 一次性 · 仅显示一次</p>
+              </div>
+            </header>
+            <div class="invite-body">
+              <p class="invite-action-copy">生成后立即复制给插件。邀请码不会再次从控制面返回。</p>
+              <div><button class="button button--primary" id="btnInvite" type="button">创建邀请码</button></div>
+              <p class="inline-message" id="inviteMessage" role="alert"></p>
+              <div class="invite-result" id="inviteResult" hidden>
+                <span class="stat-label">新邀请码</span>
+                <div class="invite-code-row">
+                  <code class="invite-code" id="inviteCode"></code>
+                  <button class="button" id="btnCopyInvite" type="button">复制</button>
+                </div>
+                <span class="stat-note">该值仅在本次创建后显示。</span>
+              </div>
+            </div>
+          </article>
+
+          <aside class="security-note" aria-labelledby="securityTitle">
+            <div>
+              <h2 id="securityTitle">秘密留在控制面之外。</h2>
+              <p>routeSecret、Capability 与 Token 不显示；日志应保持脱敏；界面仅展示 route 短哈希。</p>
+            </div>
+            <code>Control → Relay / DLR/1</code>
+          </aside>
+        </section>
+
+        <section class="panel" id="hostsSection" aria-labelledby="hostsTitle">
+          <header class="panel-header">
+            <div class="panel-heading">
+              <h2 id="hostsTitle">Host 路由</h2>
+              <p>已登记 Host、generation、stream 上限与最近心跳。</p>
+            </div>
+          </header>
+          <div class="table-wrap" id="hosts"></div>
+          <p class="panel-message" id="hostsMessage" role="alert" hidden></p>
+        </section>
+
+        <section class="panel" id="invitesSection" aria-labelledby="invitesTitle">
+          <header class="panel-header">
+            <div class="panel-heading">
+              <h2 id="invitesTitle">邀请记录</h2>
+              <p>检查有效、已消费、已过期和已吊销的邀请码。</p>
+            </div>
+          </header>
+          <div class="table-wrap" id="invites"></div>
+          <p class="panel-message" id="invitesMessage" role="alert" hidden></p>
+        </section>
+
+        <footer class="workspace-footer">
+          <span>DSH Links Relay · Control</span>
+          <code>DLR/1 · loopback only</code>
+        </footer>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

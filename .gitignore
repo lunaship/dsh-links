@@ -1,0 +1,27 @@
+# Build
+/dsh-links-relay
+*.exe
+*.test
+*.out
+
+# Local runtime and secrets
+.env
+.env.*
+*.pem
+*.key
+*.crt
+*.token
+*.auth
+*.db
+*.db-wal
+*.db-shm
+config.toml
+!deploy/config.toml.example
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Local design-tool output
+.hallmark/

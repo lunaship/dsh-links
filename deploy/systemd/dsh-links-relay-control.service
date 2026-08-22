@@ -1,0 +1,25 @@
+[Unit]
+Description=DSH Links Relay Control Plane
+After=network.target
+
+[Service]
+Type=simple
+User=dsh-relay
+Group=dsh-relay
+ExecStart=/usr/local/bin/dsh-links-relay control --config /etc/dsh-links-relay/config.toml
+Restart=on-failure
+RestartSec=3s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateDevices=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+UMask=0077
+LimitNOFILE=65535
+LimitCORE=0
+ReadWritePaths=/var/lib/dsh-links-relay /run/dsh-links-relay
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

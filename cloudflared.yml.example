@@ -1,26 +1,22 @@
-# Cloudflare Tunnel 配置模板（复制到 ~/.cloudflared/config.yml）
-# 用前：
-#   1. cloudflared tunnel create dsh 拿到隧道 ID，替换 <TUNNEL_ID>
-#   2. cloudflared tunnel route dns dsh <你的域名>
-#   3. 在 Zero Trust → Access 给该 hostname 建 Application，把团队名和 AUD
-#      填进下面 originRequest.access。缺这两项时 cloudflared 会拒绝转发。
+# Cloudflare Tunnel 实验性个人部署模板。
 #
-# 本模板是 fail-closed：没有有效的 Cloudflare Access JWT，流量到不了 18640。
+# 用前：
+#   1. cloudflared tunnel create dsh-links，替换 <TUNNEL_ID>。
+#   2. cloudflared tunnel route dns dsh-links <你的域名>。
+#   3. 替换 credentials-file 与 hostname。
+#
+# 当前 Android App 不会登录 Cloudflare Access，也不会发送 Access JWT。
+# 因此不要在这里设置 originRequest.access.required；设置后 App 会被拒绝。
+# 这不等于本服务适合公开发布：请只用于你自己理解并管理的实验性接入。
 
 tunnel: <TUNNEL_ID>
 credentials-file: /Users/<你的用户名>/.cloudflared/<TUNNEL_ID>.json
 
 ingress:
-  # dsh-links 手机接入代理（含 /dsh-link/* 手机 API + SSE 实时流）
+  # 只发布 dsh-links 手机接入代理（含 /dsh-link/* 手机 API + SSE 实时流）。
+  # 绝不能把 DSH Web 管理台（默认 :3080）一并发布。
   - hostname: dsh.example.com
     service: https://127.0.0.1:18640
     originRequest:
       noTLSVerify: true
-      # 必填：校验 Cloudflare Access JWT。占位符未替换时请求会被拒绝。
-      access:
-        required: true
-        teamName: <CF_ACCESS_TEAM>
-        audTag:
-          - <CF_ACCESS_AUD>
-  # 不要把 dsh web 管理界面（默认 :3080）一并暴露到公网。
   - service: http_status:404
