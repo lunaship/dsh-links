@@ -7,6 +7,18 @@
 - 开放 8443 (App), 8444 (Agent), 22 (SSH, 仅管理员), 8080 仅回环
 
 ### 1.2 初始化密钥
+
+优先用二进制生成一份可启动目录（本机或 VPS 试验均可）：
+
+```bash
+dsh-links-relay init --dir /opt/dsh-links-relay-test
+# 记下打印出的 admin 密码。管理口仍是 127.0.0.1:8080。
+```
+
+需要绑定全部网卡时再加 `--listen-all`，并按需 `--host <公网IP或域名>` 写入自签证书 SAN。正式证书仍建议 Let's Encrypt，替换 `relay.crt` / `relay.key`。
+
+手工生成也可以：
+
 ```bash
 # 生成 routeMasterKey (32B)
 head -c 32 /dev/urandom | base64 -w0 > /etc/dsh-links-relay/route-master.key
@@ -70,7 +82,7 @@ curl -H "Authorization: Bearer $(cat /etc/dsh-links-relay/admin.token)" -X POST 
 ### 4.1 指标
 - 通过 Control `/v1/overview` 查看在线 Host、邀请数
 - Relay 日志: `journalctl -u dsh-links-relay-relay -f` (已脱敏)
-- 容量目标: 3000 空闲 Agent, 100 活跃 stream (5KB/s 平均), CPU<70%, RSS<1.5GB, FD<70%, p95 <800ms
+- 容量数字以实测为准；在出现测量数据前不要承诺并发 Agent 数量
 
 ### 4.2 告警
 - FD 使用率 >70%

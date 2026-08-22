@@ -44,6 +44,8 @@ func main() {
 		}
 	}
 	switch cmd {
+	case "init":
+		runInit(os.Args[2:])
 	case "control":
 		runControl(configPath)
 	case "relay":
@@ -61,11 +63,13 @@ func usage() {
 	fmt.Print(`dsh-links-relay - DSH Links Relay
 
 Usage:
-  dsh-links-relay control --config /etc/dsh-links-relay/config.toml
-  dsh-links-relay relay   --config /etc/dsh-links-relay/config.toml
+  dsh-links-relay init    --dir .local
+  dsh-links-relay control --config .local/config.toml
+  dsh-links-relay relay   --config .local/config.toml
   dsh-links-relay help
 
 Commands:
+  init     create keys, a localhost TLS certificate, and config.toml
   control  run control plane (SQLite, invites, admin API, Unix socket)
   relay    run data plane (8443/8444 TLS, registry, bridge)
 `)
@@ -84,6 +88,9 @@ func runControl(configPath string) {
 	routeMaster, err := cfg.LoadRouteMasterKey()
 	if err != nil {
 		log.Fatalf("load route master: %v", err)
+	}
+	if err := requireAdminPassword(cfg.AdminPassword); err != nil {
+		log.Fatalf("%v", err)
 	}
 	adminToken, err := cfg.LoadAdminToken()
 	if err != nil {
@@ -188,38 +195,33 @@ func runRelay(configPath string) {
 	// Open store read-only for host lookup (shared DB with control).
 	relayStore, err := store.OpenReadOnly(cfg.Database)
 	if err != nil {
-		log.Printf("warning: relay store open failed: %v", err)
-		relayStore = nil
+		log.Fatalf("open relay store: %v (start control first so the database exists)", err)
 	}
-	if relayStore != nil {
-		defer relayStore.Close()
-	}
+	defer relayStore.Close()
 
 	reg := registry.New(cfg.MaxTotalStreams)
 	m := metrics.New()
 	revokePollStop := make(chan struct{})
 	var revokePollWG sync.WaitGroup
-	if relayStore != nil {
-		revokePollWG.Add(1)
-		go func() {
-			defer revokePollWG.Done()
-			ticker := time.NewTicker(time.Second)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ticker.C:
-					for _, sess := range reg.List() {
-						host, err := relayStore.GetHostByRoute(sess.RouteIdRaw)
-						if err != nil || host.RevokedAt != nil || uint64(host.Generation) != sess.Generation {
-							reg.Revoke(sess.RouteIdStr)
-						}
+	revokePollWG.Add(1)
+	go func() {
+		defer revokePollWG.Done()
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				for _, sess := range reg.List() {
+					host, err := relayStore.GetHostByRoute(sess.RouteIdRaw)
+					if err != nil || host.RevokedAt != nil || uint64(host.Generation) != sess.Generation {
+						reg.Revoke(sess.RouteIdStr)
 					}
-				case <-revokePollStop:
-					return
 				}
+			case <-revokePollStop:
+				return
 			}
-		}()
-	}
+		}
+	}()
 
 	// Set revoke push callback after reg is created.
 	ipcClient.SetRevokeFn(func(routeId, hostId string) {

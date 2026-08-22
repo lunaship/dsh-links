@@ -22,7 +22,9 @@ route_master_key = "/etc/dsh-links-relay/route-master.key"
 # Admin token: random 32+ bytes, base64 or plain, 0600
 admin_token_file = "/etc/dsh-links-relay/admin.token"
 admin_user = "admin"
-admin_password = ""
+# Required. Control refuses to start if this is empty or shorter than 12 characters.
+# Prefer `dsh-links-relay init` which writes a random password into a local config.
+admin_password = "change-me-now"
 
 # SQLite database (only control writes)
 database = "/var/lib/dsh-links-relay/control.db"

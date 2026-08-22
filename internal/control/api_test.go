@@ -110,14 +110,15 @@ func TestAdminRequestBodyIsBounded(t *testing.T) {
 	}
 }
 
-func TestBearerLoginCanIssueSessionWithoutPassword(t *testing.T) {
+func TestLoginRejectsEmptyPassword(t *testing.T) {
 	token := "legacy-token-0123456789"
 	server := NewServer(nil, token, "admin", "")
-	req := httptest.NewRequest(http.MethodPost, "/login", nil)
+	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(`{"user":"admin","password":""}`))
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
 	recorder := httptest.NewRecorder()
 	server.Handler().ServeHTTP(recorder, req)
-	if recorder.Code != http.StatusOK || len(recorder.Result().Cookies()) != 1 {
-		t.Fatalf("bearer login status=%d cookies=%d", recorder.Code, len(recorder.Result().Cookies()))
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("empty password login status=%d, want 401", recorder.Code)
 	}
 }

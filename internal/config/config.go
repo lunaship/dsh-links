@@ -57,7 +57,7 @@ func DefaultConfig() *Config {
 		RouteMasterKey:            "/etc/dsh-links-relay/route-master.key",
 		AdminTokenFile:            "/etc/dsh-links-relay/admin.token",
 		AdminUser:                 "admin",
-		AdminPassword:             "", // empty = require admin_token_file; set to bypass
+		AdminPassword:             "", // required at control start; empty must fail
 		Database:                  "/var/lib/dsh-links-relay/control.db",
 		IPCAuthTokenFile:          "/etc/dsh-links-relay/ipc.auth",
 		MaxTotalStreams:           1000,
@@ -71,15 +71,18 @@ func DefaultConfig() *Config {
 }
 
 func Load(path string) (*Config, error) {
-	cfg := DefaultConfig()
-	if path != "" {
-		if _, err := os.Stat(path); err == nil {
-			if _, err := toml.DecodeFile(path, cfg); err != nil {
-				return nil, fmt.Errorf("decode config: %w", err)
-			}
-		} else if !os.IsNotExist(err) {
-			return nil, err
+	if strings.TrimSpace(path) == "" {
+		return nil, fmt.Errorf("config path is required")
+	}
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("config file not found: %s", path)
 		}
+		return nil, err
+	}
+	cfg := DefaultConfig()
+	if _, err := toml.DecodeFile(path, cfg); err != nil {
+		return nil, fmt.Errorf("decode config: %w", err)
 	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err

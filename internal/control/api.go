@@ -110,21 +110,6 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 		return
 	}
-	if s.adminPassword == "" {
-		// No password configured — fall back to token check in header
-		auth := r.Header.Get("Authorization")
-		if token, ok := strings.CutPrefix(auth, "Bearer "); ok && secretEqual(token, s.adminToken) {
-			if err := s.issueSession(w, time.Now()); err != nil {
-				http.Error(w, `{"error":"session unavailable"}`, http.StatusInternalServerError)
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
-			return
-		}
-		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
-		return
-	}
 	type req struct {
 		User     string `json:"user"`
 		Password string `json:"password"`
@@ -134,7 +119,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"bad request"}`, http.StatusBadRequest)
 		return
 	}
-	if form.User != s.adminUser || !secretEqual(form.Password, s.adminPassword) {
+	if s.adminPassword == "" || form.User != s.adminUser || !secretEqual(form.Password, s.adminPassword) {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}

@@ -22,23 +22,21 @@ App (8443 TLS) → Relay 数据面 ← Agent (8444 TLS) → 127.0.0.1:18640 (插
 
 详见 `docs/DLR1.md` 与 `docs/THREAT_MODEL.md`。
 
-## 快速开始 (开发)
+## 快速开始（本机自托管）
+
+当前形态是单机主自托管：一个人部署一台 Relay，用控制台生成邀请码，把自家电脑接进去。管理口只绑回环。
 
 ```bash
-go test ./... -count=1  # 需 CGO_ENABLED=0 (pure Go SQLite)
+CGO_ENABLED=0 go test ./... -count=1
 
-# 生成密钥 (示例)
-head -c 32 /dev/urandom | base64 -w0 > /tmp/route-master.key
-head -c 32 /dev/urandom | base64 -w0 > /tmp/issuer.key
-head -c 32 /dev/urandom | base64 -w0 > /tmp/admin.token
-
-# 配置 (见 deploy/config.toml.example)
-# 启动 (开发, 明文测试)
-go run ./cmd/dsh-links-relay control --config /tmp/config.toml &
-go run ./cmd/dsh-links-relay relay   --config /tmp/config.toml &
+go run ./cmd/dsh-links-relay init --dir .local
+go run ./cmd/dsh-links-relay control --config .local/config.toml
+go run ./cmd/dsh-links-relay relay   --config .local/config.toml
 ```
 
-生产部署见 `docs/RUNBOOK.md` 与 `deploy/systemd/`.
+`init` 会打印一次性管理密码。浏览器打开 `http://127.0.0.1:8080/`，用 `admin` 和该密码登录。先起 control，再起 relay。
+
+VPS 部署见 `docs/RUNBOOK.md` 与 `deploy/systemd/`。容量数字尚未实测，不要把旧目标当成保证。
 
 ## 协议
 
@@ -49,7 +47,7 @@ go run ./cmd/dsh-links-relay relay   --config /tmp/config.toml &
 
 ## 管控
 
-- 仅 `127.0.0.1:8080`，需 `Authorization: Bearer <admin-token>`，建议 `ssh -L 8080:127.0.0.1:8080 relay`
+- 仅 `127.0.0.1:8080`，浏览器用 `admin` + `admin_password` 登录；API 也可 `Authorization: Bearer <admin-token>`。建议 `ssh -L 8080:127.0.0.1:8080 relay`
 - UI: `http://127.0.0.1:8080/` (邀请、Host、概览，Secret 不显示)
 - API: `POST /v1/invites`, `GET /v1/hosts`, `POST /v1/hosts/:id/revoke`, `GET /v1/overview`
 
@@ -71,7 +69,7 @@ CGO_ENABLED=0 go test ./internal/ingress -run TestSequential -v
 
 - `deploy/config.toml.example` — 配置模板
 - `deploy/systemd/` — `dsh-links-relay-control.service`, `dsh-links-relay-relay.service`
-- 2C2G 目标: 3000 空闲 Agent, 100 活跃 stream, p95 <800ms
+- 先用 `dsh-links-relay init` 生成密钥与配置；容量需实测后才能写进承诺
 
 ## 兼容
 

@@ -25,3 +25,6 @@ config.toml
 
 # Local design-tool output
 .hallmark/
+
+# Dev / self-host working directory from `dsh-links-relay init`
+.local/
