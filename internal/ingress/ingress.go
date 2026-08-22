@@ -127,8 +127,10 @@ func New(clientListen, agentListen string, tlsConfig *tls.Config, reg *registry.
 		agentDeadAfter:    deadAfter,
 		maxTotalStreams:   maxTotal,
 		maxConns:          maxConns,
-		ipLimiter:         registry.NewRateLimiter(20, 10),
-		routeLimiter:      registry.NewRateLimiter(16, 8),
+		// App 每个 HTTP 请求都会新建一条 CONNECT（进工作台约 8 条 + SSE）。
+		// 单用户自托管按「一部手机」来留余量，仍在 MAC 校验之后按路由计。
+		ipLimiter:         registry.NewRateLimiter(96, 60),
+		routeLimiter:      registry.NewRateLimiter(96, 60),
 		enrollLimiter:     registry.NewRateLimiter(6, 2),
 		admissionLimiter:  registry.NewRateLimiter(120, 120),
 		connsByIP:         make(map[string]int),
