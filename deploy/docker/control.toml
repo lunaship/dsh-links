@@ -1,0 +1,15 @@
+# Control-only container configuration. The host publishes 8080 exclusively on
+# 127.0.0.1; Relay is attached to a different Docker network.
+admin_listen = "0.0.0.0:8080"
+admin_allow_non_loopback = true
+control_socket = "/run/dsh-links-relay/control.sock"
+ipc_auth_token_file = "/run/secrets/ipc-auth"
+
+issuer_private_key = "/run/secrets/issuer-private"
+route_master_key = "/run/secrets/route-master"
+admin_token_file = "/run/secrets/admin-token"
+admin_password_file = "/run/secrets/admin-password"
+admin_user = "admin"
+
+database = "/var/lib/dsh-links-relay/control.db"
+default_max_streams_per_route = 8

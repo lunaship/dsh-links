@@ -78,13 +78,15 @@ func initLayout(dir string, force, listenAll bool, extraHosts []string) (passwor
 		return "", "", fmt.Errorf("init dir: %w", err)
 	}
 	configPath = filepath.Join(absDir, "config.toml")
-	if !force {
-		if _, err := os.Stat(configPath); err == nil {
-			return "", "", fmt.Errorf("config already exists at %s (pass --force to overwrite)", configPath)
-		}
+	if err := prepareInitDir(absDir); err != nil {
+		return "", "", fmt.Errorf("init dir: %w", err)
 	}
-	if err := os.MkdirAll(absDir, 0700); err != nil {
-		return "", "", fmt.Errorf("mkdir: %w", err)
+	initFiles := []string{
+		"route-master.key", "issuer.key", "issuer.pub", "admin.token",
+		"admin.password", "ipc.auth", "relay.crt", "relay.key", "config.toml",
+	}
+	if err := preflightInitFiles(absDir, initFiles, force); err != nil {
+		return "", "", err
 	}
 
 	password, err = randomToken(16)
@@ -95,31 +97,34 @@ func initLayout(dir string, force, listenAll bool, extraHosts []string) (passwor
 	if err != nil {
 		return "", "", fmt.Errorf("route-master.key: %w", err)
 	}
-	if err := writeSecretFile(filepath.Join(absDir, "route-master.key"), routeMaster); err != nil {
+	if err := writeInitFile(filepath.Join(absDir, "route-master.key"), routeMaster, 0600, force); err != nil {
 		return "", "", fmt.Errorf("route-master.key: %w", err)
 	}
 	pub, priv, err := cryptoutil.GenerateEd25519KeyPair()
 	if err != nil {
 		return "", "", fmt.Errorf("issuer key: %w", err)
 	}
-	if err := writeSecretFile(filepath.Join(absDir, "issuer.key"), priv.Seed()); err != nil {
+	if err := writeInitFile(filepath.Join(absDir, "issuer.key"), priv.Seed(), 0600, force); err != nil {
 		return "", "", fmt.Errorf("issuer.key: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(absDir, "issuer.pub"), []byte(pub), 0644); err != nil {
+	if err := writeInitFile(filepath.Join(absDir, "issuer.pub"), []byte(pub), 0644, force); err != nil {
 		return "", "", fmt.Errorf("issuer.pub: %w", err)
 	}
 	adminToken, err := randomToken(32)
 	if err != nil {
 		return "", "", fmt.Errorf("admin.token: %w", err)
 	}
-	if err := writeSecretFile(filepath.Join(absDir, "admin.token"), []byte(adminToken+"\n")); err != nil {
+	if err := writeInitFile(filepath.Join(absDir, "admin.token"), []byte(adminToken+"\n"), 0600, force); err != nil {
 		return "", "", fmt.Errorf("admin.token: %w", err)
+	}
+	if err := writeInitFile(filepath.Join(absDir, "admin.password"), []byte(password+"\n"), 0600, force); err != nil {
+		return "", "", fmt.Errorf("admin.password: %w", err)
 	}
 	ipcToken, err := randomToken(32)
 	if err != nil {
 		return "", "", fmt.Errorf("ipc.auth: %w", err)
 	}
-	if err := writeSecretFile(filepath.Join(absDir, "ipc.auth"), []byte(ipcToken+"\n")); err != nil {
+	if err := writeInitFile(filepath.Join(absDir, "ipc.auth"), []byte(ipcToken+"\n"), 0600, force); err != nil {
 		return "", "", fmt.Errorf("ipc.auth: %w", err)
 	}
 	hosts := append([]string{"localhost", "127.0.0.1", "::1"}, extraHosts...)
@@ -127,10 +132,10 @@ func initLayout(dir string, force, listenAll bool, extraHosts []string) (passwor
 	if err != nil {
 		return "", "", fmt.Errorf("tls cert: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(absDir, "relay.crt"), certPEM, 0644); err != nil {
+	if err := writeInitFile(filepath.Join(absDir, "relay.crt"), certPEM, 0644, force); err != nil {
 		return "", "", fmt.Errorf("relay.crt: %w", err)
 	}
-	if err := writeSecretFile(filepath.Join(absDir, "relay.key"), keyPEM); err != nil {
+	if err := writeInitFile(filepath.Join(absDir, "relay.key"), keyPEM, 0600, force); err != nil {
 		return "", "", fmt.Errorf("relay.key: %w", err)
 	}
 
@@ -182,7 +187,7 @@ bind_timeout = "10s"
 		tomlQuote(password),
 		tomlQuote(filepath.Join(absDir, "control.db")),
 	)
-	if err := writeSecretFile(configPath, []byte(cfgText)); err != nil {
+	if err := writeInitFile(configPath, []byte(cfgText), 0600, force); err != nil {
 		return "", "", fmt.Errorf("config.toml: %w", err)
 	}
 	return password, configPath, nil
@@ -198,19 +203,90 @@ func requireAdminPassword(password string) error {
 	return nil
 }
 
-func writeSecretFile(path string, data []byte) error {
-	// O_NOFOLLOW refuses to write through a pre-planted symlink, and the
-	// explicit chmod repairs pre-existing files with looser modes (WriteFile
-	// only applies the mode when creating a new file).
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, 0600)
+func prepareInitDir(path string) error {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		if err := os.Mkdir(path, 0700); err != nil {
+			return err
+		}
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("%s must be a real directory", path)
+	}
+	if info.Mode().Perm()&0077 != 0 {
+		return fmt.Errorf("%s must not be accessible by group or other users", path)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || int(stat.Uid) != os.Geteuid() {
+		return fmt.Errorf("%s must be owned by the current user", path)
+	}
+	return nil
+}
+
+func preflightInitFiles(dir string, names []string, force bool) error {
+	for _, name := range names {
+		path := filepath.Join(dir, name)
+		info, err := os.Lstat(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("inspect %s: %w", path, err)
+		}
+		if !force {
+			return fmt.Errorf("file already exists at %s (pass --force to overwrite)", path)
+		}
+		if err := validateOwnedRegularFile(path, info); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateOwnedRegularFile(path string, info os.FileInfo) error {
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return fmt.Errorf("refusing to overwrite non-regular file %s", path)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || int(stat.Uid) != os.Geteuid() {
+		return fmt.Errorf("refusing to overwrite file not owned by current user: %s", path)
+	}
+	if stat.Nlink != 1 {
+		return fmt.Errorf("refusing to overwrite multiply-linked file %s", path)
+	}
+	return nil
+}
+
+func writeInitFile(path string, data []byte, mode os.FileMode, overwrite bool) error {
+	flags := os.O_WRONLY | os.O_CREATE | syscall.O_NOFOLLOW
+	if overwrite {
+		flags |= os.O_TRUNC
+	} else {
+		flags |= os.O_EXCL
+	}
+	f, err := os.OpenFile(path, flags, mode)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if err := validateOwnedRegularFile(path, info); err != nil {
+		return err
+	}
+	if err := f.Chmod(mode); err != nil {
+		return err
+	}
 	if _, err := f.Write(data); err != nil {
 		return err
 	}
-	return f.Chmod(0600)
+	return f.Sync()
 }
 
 func tomlQuote(s string) string {

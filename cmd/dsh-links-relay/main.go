@@ -5,7 +5,6 @@ import (
 	"crypto/ed25519"
 	"crypto/tls"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -89,7 +88,11 @@ func runControl(configPath string) {
 	if err != nil {
 		log.Fatalf("load route master: %v", err)
 	}
-	if err := requireAdminPassword(cfg.AdminPassword); err != nil {
+	adminPassword, err := cfg.LoadAdminPassword()
+	if err != nil {
+		log.Fatalf("load admin password: %v", err)
+	}
+	if err := requireAdminPassword(adminPassword); err != nil {
 		log.Fatalf("%v", err)
 	}
 	adminToken, err := cfg.LoadAdminToken()
@@ -129,7 +132,7 @@ func runControl(configPath string) {
 	})
 
 	// Start HTTP admin
-	adminSrv := control.NewServer(ctrl, adminToken, cfg.AdminUser, cfg.AdminPassword)
+	adminSrv := control.NewServer(ctrl, adminToken, cfg.AdminUser, adminPassword)
 	httpSrv := &http.Server{
 		Addr:              cfg.AdminListen,
 		Handler:           adminSrv.Handler(),
@@ -139,8 +142,8 @@ func runControl(configPath string) {
 		IdleTimeout:       60 * time.Second,
 		MaxHeaderBytes:    16 << 10,
 	}
-	if !isLoopbackListen(cfg.AdminListen) {
-		log.Fatalf("admin_listen must be loopback, got %s", cfg.AdminListen)
+	if !isLoopbackListen(cfg.AdminListen) && !cfg.AdminAllowNonLoopback {
+		log.Fatalf("admin_listen must be loopback unless admin_allow_non_loopback is explicitly enabled, got %s", cfg.AdminListen)
 	}
 	go func() {
 		log.Printf("admin API listening on %s", cfg.AdminListen)
@@ -168,11 +171,6 @@ func runRelay(configPath string) {
 	if err != nil {
 		log.Fatalf("load tls: %v", err)
 	}
-	// Load route master
-	routeMaster, err := cfg.LoadRouteMasterKey()
-	if err != nil {
-		log.Fatalf("load route master: %v", err)
-	}
 	// Load issuer public key
 	issuerPubBytes, err := loadIssuerPub(cfg.IssuerPublicKey)
 	if err != nil {
@@ -192,13 +190,6 @@ func runRelay(configPath string) {
 	// Start background reconnection; will reconnect automatically if control restarts.
 	ipcClient.StartReconnect()
 
-	// Open store read-only for host lookup (shared DB with control).
-	relayStore, err := store.OpenReadOnly(cfg.Database)
-	if err != nil {
-		log.Fatalf("open relay store: %v (start control first so the database exists)", err)
-	}
-	defer relayStore.Close()
-
 	reg := registry.New(cfg.MaxTotalStreams)
 	m := metrics.New()
 	revokePollStop := make(chan struct{})
@@ -212,8 +203,8 @@ func runRelay(configPath string) {
 			select {
 			case <-ticker.C:
 				for _, sess := range reg.List() {
-					host, err := relayStore.GetHostByRoute(sess.RouteIdRaw)
-					if err != nil || host.RevokedAt != nil || uint64(host.Generation) != sess.Generation {
+					host, err := ipcClient.LookupHostByRoute(sess.RouteIdRaw)
+					if err != nil || host.Revoked || host.Generation != sess.Generation {
 						reg.Revoke(sess.RouteIdStr)
 					}
 				}
@@ -232,10 +223,9 @@ func runRelay(configPath string) {
 	relayCtrl := &ipcControlAdapter{
 		client:    ipcClient,
 		issuerPub: issuerPub,
-		store:     relayStore,
 	}
 
-	ing := ingress.New(cfg.ClientListen, cfg.AgentListen, tlsConfig, reg, relayCtrl, m, routeMaster, issuerPub, cfg.HeartbeatIntervalDur, cfg.BindTimeoutDur, cfg.AgentDeadAfterDur, cfg.MaxTotalStreams, cfg.MaxConns, cfg.BridgeMaxLifetimeDur, log.Default())
+	ing := ingress.New(cfg.ClientListen, cfg.AgentListen, tlsConfig, reg, relayCtrl, m, issuerPub, cfg.HeartbeatIntervalDur, cfg.BindTimeoutDur, cfg.AgentDeadAfterDur, cfg.MaxTotalStreams, cfg.MaxConns, cfg.BridgeMaxLifetimeDur, log.Default())
 	if err := ing.Start(); err != nil {
 		log.Fatalf("start ingress: %v", err)
 	}
@@ -296,11 +286,11 @@ func isLoopbackListen(addr string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// ipcControlAdapter implements ingress.ControlAPI via IPC + local store poll
+// ipcControlAdapter implements ingress.ControlAPI exclusively via IPC. Relay
+// deliberately has no filesystem path to Control's SQLite database.
 type ipcControlAdapter struct {
 	client    *control.IPCClient
 	issuerPub ed25519.PublicKey
-	store     *store.Store
 }
 
 func (a *ipcControlAdapter) Enroll(req *ingress.EnrollProxyRequest) (*ingress.EnrollProxyResponse, error) {
@@ -330,16 +320,31 @@ func (a *ipcControlAdapter) Enroll(req *ingress.EnrollProxyRequest) (*ingress.En
 }
 
 func (a *ipcControlAdapter) LookupHostByRoute(routeId []byte) (string, uint64, []byte, int, bool, error) {
-	if a.store == nil {
-		// Store unavailable: refuse all lookups rather than trusting fallback data.
-		return "", 0, nil, 0, false, errors.New("relay store not available")
-	}
-	h, err := a.store.GetHostByRoute(routeId)
+	h, err := a.client.LookupHostByRoute(routeId)
 	if err != nil {
 		return "", 0, nil, 0, false, err
 	}
-	isRevoked := h.RevokedAt != nil
-	return h.ID, uint64(h.Generation), h.HostPubKey, h.MaxStreams, isRevoked, nil
+	pubKey, err := base64.RawURLEncoding.DecodeString(h.HostPublicKey)
+	if err != nil || len(pubKey) != ed25519.PublicKeySize {
+		return "", 0, nil, 0, false, fmt.Errorf("invalid host public key from control")
+	}
+	return h.HostID, h.Generation, pubKey, h.MaxStreams, h.Revoked, nil
+}
+
+func (a *ipcControlAdapter) VerifyRouteMAC(req *ingress.RouteMACProxyRequest) error {
+	ipcReq := control.VerifyRouteMACIPCRequest{
+		Operation:  req.Operation,
+		RouteID:    base64.RawURLEncoding.EncodeToString(req.RouteID),
+		Generation: req.Generation,
+		Ts:         req.Ts,
+		Nonce:      base64.RawURLEncoding.EncodeToString(req.Nonce),
+		Challenge:  base64.RawURLEncoding.EncodeToString(req.Challenge),
+		MAC:        base64.RawURLEncoding.EncodeToString(req.MAC),
+	}
+	if len(req.StreamID) > 0 {
+		ipcReq.StreamID = base64.RawURLEncoding.EncodeToString(req.StreamID)
+	}
+	return a.client.VerifyRouteMAC(ipcReq)
 }
 
 func (a *ipcControlAdapter) VerifyCapability(cap string) (*cryptoutil.CapabilityPayload, error) {

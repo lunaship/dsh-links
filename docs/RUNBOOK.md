@@ -2,6 +2,9 @@
 
 ## 1. 部署
 
+公网服务器优先使用 `deploy/docker/README.md` 的 Rootless 双容器方案。
+以下 systemd 步骤作为高级手动部署方式保留。
+
 ### 1.1 单机要求
 - 2C2G, 10Mbps 起, Ubuntu 22.04+, Go 1.22+
 - 开放 8443 (App), 8444 (Agent), 22 (SSH, 仅管理员), 8080 仅回环
@@ -71,7 +74,7 @@ systemctl status dsh-links-relay-*
 ```bash
 # 通过 SSH 隧道打开 Control
 ssh -N -L 8080:127.0.0.1:8080 user@relay.example.com &
-curl -H "Authorization: Bearer $(cat /etc/dsh-links-relay/admin.token)" -X POST http://127.0.0.1:8080/v1/invites
+curl -H "Authorization: Bearer $(cat /etc/dsh-links-relay/admin.token)" -H "Content-Type: application/json" -d '{}' http://127.0.0.1:8080/v1/invites
 # 得到 inviteCode, 复制给插件 Agent (有效 30分钟, 一次性)
 ```
 
@@ -97,7 +100,7 @@ curl -H "Authorization: Bearer $(cat /etc/dsh-links-relay/admin.token)" -X POST 
 
 ## 6. 吊销
 - **手机**: 在插件 UI 吊销设备, 后续 Token 401, 已有 SSE 关闭
-- **Host**: `curl -X POST -H "Authorization: Bearer ..." http://127.0.0.1:8080/v1/hosts/:id/revoke` — 1秒内关闭该 route 的 Agent 控制连接与全部 stream；LAN 仍可用
+- **Host**: `curl -X POST -H "Authorization: Bearer ..." -H "Content-Type: application/json" -d '{}' http://127.0.0.1:8080/v1/hosts/:id/revoke` — 1秒内关闭该 route 的 Agent 控制连接与全部 stream；LAN 仍可用
 - **邀请**: `POST /v1/invites/:id/revoke` 仅对未消费有效
 
 ## 7. 回滚
@@ -116,4 +119,3 @@ curl -H "Authorization: Bearer $(cat /etc/dsh-links-relay/admin.token)" -X POST 
 - 备份 DB: `cp /var/lib/dsh-links-relay/control.db /var/lib/dsh-links-relay/control.db.bak.$(date +%s)`
 - 替换二进制, `systemctl restart`
 - 验证: 模拟 App/Agent 贯通, LAN 回归
-

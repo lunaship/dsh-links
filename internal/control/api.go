@@ -8,8 +8,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"mime"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -118,14 +120,34 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 }
 
 func (s *Server) checkContentType(w http.ResponseWriter, r *http.Request, next http.Handler) {
-	if r.Method == "POST" || r.Method == "PUT" || r.Method == "DELETE" {
-		ct := r.Header.Get("Content-Type")
-		if ct != "" && !strings.Contains(ct, "application/json") {
+	if isUnsafeMethod(r.Method) {
+		mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+		if err != nil || mediaType != "application/json" {
 			http.Error(w, `{"error":"bad content type"}`, http.StatusBadRequest)
+			return
+		}
+		if origin := r.Header.Get("Origin"); origin != "" && !sameOrigin(origin, r) {
+			http.Error(w, `{"error":"cross-origin request rejected"}`, http.StatusForbidden)
 			return
 		}
 	}
 	next.ServeHTTP(w, r)
+}
+
+func isUnsafeMethod(method string) bool {
+	return method == http.MethodPost || method == http.MethodPut || method == http.MethodPatch || method == http.MethodDelete
+}
+
+func sameOrigin(origin string, r *http.Request) bool {
+	u, err := url.Parse(origin)
+	if err != nil || u.Scheme == "" || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		return false
+	}
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	return strings.EqualFold(u.Scheme, scheme) && strings.EqualFold(u.Host, r.Host)
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -289,7 +311,16 @@ func secretEqual(got, want string) bool {
 func clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		host = strings.Trim(r.RemoteAddr, "[]")
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.IsLoopback() {
+			// All of 127.0.0.0/8 and ::1 are one local trust source. Treating
+			// each address separately lets a local attacker rotate source IPs and
+			// obtain a fresh password-guessing bucket.
+			return "loopback"
+		}
+		return ip.String()
 	}
 	return host
 }

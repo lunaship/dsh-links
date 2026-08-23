@@ -26,7 +26,9 @@ function setPanelMessage(id, message) {
 
 async function request(path, options = {}, redirectOnUnauthorized = true) {
   const headers = { Accept: 'application/json', ...(options.headers || {}) };
-  if (options.body) headers['Content-Type'] = 'application/json';
+  if (options.body || ['POST', 'PUT', 'PATCH', 'DELETE'].includes(options.method)) {
+    headers['Content-Type'] = 'application/json';
+  }
   const response = await fetch(path, { ...options, headers, credentials: 'include' });
 
   if (!response.ok) {

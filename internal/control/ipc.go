@@ -31,7 +31,7 @@ var errIPCFrameTooLarge = errors.New("ipc frame too large")
 
 // IPC via Unix socket for relay<->control
 // Messages are LF-delimited JSON with {type, payload}
-// Types: enroll, renew, revoke, metrics
+// Types: enroll, renew, lookup_host, verify_route_mac, revoke_notify
 
 type IPCMessage struct {
 	Type    string          `json:"type"`
@@ -59,6 +59,26 @@ type EnrollIPCResponse struct {
 type RevokeIPCRequest struct {
 	RouteId string `json:"routeId"`
 	HostId  string `json:"hostId"`
+}
+
+type LookupHostIPCResponse struct {
+	HostID        string `json:"hostId"`
+	Generation    uint64 `json:"generation"`
+	HostPublicKey string `json:"hostPublicKey"`
+	MaxStreams    int    `json:"maxStreams"`
+	Revoked       bool   `json:"revoked"`
+	Error         string `json:"error,omitempty"`
+}
+
+type VerifyRouteMACIPCRequest struct {
+	Operation  string  `json:"operation"`
+	RouteID    string  `json:"routeId"`
+	StreamID   string  `json:"streamId,omitempty"`
+	Generation *uint64 `json:"generation,omitempty"`
+	Ts         int64   `json:"ts"`
+	Nonce      string  `json:"nonce"`
+	Challenge  string  `json:"challenge"`
+	MAC        string  `json:"mac"`
 }
 
 // IPCServer runs on control side
@@ -191,12 +211,91 @@ func (s *IPCServer) handleConn(conn net.Conn) {
 			s.handleEnroll(conn, msg.Payload)
 		case "renew":
 			s.handleRenew(conn, msg.Payload)
+		case "lookup_host":
+			s.handleLookupHost(conn, msg.Payload)
+		case "verify_route_mac":
+			s.handleVerifyRouteMAC(conn, msg.Payload)
 		case "revoke_notify":
 			s.handleRevokeNotify(conn, msg.Payload)
 		default:
 			s.sendIPCError(conn, "bad_request", "unknown type")
 		}
 	}
+}
+
+func (s *IPCServer) handleLookupHost(conn net.Conn, payload json.RawMessage) {
+	var req struct {
+		RouteID string `json:"routeId"`
+	}
+	if err := json.Unmarshal(payload, &req); err != nil {
+		s.sendIPCError(conn, "bad_request", "invalid lookup request")
+		return
+	}
+	routeID, err := base64.RawURLEncoding.DecodeString(req.RouteID)
+	if err != nil || len(routeID) != 16 {
+		s.sendIPCError(conn, "bad_request", "invalid routeId")
+		return
+	}
+	host, err := s.control.GetHostByRoute(routeID)
+	if err != nil {
+		s.sendIPCResponse(conn, "lookup_host_resp", LookupHostIPCResponse{Error: "route unavailable"})
+		return
+	}
+	s.sendIPCResponse(conn, "lookup_host_resp", LookupHostIPCResponse{
+		HostID: host.ID, Generation: uint64(host.Generation),
+		HostPublicKey: base64.RawURLEncoding.EncodeToString(host.HostPubKey),
+		MaxStreams:    host.MaxStreams, Revoked: host.RevokedAt != nil,
+	})
+}
+
+func (s *IPCServer) handleVerifyRouteMAC(conn net.Conn, payload json.RawMessage) {
+	var req VerifyRouteMACIPCRequest
+	if err := json.Unmarshal(payload, &req); err != nil {
+		s.sendIPCError(conn, "bad_request", "invalid MAC request")
+		return
+	}
+	decode := func(value string, size int) ([]byte, bool) {
+		decoded, err := base64.RawURLEncoding.DecodeString(value)
+		return decoded, err == nil && len(decoded) == size
+	}
+	routeID, ok := decode(req.RouteID, 16)
+	if !ok {
+		s.sendIPCError(conn, "bad_request", "invalid routeId")
+		return
+	}
+	nonce, ok := decode(req.Nonce, 16)
+	if !ok {
+		s.sendIPCError(conn, "bad_request", "invalid nonce")
+		return
+	}
+	challenge, ok := decode(req.Challenge, 32)
+	if !ok {
+		s.sendIPCError(conn, "bad_request", "invalid challenge")
+		return
+	}
+	mac, ok := decode(req.MAC, sha256.Size)
+	if !ok {
+		s.sendIPCError(conn, "bad_request", "invalid mac")
+		return
+	}
+	var streamID []byte
+	if req.StreamID != "" {
+		streamID, ok = decode(req.StreamID, 16)
+		if !ok {
+			s.sendIPCError(conn, "bad_request", "invalid streamId")
+			return
+		}
+	}
+	err := s.control.VerifyRouteMAC(RouteMACRequest{
+		Operation: req.Operation, RouteID: routeID, StreamID: streamID,
+		Generation: req.Generation, Ts: req.Ts, Nonce: nonce,
+		Challenge: challenge, MAC: mac,
+	})
+	if err != nil {
+		s.sendIPCResponse(conn, "verify_route_mac_resp", map[string]any{"ok": false})
+		return
+	}
+	s.sendIPCResponse(conn, "verify_route_mac_resp", map[string]any{"ok": true})
 }
 
 // BroadcastRevoke sends a revoke notification to all connected relay clients.
@@ -590,6 +689,49 @@ func (c *IPCClient) Renew(req RenewIPCRequest) (string, error) {
 		return "", fmt.Errorf("no capability in response")
 	}
 	return capStr, nil
+}
+
+func (c *IPCClient) LookupHostByRoute(routeID []byte) (*LookupHostIPCResponse, error) {
+	if len(routeID) != 16 {
+		return nil, fmt.Errorf("routeId must be 16 bytes")
+	}
+	payload, _ := json.Marshal(map[string]string{"routeId": base64.RawURLEncoding.EncodeToString(routeID)})
+	respMsg, err := c.request(IPCMessage{Type: "lookup_host", Payload: payload})
+	if err != nil {
+		return nil, err
+	}
+	if respMsg.Type == "error" {
+		return nil, fmt.Errorf("ipc error: %s", string(respMsg.Payload))
+	}
+	var resp LookupHostIPCResponse
+	if err := json.Unmarshal(respMsg.Payload, &resp); err != nil {
+		return nil, err
+	}
+	if resp.Error != "" {
+		return nil, errors.New(resp.Error)
+	}
+	return &resp, nil
+}
+
+func (c *IPCClient) VerifyRouteMAC(req VerifyRouteMACIPCRequest) error {
+	payload, _ := json.Marshal(req)
+	respMsg, err := c.request(IPCMessage{Type: "verify_route_mac", Payload: payload})
+	if err != nil {
+		return err
+	}
+	if respMsg.Type == "error" {
+		return fmt.Errorf("ipc error: %s", string(respMsg.Payload))
+	}
+	var resp struct {
+		OK bool `json:"ok"`
+	}
+	if err := json.Unmarshal(respMsg.Payload, &resp); err != nil {
+		return err
+	}
+	if !resp.OK {
+		return errors.New("route MAC rejected")
+	}
+	return nil
 }
 
 func (c *IPCClient) request(msg IPCMessage) (IPCMessage, error) {

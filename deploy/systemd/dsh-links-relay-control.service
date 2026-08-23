@@ -8,7 +8,8 @@ Type=simple
 # must not share a UID with the internet-facing relay. Expects the user/group
 # and file layout from deploy/README.md (split-users layout).
 User=dsh-ctl
-Group=dsh-shared
+Group=dsh-ctl
+SupplementaryGroups=dsh-shared
 ExecStart=/usr/local/bin/dsh-links-relay control --config /etc/dsh-links-relay/control.toml
 Restart=on-failure
 RestartSec=3s
@@ -18,9 +19,9 @@ ProtectSystem=strict
 ProtectHome=true
 PrivateDevices=true
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
-# 0007 rather than 0077: the relay's read-only SQLite handle must be able to
-# write the WAL sidecars, so database files stay group-writable by dsh-shared.
-UMask=0007
+# Control is the sole database owner; group-readable SQLite sidecars are no
+# longer necessary.
+UMask=0077
 LimitNOFILE=65535
 LimitCORE=0
 ReadWritePaths=/var/lib/dsh-links-relay /run/dsh-links-relay

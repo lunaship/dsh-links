@@ -39,11 +39,11 @@ routeSecret = HKDF-SHA256(
 HKDF 遵循 RFC 5869：Extract(salt, IKM) → PRK, Expand(PRK, info, L)。`salt` 为 `routeId` 原始 16 字节，`info` 为 ASCII `"DLR/1 route secret"`。
 
 * `Capability`：Control 使用 Issuer Ed25519 私钥签发，绑定 `hostId`、`routeId`、`hostPublicKey`、代次、并发上限和有效期
-* `routeMasterKey`：32 字节随机密钥，Control 和 Relay 数据面以只读文件方式加载，权限 `0600`，不得写入 SQLite 或日志
+* `routeMasterKey`：32 字节随机密钥，仅允许 Control 读取，权限 `0600`，不得写入 SQLite 或日志
 * `issuerPrivateKey`：只允许 Control 进程读取
 * `issuerPublicKey`：Relay 数据面读取，用于验证 Capability
 
-`routeSecret` 不保存到 SQLite。Control Enrollment 时派生并仅返回一次；Relay 收到 CONNECT/BIND 后按 `routeId` 即时派生。服务器更换 `routeMasterKey` 会使所有已有 Relay 配置失效，因此它必须进入加密备份。
+`routeSecret` 不保存到 SQLite。Control Enrollment 时派生并仅返回一次；Relay 收到 CONNECT/BIND 后把完整、定长的 MAC transcript 经认证 Unix IPC 交给 Control 验证，Relay 不持有主密钥。服务器更换 `routeMasterKey` 会使所有已有 Relay 配置失效，因此它必须进入加密备份。
 
 ### 1.3 Capability 格式
 
@@ -143,11 +143,12 @@ dsh-links-relay relay --config /etc/dsh-links-relay/config.toml
 | 进程 | 持有 | 不负责 |
 |---|---|---|
 | `control` | SQLite、Issuer 私钥、邀请码、Host 持久状态、管理 UI/API | 不转发业务字节 |
-| `relay` | 在线 Registry、stream、challenge、流量计数、Issuer 公钥、routeMasterKey | 不写业务数据库、不解析 HTTP |
+| `relay` | 在线 Registry、stream、challenge、流量计数、Issuer 公钥 | 不读取 Control 数据库/主密钥、不解析 HTTP |
 
 本机 Unix Socket `/run/dsh-links-relay/control.sock` 只允许两个 systemd 服务用户所属组访问，承担：
 
 * Enrollment 与 RENEW 请求
+* Host lookup 与 CONNECT/BIND route MAC 验证
 * Host 吊销/generation 变更推送
 * Relay 在线状态和聚合指标快照
 * Control 启动后向 Relay 下发当前吊销集合

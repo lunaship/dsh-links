@@ -49,9 +49,12 @@
 - 握手前连接上限、等待 BIND 上限、活跃 stream (1000)、每 route (8)、每 IP/route token bucket、所有 channel 有界、写缓冲 32KiB、空闲 5min
 
 ### 3.8 日志泄密
-- 日志仅含截断哈希 (route 前4字节、cap 前20字符)、错误码、连接计数；不含 routeSecret、Capability 原文、Token、业务 Marker；崩溃报告与指标同样脱敏
+- 日志仅含截断 route 标识、Capability 长度、错误码和连接计数；不含 routeSecret、Capability 原文或前缀、Token、业务 Marker；崩溃报告与指标同样脱敏
 
-### 3.9 旧连接误删新 generation
+### 3.9 Relay 进程失陷
+- Relay 不挂载 Control SQLite、Issuer 私钥、管理员凭据或 routeMasterKey；Host lookup 与 route MAC 验证经有界认证 IPC fail-closed；容器部署额外使用独立 UID、只读根文件系统、零 capabilities 与独立网络
+
+### 3.10 旧连接误删新 generation
 - Registry Unregister 仅当 generation 匹配才删除；旧连接关闭不影响新 generation 的 Agent 或 stream
 
 ## 4. 残留风险与不做事项

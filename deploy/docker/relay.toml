@@ -1,0 +1,18 @@
+# Internet-facing Relay configuration. It intentionally has no database,
+# issuer private key, admin credential, or route master path.
+client_listen = "0.0.0.0:8443"
+agent_listen = "0.0.0.0:8444"
+control_socket = "/run/dsh-links-relay/control.sock"
+ipc_auth_token_file = "/run/secrets/ipc-auth"
+
+tls_cert = "/etc/dsh-links-relay/relay.crt"
+tls_key = "/run/secrets/relay-tls-key"
+issuer_public_key = "/etc/dsh-links-relay/issuer.pub"
+
+max_total_streams = 1000
+default_max_streams_per_route = 8
+max_conns = 2000
+bridge_max_lifetime = "30m"
+heartbeat_interval = "20s"
+agent_dead_after = "65s"
+bind_timeout = "10s"

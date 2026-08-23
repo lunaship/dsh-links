@@ -12,22 +12,24 @@ import (
 )
 
 type Config struct {
-	ClientListen  string `toml:"client_listen"`
-	AgentListen   string `toml:"agent_listen"`
-	AdminListen   string `toml:"admin_listen"`
-	ControlSocket string `toml:"control_socket"`
+	ClientListen          string `toml:"client_listen"`
+	AgentListen           string `toml:"agent_listen"`
+	AdminListen           string `toml:"admin_listen"`
+	AdminAllowNonLoopback bool   `toml:"admin_allow_non_loopback"`
+	ControlSocket         string `toml:"control_socket"`
 
 	TLSCert string `toml:"tls_cert"`
 	TLSKey  string `toml:"tls_key"`
 
-	IssuerPrivateKey string `toml:"issuer_private_key"`
-	IssuerPublicKey  string `toml:"issuer_public_key"`
-	RouteMasterKey   string `toml:"route_master_key"`
-	AdminTokenFile   string `toml:"admin_token_file"`
-	AdminUser        string `toml:"admin_user"`
-	AdminPassword    string `toml:"admin_password"`
-	Database         string `toml:"database"`
-	IPCAuthTokenFile string `toml:"ipc_auth_token_file"`
+	IssuerPrivateKey  string `toml:"issuer_private_key"`
+	IssuerPublicKey   string `toml:"issuer_public_key"`
+	RouteMasterKey    string `toml:"route_master_key"`
+	AdminTokenFile    string `toml:"admin_token_file"`
+	AdminUser         string `toml:"admin_user"`
+	AdminPassword     string `toml:"admin_password"`
+	AdminPasswordFile string `toml:"admin_password_file"`
+	Database          string `toml:"database"`
+	IPCAuthTokenFile  string `toml:"ipc_auth_token_file"`
 
 	MaxTotalStreams           int    `toml:"max_total_streams"`
 	DefaultMaxStreamsPerRoute int    `toml:"default_max_streams_per_route"`
@@ -172,6 +174,20 @@ func (c *Config) LoadIPCAuthToken() (string, error) {
 }
 func (c *Config) LoadAdminToken() (string, error) {
 	b, err := os.ReadFile(c.AdminTokenFile)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(b)), nil
+}
+
+func (c *Config) LoadAdminPassword() (string, error) {
+	if strings.TrimSpace(c.AdminPasswordFile) == "" {
+		return c.AdminPassword, nil
+	}
+	if c.AdminPassword != "" {
+		return "", fmt.Errorf("set only one of admin_password or admin_password_file")
+	}
+	b, err := os.ReadFile(c.AdminPasswordFile)
 	if err != nil {
 		return "", err
 	}

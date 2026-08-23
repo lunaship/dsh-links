@@ -13,17 +13,20 @@ Two layouts ship in this repo:
 
 ```
 groupadd --system dsh-shared
-useradd --system --gid dsh-shared --home-dir /nonexistent --shell /usr/sbin/nologin dsh-ctl
-useradd --system --gid dsh-shared --home-dir /nonexistent --shell /usr/sbin/nologin dsh-relay
+groupadd --system dsh-ctl
+groupadd --system dsh-relay
+useradd --system --gid dsh-ctl --groups dsh-shared --home-dir /nonexistent --shell /usr/sbin/nologin dsh-ctl
+useradd --system --gid dsh-relay --groups dsh-shared --home-dir /nonexistent --shell /usr/sbin/nologin dsh-relay
 
 install -d -m 0755  /etc/dsh-links-relay
-install -d -m 2770 -g dsh-shared /var/lib/dsh-links-relay /run/dsh-links-relay
+install -d -m 0700 -o dsh-ctl -g dsh-ctl /var/lib/dsh-links-relay
+install -d -m 2750 -o dsh-ctl -g dsh-shared /run/dsh-links-relay
 ```
 
 `/run` is volatile; persist it with `/etc/tmpfiles.d/dsh-links-relay.conf`:
 
 ```
-d /run/dsh-links-relay 2770 root dsh-shared -
+d /run/dsh-links-relay 2750 dsh-ctl dsh-shared -
 ```
 
 File ownership (`chown` + `chmod`):
@@ -37,14 +40,15 @@ File ownership (`chown` + `chmod`):
 | `relay.crt`                 | `root:dsh-relay` | 0644 | relay            |
 | `relay.key`                 | `root:dsh-relay` | 0640 | relay            |
 | `issuer.pub`                | `root:dsh-shared`| 0644 | relay            |
-| `route-master.key`          | `root:dsh-shared`| 0640 | control + relay  |
+| `route-master.key`          | `root:dsh-ctl`   | 0640 | control          |
 | `ipc.auth`                  | `root:dsh-shared`| 0640 | control + relay  |
-| `/var/lib/dsh-links-relay`  | `root:dsh-shared`| 2770 | control + relay  |
-| `/run/dsh-links-relay`      | `root:dsh-shared`| 2770 | control + relay  |
+| `/var/lib/dsh-links-relay`  | `dsh-ctl:dsh-ctl`| 0700 | control          |
+| `/run/dsh-links-relay`      | `dsh-ctl:dsh-shared`| 2750 | control write; relay connect |
 
-Both services run `Group=dsh-shared`, so the control socket (created 0770 by
-the control process) is connectable by the relay, and `route-master.key` /
-`ipc.auth` are readable by both.
+Both services have `SupplementaryGroups=dsh-shared`, so the control socket
+(created in the setgid shared runtime directory and chmod 0770) is connectable
+by Relay and `ipc.auth` is readable by both. `route-master.key` and the
+database remain Control-only.
 
 Then:
 
@@ -56,23 +60,14 @@ cp systemd/*.service /etc/systemd/system/ && systemctl daemon-reload
 systemctl enable --now dsh-links-relay-control.service dsh-links-relay-relay.service
 ```
 
-## What this isolates — and what it cannot
+## What this isolates
 
-A compromised relay process can no longer read the issuer private key (which
-would allow minting perpetual capabilities) or the admin token/password
-(control-plane takeover). Two residual trust points are inherent to the
-current architecture:
-
-- The relay needs `route-master.key` to verify CONNECT/BIND MACs, so it can
-  derive route secrets for any route id.
-- The shared database directory is group-writable because SQLite WAL readers
-  must write the `-wal`/`-shm` sidecars; the relay could in principle tamper
-  with the database file itself.
-
-Removing those requires moving host lookups from the shared SQLite file onto
-the authenticated IPC channel (a code change, tracked as future work). The
-split layout still closes the reported finding: the highest-value secrets are
-out of the relay's reach.
+A compromised relay process cannot read the issuer private key, administrator
+credentials, route master key, or Control SQLite files. Host lookup and route
+MAC verification are owned by Control and exposed only through bounded IPC.
+Enrollment responses still pass one newly issued per-route secret through the
+Relay process; end-to-end sealing that response would require a DLR/1 client
+protocol change.
 
 Generate key material with `dsh-links-relay init --dir /tmp/layout` on a
 trusted machine and copy the files into place with the ownership above — the

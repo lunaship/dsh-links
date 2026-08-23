@@ -26,8 +26,20 @@ import (
 type ControlAPI interface {
 	Enroll(req *EnrollProxyRequest) (*EnrollProxyResponse, error)
 	LookupHostByRoute(routeId []byte) (hostID string, generation uint64, pubKey []byte, maxStreams int, revoked bool, err error)
+	VerifyRouteMAC(req *RouteMACProxyRequest) error
 	VerifyCapability(cap string) (*cryptoutil.CapabilityPayload, error)
 	Renew(req *RenewProxyRequest) (string, error)
+}
+
+type RouteMACProxyRequest struct {
+	Operation  string
+	RouteID    []byte
+	StreamID   []byte
+	Generation *uint64
+	Ts         int64
+	Nonce      []byte
+	Challenge  []byte
+	MAC        []byte
 }
 
 type RenewProxyRequest struct {
@@ -65,7 +77,6 @@ type Ingress struct {
 	control      ControlAPI
 	metrics      *metrics.Metrics
 
-	routeMasterKey    []byte
 	issuerPub         ed25519.PublicKey
 	heartbeatInterval time.Duration
 	bindTimeout       time.Duration
@@ -105,7 +116,7 @@ type Ingress struct {
 }
 
 // New creates ingress.
-func New(clientListen, agentListen string, tlsConfig *tls.Config, reg *registry.Registry, ctrl ControlAPI, m *metrics.Metrics, routeMasterKey []byte, issuerPub ed25519.PublicKey, heartbeat, bindTimeout, deadAfter time.Duration, maxTotal, maxConns int, bridgeMaxLifetime time.Duration, logger *log.Logger) *Ingress {
+func New(clientListen, agentListen string, tlsConfig *tls.Config, reg *registry.Registry, ctrl ControlAPI, m *metrics.Metrics, issuerPub ed25519.PublicKey, heartbeat, bindTimeout, deadAfter time.Duration, maxTotal, maxConns int, bridgeMaxLifetime time.Duration, logger *log.Logger) *Ingress {
 	if logger == nil {
 		logger = log.Default()
 	}
@@ -120,7 +131,6 @@ func New(clientListen, agentListen string, tlsConfig *tls.Config, reg *registry.
 		registry:          reg,
 		control:           ctrl,
 		metrics:           m,
-		routeMasterKey:    routeMasterKey,
 		issuerPub:         issuerPub,
 		heartbeatInterval: heartbeat,
 		bindTimeout:       bindTimeout,
@@ -469,7 +479,7 @@ func (ing *Ingress) handleRegister(ctx *connContext, raw []byte) {
 	// Verify capability
 	payload, err := cryptoutil.VerifyCapability(ing.issuerPub, reg.Capability)
 	if err != nil {
-		ing.logger.Printf("capability verify failed from %s: %s", logutil.Value(ctx.remoteIP), truncateForLog(reg.Capability))
+		logCapabilityVerifyFailure(ing.logger, ctx.remoteIP, reg.Capability)
 		sendError(ctx.conn, protocol.ErrAuthFailed, "auth failed")
 		return
 	}
@@ -680,13 +690,10 @@ func (ing *Ingress) handleConnect(ctx *connContext, raw []byte) {
 	nonce, _ := base64.RawURLEncoding.DecodeString(connFrame.Nonce)
 	mac, _ := base64.RawURLEncoding.DecodeString(connFrame.Mac)
 
-	secret, err := cryptoutil.DeriveRouteSecret(ing.routeMasterKey, routeIdRaw)
-	if err != nil {
-		sendError(ctx.conn, protocol.ErrAuthFailed, "auth failed")
-		return
-	}
-	transcript := cryptoutil.BuildMACTranscript("CONNECT", routeIdRaw, nil, nil, connFrame.Ts, nonce, ctx.challenge)
-	if !cryptoutil.VerifyMAC(secret, transcript, mac) {
+	if err := ing.control.VerifyRouteMAC(&RouteMACProxyRequest{
+		Operation: "CONNECT", RouteID: routeIdRaw, Ts: connFrame.Ts,
+		Nonce: nonce, Challenge: ctx.challenge, MAC: mac,
+	}); err != nil {
 		sendError(ctx.conn, protocol.ErrAuthFailed, "auth failed")
 		ing.metrics.RecordError()
 		return
@@ -842,14 +849,12 @@ func (ing *Ingress) handleBind(ctx *connContext, raw []byte) {
 	nonce, _ := base64.RawURLEncoding.DecodeString(bind.Nonce)
 	mac, _ := base64.RawURLEncoding.DecodeString(bind.Mac)
 
-	secret, err := cryptoutil.DeriveRouteSecret(ing.routeMasterKey, routeIdRaw)
-	if err != nil {
-		sendError(ctx.conn, protocol.ErrAuthFailed, "auth failed")
-		return
-	}
 	gen := bind.Generation
-	transcript := cryptoutil.BuildMACTranscript("BIND", routeIdRaw, streamIdRaw, &gen, bind.Ts, nonce, ctx.challenge)
-	if !cryptoutil.VerifyMAC(secret, transcript, mac) {
+	if err := ing.control.VerifyRouteMAC(&RouteMACProxyRequest{
+		Operation: "BIND", RouteID: routeIdRaw, StreamID: streamIdRaw,
+		Generation: &gen, Ts: bind.Ts, Nonce: nonce,
+		Challenge: ctx.challenge, MAC: mac,
+	}); err != nil {
 		sendError(ctx.conn, protocol.ErrAuthFailed, "auth failed")
 		return
 	}
@@ -934,6 +939,8 @@ func remoteIPFromConn(conn net.Conn) string {
 	return host
 }
 
-func truncateForLog(s string) string {
-	return logutil.Value(s)
+func logCapabilityVerifyFailure(logger *log.Logger, remoteIP, capability string) {
+	// A compact JWS contains attacker-controlled but potentially sensitive tenant
+	// metadata. Log only its bounded length; never the token, payload, or prefix.
+	logger.Printf("capability verify failed from %s len=%d", logutil.Value(remoteIP), len(capability))
 }

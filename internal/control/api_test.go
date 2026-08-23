@@ -2,6 +2,7 @@ package control
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -81,6 +82,7 @@ func TestLoginUsesOpaqueRevocableSession(t *testing.T) {
 
 	logout := httptest.NewRequest(http.MethodPost, "/logout", nil)
 	logout.AddCookie(session)
+	logout.Header.Set("Content-Type", "application/json")
 	logoutRecorder := httptest.NewRecorder()
 	handler.ServeHTTP(logoutRecorder, logout)
 	if logoutRecorder.Code != http.StatusOK {
@@ -158,6 +160,68 @@ func TestLoginRejectsNonJSONContentType(t *testing.T) {
 	server.Handler().ServeHTTP(recorder, req)
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("text/plain login status=%d, want 400", recorder.Code)
+	}
+}
+
+func TestMutationRejectsMissingOrMisleadingContentType(t *testing.T) {
+	server := NewServer(nil, "legacy-token-0123456789", "admin", "correct horse battery staple")
+	for _, contentType := range []string{"", "text/plain; application/json"} {
+		req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(`{"user":"admin","password":"correct horse battery staple"}`))
+		if contentType != "" {
+			req.Header.Set("Content-Type", contentType)
+		}
+		recorder := httptest.NewRecorder()
+		server.Handler().ServeHTTP(recorder, req)
+		if recorder.Code != http.StatusBadRequest {
+			t.Fatalf("Content-Type %q status=%d, want 400", contentType, recorder.Code)
+		}
+	}
+}
+
+func TestMutationRejectsDifferentLoopbackOriginPort(t *testing.T) {
+	server := NewServer(nil, "legacy-token-0123456789", "admin", "correct horse battery staple")
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:8080/login", strings.NewReader(`{"user":"admin","password":"correct horse battery staple"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "http://127.0.0.1:9090")
+	recorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("cross-port Origin status=%d, want 403", recorder.Code)
+	}
+}
+
+func TestMutationAllowsExactOrigin(t *testing.T) {
+	server := NewServer(nil, "legacy-token-0123456789", "admin", "correct horse battery staple")
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:8080/login", strings.NewReader(`{"user":"admin","password":"correct horse battery staple"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "http://127.0.0.1:8080")
+	recorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("same-origin status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestLoginLimiterAggregatesLoopbackAddressRotation(t *testing.T) {
+	server := NewServer(nil, "legacy-token-0123456789", "admin", "correct horse battery staple")
+	handler := server.Handler()
+	for i := 0; i < loginBurstAttempts; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(`{"user":"admin","password":"wrong password"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.RemoteAddr = fmt.Sprintf("127.0.0.%d:12345", i+1)
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+		if recorder.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d status=%d, want 401", i+1, recorder.Code)
+		}
+	}
+	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(`{"user":"admin","password":"correct horse battery staple"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.RemoteAddr = "127.0.0.99:12345"
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusTooManyRequests {
+		t.Fatalf("rotated loopback status=%d, want 429", recorder.Code)
 	}
 }
 

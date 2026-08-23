@@ -15,12 +15,9 @@ tls_key = "/etc/dsh-links-relay/relay.key"
 # Only the issuer PUBLIC key: capability verification, never signing.
 issuer_public_key = "/etc/dsh-links-relay/issuer.pub"
 
-# Shared with control (group-readable by dsh-shared, 0640 root:dsh-shared).
-route_master_key = "/etc/dsh-links-relay/route-master.key"
-
-# Shared read-only view of the control database (WAL sidecars need write
-# access, hence the group-writable data dir - see deploy/README.md).
-database = "/var/lib/dsh-links-relay/control.db"
+# Route MAC verification and host lookup are performed by Control over the
+# authenticated Unix IPC channel. Relay must not have route-master.key or any
+# path to the Control database.
 
 max_total_streams = 1000
 default_max_streams_per_route = 8

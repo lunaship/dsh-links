@@ -1,33 +1,110 @@
+name: dsh-links-relay
+
+x-runtime: &runtime
+  image: ${DSH_RELAY_IMAGE:-dsh-links-relay:local}
+  build:
+    context: .
+  restart: unless-stopped
+  init: true
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,nodev,size=16m
+  logging:
+    driver: local
+    options:
+      max-size: 10m
+      max-file: "5"
+
 services:
   control:
-    build: .
-    image: dsh-links-relay:local
-    command: ["control", "--config", "/data/config.toml"]
-    restart: unless-stopped
-    environment:
-      RELAY_HOST: relay.dshlinks.com
+    <<: *runtime
+    command: ["control", "--config", "/etc/dsh-links-relay/config.toml"]
+    user: "10001:10000"
+    pids_limit: 128
+    mem_limit: ${DSH_CONTROL_MEMORY_LIMIT:-256m}
+    cpus: ${DSH_CONTROL_CPUS:-1.0}
+    ports:
+      - "127.0.0.1:8080:8080"
+    networks:
+      - control-admin
     volumes:
-      - relay-data:/data
-    healthcheck:
-      test: ["CMD", "dsh-links-relay", "help"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
+      - control-data:/var/lib/dsh-links-relay
+      - control-ipc:/run/dsh-links-relay
+    configs:
+      - source: control-config
+        target: /etc/dsh-links-relay/config.toml
+    secrets:
+      - issuer-private
+      - route-master
+      - admin-token
+      - admin-password
+      - ipc-auth
 
   relay:
-    image: dsh-links-relay:local
-    build: .
-    command: ["relay", "--config", "/data/config.toml"]
-    restart: unless-stopped
+    <<: *runtime
+    command: ["relay", "--config", "/etc/dsh-links-relay/config.toml"]
+    user: "10002:10000"
+    pids_limit: 512
+    mem_limit: ${DSH_RELAY_MEMORY_LIMIT:-512m}
+    cpus: ${DSH_RELAY_CPUS:-2.0}
     depends_on:
-      - control
-    environment:
-      RELAY_HOST: relay.dshlinks.com
-    volumes:
-      - relay-data:/data
+      control:
+        condition: service_started
     ports:
       - "8443:8443"
       - "8444:8444"
+    networks:
+      - relay-public
+    volumes:
+      - type: volume
+        source: control-ipc
+        target: /run/dsh-links-relay
+        read_only: true
+    configs:
+      - source: relay-config
+        target: /etc/dsh-links-relay/config.toml
+      - source: relay-certificate
+        target: /etc/dsh-links-relay/relay.crt
+      - source: issuer-public
+        target: /etc/dsh-links-relay/issuer.pub
+    secrets:
+      - relay-tls-key
+      - ipc-auth
+
+networks:
+  control-admin:
+    internal: true
+  relay-public:
+    internal: true
 
 volumes:
-  relay-data:
+  control-data:
+  control-ipc:
+
+configs:
+  control-config:
+    file: ./deploy/docker/control.toml
+  relay-config:
+    file: ./deploy/docker/relay.toml
+  relay-certificate:
+    file: ${DSH_DOCKER_SECRETS_DIR:-./.docker-secrets}/relay.crt
+  issuer-public:
+    file: ${DSH_DOCKER_SECRETS_DIR:-./.docker-secrets}/issuer.pub
+
+secrets:
+  issuer-private:
+    file: ${DSH_DOCKER_SECRETS_DIR:-./.docker-secrets}/issuer.key
+  route-master:
+    file: ${DSH_DOCKER_SECRETS_DIR:-./.docker-secrets}/route-master.key
+  admin-token:
+    file: ${DSH_DOCKER_SECRETS_DIR:-./.docker-secrets}/admin.token
+  admin-password:
+    file: ${DSH_DOCKER_SECRETS_DIR:-./.docker-secrets}/admin.password
+  ipc-auth:
+    file: ${DSH_DOCKER_SECRETS_DIR:-./.docker-secrets}/ipc.auth
+  relay-tls-key:
+    file: ${DSH_DOCKER_SECRETS_DIR:-./.docker-secrets}/relay.key

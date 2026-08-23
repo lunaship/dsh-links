@@ -895,7 +895,7 @@ func TestTLSHandshakeStallReleasesSlot(t *testing.T) {
 	issuerPub := ed25519.NewKeyFromSeed(issuerSeed[:]).Public().(ed25519.PublicKey)
 	reg := registry.New(100)
 	// maxConns=1: the stalled connection occupies the entire budget.
-	ing := New("127.0.0.1:0", "127.0.0.1:0", tlsCfg, reg, NewInProcessControl(ctrl), metrics.New(), routeMaster, issuerPub, 20*time.Second, 10*time.Second, 65*time.Second, 100, 1, 0, nil)
+	ing := New("127.0.0.1:0", "127.0.0.1:0", tlsCfg, reg, NewInProcessControl(ctrl), metrics.New(), issuerPub, 20*time.Second, 10*time.Second, 65*time.Second, 100, 1, 0, nil)
 	if err := ing.Start(); err != nil {
 		t.Fatalf("start ingress: %v", err)
 	}

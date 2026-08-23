@@ -9,7 +9,8 @@ Type=simple
 # its config must not reference any control-only secret (issuer private key,
 # admin token/password). Expects the layout from deploy/README.md.
 User=dsh-relay
-Group=dsh-shared
+Group=dsh-relay
+SupplementaryGroups=dsh-shared
 ExecStart=/usr/local/bin/dsh-links-relay relay --config /etc/dsh-links-relay/relay.toml
 Restart=on-failure
 RestartSec=3s
@@ -22,10 +23,10 @@ RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 UMask=0077
 LimitNOFILE=65535
 LimitCORE=0
-ReadOnlyPaths=/etc/dsh-links-relay
-# Read-write, not read-only: even a read-only SQLite connection must maintain
-# the -wal/-shm sidecars next to the shared control database.
-ReadWritePaths=/var/lib/dsh-links-relay /run/dsh-links-relay
+ReadOnlyPaths=/etc/dsh-links-relay /run/dsh-links-relay
+# Relay has no Control database path and cannot replace the Control socket. A
+# read-only mount still permits connect(2) to the existing Unix socket.
+InaccessiblePaths=/var/lib/dsh-links-relay
 AmbientCapabilities=
 
 [Install]

@@ -35,22 +35,6 @@ func Open(path string) (*Store, error) {
 	return s, nil
 }
 
-// OpenReadOnly opens an existing control database without running migrations
-// or creating WAL files. The relay process uses this path and never writes the
-// control database.
-func OpenReadOnly(path string) (*Store, error) {
-	dsn := fmt.Sprintf("file:%s?mode=ro&_pragma=query_only(1)&_pragma=foreign_keys(1)", path)
-	db, err := sql.Open("sqlite", dsn)
-	if err != nil {
-		return nil, err
-	}
-	if err := db.Ping(); err != nil {
-		db.Close()
-		return nil, err
-	}
-	return &Store{db: db}, nil
-}
-
 func OpenMemory() (*Store, error) {
 	db, err := sql.Open("sqlite", "file::memory:?cache=shared")
 	if err != nil {

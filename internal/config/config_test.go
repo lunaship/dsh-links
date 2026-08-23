@@ -51,6 +51,26 @@ ipc_auth_token_file = "/tmp/ipc.auth"
 	}
 }
 
+func TestLoadAdminPasswordFromFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "admin.password")
+	if err := os.WriteFile(path, []byte("correct horse battery staple\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := DefaultConfig()
+	cfg.AdminPasswordFile = path
+	got, err := cfg.LoadAdminPassword()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "correct horse battery staple" {
+		t.Fatalf("password=%q", got)
+	}
+	cfg.AdminPassword = "inline-conflict"
+	if _, err := cfg.LoadAdminPassword(); err == nil {
+		t.Fatal("inline and file passwords were both accepted")
+	}
+}
+
 // The deploy examples must stay loadable with the current config schema.
 func TestDeployExamplesLoad(t *testing.T) {
 	for _, name := range []string{"config.toml.example", "config-control.toml.example", "config-relay.toml.example"} {

@@ -53,6 +53,51 @@ func New(st *store.Store, issuerPriv []byte, routeMasterKey []byte, defaultMaxSt
 
 func (c *Control) IssuerPublicKey() ed25519.PublicKey { return c.issuerPub }
 
+// RouteMACRequest contains the complete, bounded CONNECT/BIND transcript that
+// Control authenticates on behalf of Relay. Keeping routeMasterKey behind this
+// method prevents an internet-facing Relay process from deriving credentials
+// for every route after a compromise.
+type RouteMACRequest struct {
+	Operation  string
+	RouteID    []byte
+	StreamID   []byte
+	Generation *uint64
+	Ts         int64
+	Nonce      []byte
+	Challenge  []byte
+	MAC        []byte
+}
+
+func (c *Control) VerifyRouteMAC(req RouteMACRequest) error {
+	if len(req.RouteID) != 16 || len(req.Nonce) != 16 || len(req.Challenge) != 32 || len(req.MAC) != sha256.Size {
+		return errors.New("invalid route MAC fields")
+	}
+	switch req.Operation {
+	case "CONNECT":
+		if len(req.StreamID) != 0 || req.Generation != nil {
+			return errors.New("invalid CONNECT transcript")
+		}
+	case "BIND":
+		if len(req.StreamID) != 16 || req.Generation == nil {
+			return errors.New("invalid BIND transcript")
+		}
+	default:
+		return errors.New("invalid route MAC operation")
+	}
+	if diff := req.Ts - time.Now().Unix(); diff < -60 || diff > 60 {
+		return errors.New("route MAC timestamp outside allowed window")
+	}
+	secret, err := cryptoutil.DeriveRouteSecret(c.routeMasterKey, req.RouteID)
+	if err != nil {
+		return err
+	}
+	transcript := cryptoutil.BuildMACTranscript(req.Operation, req.RouteID, req.StreamID, req.Generation, req.Ts, req.Nonce, req.Challenge)
+	if !cryptoutil.VerifyMAC(secret, transcript, req.MAC) {
+		return errors.New("route MAC invalid")
+	}
+	return nil
+}
+
 // EnrollRequest from agent via relay
 type EnrollRequest struct {
 	InviteCode    string

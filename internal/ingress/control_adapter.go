@@ -44,6 +44,14 @@ func (c *InProcessControl) LookupHostByRoute(routeId []byte) (string, uint64, []
 	return h.ID, uint64(h.Generation), h.HostPubKey, h.MaxStreams, revoked, nil
 }
 
+func (c *InProcessControl) VerifyRouteMAC(req *RouteMACProxyRequest) error {
+	return c.ctrl.VerifyRouteMAC(control.RouteMACRequest{
+		Operation: req.Operation, RouteID: req.RouteID, StreamID: req.StreamID,
+		Generation: req.Generation, Ts: req.Ts, Nonce: req.Nonce,
+		Challenge: req.Challenge, MAC: req.MAC,
+	})
+}
+
 func (c *InProcessControl) VerifyCapability(cap string) (*cryptoutil.CapabilityPayload, error) {
 	return cryptoutil.VerifyCapability(c.ctrl.IssuerPublicKey(), cap)
 }

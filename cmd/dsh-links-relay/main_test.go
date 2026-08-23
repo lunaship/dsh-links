@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/dsh-links/dsh-links-relay/internal/config"
@@ -43,7 +44,7 @@ func TestRequireAdminPassword(t *testing.T) {
 }
 
 func TestInitWritesLoadableConfig(t *testing.T) {
-	dir := t.TempDir()
+	dir := secureTempDir(t)
 	password, configPath, err := initLayout(dir, false, false, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -82,4 +83,90 @@ func TestInitWritesLoadableConfig(t *testing.T) {
 	if cfg.ClientListen != "127.0.0.1:8443" {
 		t.Fatalf("client_listen = %q", cfg.ClientListen)
 	}
+}
+
+func TestInitRejectsInsecurePreparedDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "prepared")
+	if err := os.Mkdir(dir, 0777); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0777); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := initLayout(dir, false, false, nil); err == nil || !strings.Contains(err.Error(), "group or other") {
+		t.Fatalf("insecure directory error=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "config.toml")); !os.IsNotExist(err) {
+		t.Fatalf("insecure directory received output: %v", err)
+	}
+}
+
+func TestInitDoesNotOverwritePreplantedFileWithoutForce(t *testing.T) {
+	dir := secureTempDir(t)
+	path := filepath.Join(dir, "route-master.key")
+	if err := os.WriteFile(path, []byte("attacker-controlled"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := initLayout(dir, false, false, nil); err == nil {
+		t.Fatal("init overwrote a pre-existing file without --force")
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "attacker-controlled" {
+		t.Fatalf("pre-existing content changed to %q", got)
+	}
+}
+
+func TestInitForceRejectsSymlinkAndPreservesTarget(t *testing.T) {
+	dir := secureTempDir(t)
+	target := filepath.Join(t.TempDir(), "target")
+	if err := os.WriteFile(target, []byte("preserve me"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(dir, "issuer.key")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := initLayout(dir, true, false, nil); err == nil {
+		t.Fatal("--force accepted a pre-planted symlink")
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "preserve me" {
+		t.Fatalf("symlink target changed to %q", got)
+	}
+}
+
+func TestInitForceOverwritesOwnedRegularLayout(t *testing.T) {
+	dir := secureTempDir(t)
+	firstPassword, _, err := initLayout(dir, false, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondPassword, configPath, err := initLayout(dir, true, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstPassword == secondPassword {
+		t.Fatal("--force did not rotate generated credentials")
+	}
+	info, err := os.Stat(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("config mode=%o, want 600", info.Mode().Perm())
+	}
+}
+
+func secureTempDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }

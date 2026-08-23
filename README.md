@@ -36,7 +36,7 @@ go run ./cmd/dsh-links-relay relay   --config .local/config.toml
 
 `init` 会打印一次性管理密码。浏览器打开 `http://127.0.0.1:8080/`，用 `admin` 和该密码登录。先起 control，再起 relay。
 
-VPS 部署见 `docs/RUNBOOK.md` 与 `deploy/systemd/`。容量数字尚未实测，不要把旧目标当成保证。
+VPS 推荐使用加固双容器部署，见 `deploy/docker/README.md`；systemd 分用户方案保留在 `deploy/`。容量数字尚未实测，不要把旧目标当成保证。
 
 ## 协议
 
@@ -69,6 +69,7 @@ CGO_ENABLED=0 go test ./internal/ingress -run TestSequential -v
 
 - `deploy/config.toml.example` — 配置模板
 - `deploy/systemd/` — `dsh-links-relay-control.service`, `dsh-links-relay-relay.service`
+- `docker-compose.yml` + `deploy/docker/` — 推荐的加固双容器部署
 - 先用 `dsh-links-relay init` 生成密钥与配置；容量需实测后才能写进承诺
 
 ## 兼容

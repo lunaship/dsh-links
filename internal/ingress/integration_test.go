@@ -33,7 +33,7 @@ func setupIngress(t *testing.T) (*Ingress, *control.Control, func()) {
 	reg := registry.New(1000)
 	m := metrics.New()
 	ctrl.SetRevokeFn(func(routeID, _ string) { reg.Revoke(routeID) })
-	ing := New("127.0.0.1:0", "127.0.0.1:0", nil, reg, NewInProcessControl(ctrl), m, routeMaster, issuerPub, 20*time.Second, 10*time.Second, 65*time.Second, 1000, 2000, 0, nil)
+	ing := New("127.0.0.1:0", "127.0.0.1:0", nil, reg, NewInProcessControl(ctrl), m, issuerPub, 20*time.Second, 10*time.Second, 65*time.Second, 1000, 2000, 0, nil)
 	if err := ing.Start(); err != nil {
 		t.Fatalf("start ingress: %v", err)
 	}

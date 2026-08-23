@@ -80,6 +80,33 @@ func TestIPCClientKeepsIdleConnectionAndReceivesResponsesAndPushes(t *testing.T)
 	if resp.RouteId == "" || resp.RouteSecret == "" || resp.Capability == "" {
 		t.Fatalf("incomplete enroll response: %+v", resp)
 	}
+	routeID, _ := base64.RawURLEncoding.DecodeString(resp.RouteId)
+	routeSecret, _ := base64.RawURLEncoding.DecodeString(resp.RouteSecret)
+	lookup, err := client.LookupHostByRoute(routeID)
+	if err != nil {
+		t.Fatalf("lookup over IPC: %v", err)
+	}
+	if lookup.HostID != "ipc-host" || lookup.Revoked || lookup.Generation != 1 {
+		t.Fatalf("unexpected lookup response: %+v", lookup)
+	}
+	connectNonce, _ := cryptoutil.RandomBytes(16)
+	connectChallenge, _ := cryptoutil.RandomBytes(32)
+	connectTs := time.Now().Unix()
+	transcript := cryptoutil.BuildMACTranscript("CONNECT", routeID, nil, nil, connectTs, connectNonce, connectChallenge)
+	mac := cryptoutil.ComputeMAC(routeSecret, transcript)
+	macReq := VerifyRouteMACIPCRequest{
+		Operation: "CONNECT", RouteID: resp.RouteId, Ts: connectTs,
+		Nonce:     base64.RawURLEncoding.EncodeToString(connectNonce),
+		Challenge: base64.RawURLEncoding.EncodeToString(connectChallenge),
+		MAC:       base64.RawURLEncoding.EncodeToString(mac),
+	}
+	if err := client.VerifyRouteMAC(macReq); err != nil {
+		t.Fatalf("valid route MAC rejected over IPC: %v", err)
+	}
+	macReq.MAC = base64.RawURLEncoding.EncodeToString(make([]byte, 32))
+	if err := client.VerifyRouteMAC(macReq); err == nil {
+		t.Fatal("invalid route MAC accepted over IPC")
+	}
 }
 
 func TestIPCServerRejectsOversizedPostAuthFrame(t *testing.T) {
