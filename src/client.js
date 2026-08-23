@@ -23,6 +23,23 @@ const createPanelModule = (require) => {
     return `${Math.floor(diff / 86_400_000)} 天前在线`
   }
 
+  /** 默认 Agent/Client 端口不展示；自定义端口仍原样显示。 */
+  function displayRelayHost(address) {
+    const raw = String(address ?? '').trim()
+    if (!raw) return ''
+    if (raw.startsWith('[')) {
+      const end = raw.indexOf(']')
+      if (end > 0) {
+        const host = raw.slice(1, end)
+        const rest = raw.slice(end + 1)
+        if (!rest || rest === ':8444' || rest === ':8443') return host
+      }
+      return raw
+    }
+    if (raw.endsWith(':8444') || raw.endsWith(':8443')) return raw.slice(0, -5)
+    return raw
+  }
+
   function urlRows(info) {
     return info?.infos
       ?? info?.urls?.map((u) => ({ url: u, label: u, category: 'other', isRecommended: false }))
@@ -414,13 +431,13 @@ const createPanelModule = (require) => {
   }
 
   function RelayForm({ relay, onEnroll, onDisconnect }) {
-    const [address, setAddress] = React.useState(relay?.agentAddress || '')
+    const [address, setAddress] = React.useState(displayRelayHost(relay?.agentAddress))
     const [invite, setInvite] = React.useState('')
     const [insecureTls, setInsecureTls] = React.useState(relay?.insecureTls !== false)
     const [busy, setBusy] = React.useState(false)
     const [message, setMessage] = React.useState('')
     React.useEffect(() => {
-      if (relay?.agentAddress) setAddress((cur) => cur || relay.agentAddress)
+      if (relay?.agentAddress) setAddress((cur) => cur || displayRelayHost(relay.agentAddress))
       if (relay && 'insecureTls' in relay) setInsecureTls(relay.insecureTls !== false)
     }, [relay?.agentAddress, relay?.insecureTls])
     const online = relay?.status === 'online'
@@ -433,12 +450,14 @@ const createPanelModule = (require) => {
       try {
         await onEnroll({ address, inviteCode: invite, insecureTls })
         setInvite('')
+        setAddress(displayRelayHost(address))
       } catch (err) {
         setMessage(String(err?.message ?? err))
       } finally {
         setBusy(false)
       }
     }
+    const connectedHost = displayRelayHost(relay?.agentAddress)
     return jsxs('form', {
       className: 'dshlink-relay-form',
       onSubmit: submit,
@@ -446,14 +465,15 @@ const createPanelModule = (require) => {
         jsxs('div', {
           className: 'dshlink-relay-row',
           children: [
-            jsx('label', { htmlFor: 'dsh-relay-addr', children: 'Relay 地址' }),
+            jsx('label', { htmlFor: 'dsh-relay-addr', children: 'Relay 主机' }),
             jsx('input', {
               id: 'dsh-relay-addr',
               className: 'dshlink-field',
               value: address,
-              placeholder: 'host 或 host:8444',
+              placeholder: '维护者提供的主机名',
               onChange: (event) => setAddress(event.target.value),
               autoComplete: 'off',
+              spellCheck: false,
             }),
           ],
         }),
@@ -501,7 +521,7 @@ const createPanelModule = (require) => {
         }),
         jsx('p', {
           className: 'dshlink-relay-status' + (relay?.status === 'error' || message ? ' is-error' : online ? ' is-ok' : ''),
-          children: message || (online ? `已在线 ${relay.agentAddress}` : (relay?.error || '未接入')),
+          children: message || (online ? (connectedHost ? `已接入 ${connectedHost}` : '已接入') : (relay?.error || '未接入')),
         }),
       ],
     })
@@ -524,7 +544,7 @@ const createPanelModule = (require) => {
             jsxs('div', {
               className: 'dshlink-step-body',
               children: [
-                jsx('div', { className: 'dshlink-step-title', children: '填入地址和接入码' }),
+                jsx('div', { className: 'dshlink-step-title', children: '填入主机和接入码' }),
                 jsx(RelayForm, { relay, onEnroll, onDisconnect }),
               ],
             }),

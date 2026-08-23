@@ -134,16 +134,32 @@ export function parseHostPort(address, defaultPort) {
   return { host: raw, port: defaultPort }
 }
 
+export const DEFAULT_AGENT_PORT = 8444
+export const DEFAULT_CLIENT_PORT = 8443
+
 export function deriveAddresses(input) {
-  const { host, port } = parseHostPort(input, 8444)
-  const agentPort = port === 8443 ? 8444 : port
-  const clientPort = agentPort === 8444 ? 8443 : agentPort
+  const { host, port } = parseHostPort(input, DEFAULT_AGENT_PORT)
+  const agentPort = port === DEFAULT_CLIENT_PORT ? DEFAULT_AGENT_PORT : port
+  const clientPort = agentPort === DEFAULT_AGENT_PORT ? DEFAULT_CLIENT_PORT : agentPort
   return {
     host,
     agentAddress: `${host}:${agentPort}`,
     clientAddress: `${host}:${clientPort}`,
     agentPort,
     clientPort,
+  }
+}
+
+/** UI 展示用：默认 8444/8443 不带端口；自定义端口仍保留。 */
+export function displayRelayHost(address) {
+  const raw = String(address ?? "").trim()
+  if (!raw) return ""
+  try {
+    const { host, port } = parseHostPort(raw, DEFAULT_AGENT_PORT)
+    if (port === DEFAULT_AGENT_PORT || port === DEFAULT_CLIENT_PORT) return host
+    return host.includes(":") ? `[${host}]:${port}` : `${host}:${port}`
+  } catch {
+    return raw
   }
 }
 

@@ -9,6 +9,7 @@ import {
   bindMac,
   signEd25519,
   deriveAddresses,
+  displayRelayHost,
 } from "../src/relay/crypto.js"
 
 const vectors = {
@@ -76,4 +77,14 @@ test("deriveAddresses maps host to 8444/8443", () => {
   assert.equal(deriveAddresses("relay.example.com").agentAddress, "relay.example.com:8444")
   assert.equal(deriveAddresses("relay.example.com").clientAddress, "relay.example.com:8443")
   assert.equal(deriveAddresses("10.0.0.2:8444").clientAddress, "10.0.0.2:8443")
+})
+
+test("displayRelayHost hides default ports", () => {
+  assert.equal(displayRelayHost("relay.example.com"), "relay.example.com")
+  assert.equal(displayRelayHost("relay.example.com:8444"), "relay.example.com")
+  assert.equal(displayRelayHost("relay.example.com:8443"), "relay.example.com")
+  assert.equal(displayRelayHost("10.0.0.2:8444"), "10.0.0.2")
+  assert.equal(displayRelayHost("[2001:db8::1]:8444"), "2001:db8::1")
+  assert.equal(displayRelayHost("relay.example.com:9000"), "relay.example.com:9000")
+  assert.equal(displayRelayHost(""), "")
 })
