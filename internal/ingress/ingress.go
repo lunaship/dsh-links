@@ -768,18 +768,17 @@ func (ing *Ingress) handleConnect(ctx *connContext, raw []byte) {
 
 	// Success: we have agentConn
 	agentConn, ok := bridgeInfo.AgentConn.(net.Conn)
+	defer ing.registry.Release(pending)
 	if !ok {
 		sendError(ctx.conn, protocol.ErrServerBusy, "bridge error")
 		return
 	}
 	agentFR, _ := bridgeInfo.AgentFR.(*protocol.FrameReader)
-	done := bridgeInfo.Done
 	if !ing.registry.AttachClient(pending, ctx.conn) {
 		_ = agentConn.Close()
 		sendError(ctx.conn, protocol.ErrAuthFailed, "stream no longer active")
 		return
 	}
-	defer ing.registry.Release(pending)
 
 	// Send READY to client
 	ready := protocol.ReadyFrame{Type: protocol.TypeReady, Stream: pending.StreamStr}
@@ -788,9 +787,6 @@ func (ing *Ingress) handleConnect(ctx *connContext, raw []byte) {
 	_ = ctx.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	if _, err := ctx.conn.Write(b); err != nil {
 		_ = agentConn.Close()
-		if done != nil {
-			close(done)
-		}
 		return
 	}
 	_ = ctx.conn.SetWriteDeadline(time.Time{})
@@ -816,16 +812,6 @@ func (ing *Ingress) handleConnect(ctx *connContext, raw []byte) {
 
 	ing.metrics.IncActiveStreams(1)
 	defer ing.metrics.IncActiveStreams(-1)
-	defer func() {
-		if done != nil {
-			// signal agent waiters that bridge finished
-			select {
-			case <-done:
-			default:
-				close(done)
-			}
-		}
-	}()
 	// Bridge blocks until done; it will close both conns
 	_ = bridge.Bridge(ctx.conn, agentConn,
 		func(n int64) { ing.metrics.AddRx(n) },

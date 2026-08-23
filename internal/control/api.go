@@ -43,16 +43,22 @@ type Server struct {
 	adminToken    string // legacy token auth
 	adminUser     string
 	adminPassword string
+	secureCookies bool
 	loginLimiter  *registry.RateLimiter
 	sessionsMu    sync.Mutex
 	sessions      map[[sha256.Size]byte]time.Time
 }
 
 func NewServer(ctrl *Control, adminToken, adminUser, adminPassword string) *Server {
+	return NewServerWithSecureCookies(ctrl, adminToken, adminUser, adminPassword, false)
+}
+
+func NewServerWithSecureCookies(ctrl *Control, adminToken, adminUser, adminPassword string, secureCookies bool) *Server {
 	return &Server{
 		control: ctrl, adminToken: adminToken, adminUser: adminUser, adminPassword: adminPassword,
-		loginLimiter: registry.NewRateLimiter(loginBurstAttempts, 5),
-		sessions:     make(map[[sha256.Size]byte]time.Time),
+		secureCookies: secureCookies,
+		loginLimiter:  registry.NewRateLimiter(loginBurstAttempts, 5),
+		sessions:      make(map[[sha256.Size]byte]time.Time),
 	}
 }
 
@@ -191,7 +197,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if cookie, err := r.Cookie(sessionCookieName); err == nil {
 		s.revokeSession(cookie.Value)
 	}
-	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: "", HttpOnly: true, SameSite: http.SameSiteStrictMode, Path: "/", MaxAge: -1})
+	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: "", HttpOnly: true, Secure: s.secureCookies, SameSite: http.SameSiteStrictMode, Path: "/", MaxAge: -1})
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 }
@@ -273,7 +279,7 @@ func (s *Server) issueSession(w http.ResponseWriter, now time.Time) error {
 	s.sessions[hash] = expires
 	s.sessionsMu.Unlock()
 	http.SetCookie(w, &http.Cookie{
-		Name: sessionCookieName, Value: token, HttpOnly: true, SameSite: http.SameSiteStrictMode,
+		Name: sessionCookieName, Value: token, HttpOnly: true, Secure: s.secureCookies, SameSite: http.SameSiteStrictMode,
 		Path: "/", MaxAge: int(sessionTTL.Seconds()), Expires: expires,
 	})
 	return nil

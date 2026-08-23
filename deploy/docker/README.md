@@ -47,8 +47,9 @@ docker compose ps
 ./deploy/docker/verify-runtime.sh
 ```
 
-The Control UI is published only at `127.0.0.1:8080`; ports 8443 and 8444 are
-the only public listeners. Use an SSH tunnel for remote administration.
+The TLS-protected Control UI is published only at `https://127.0.0.1:8080`;
+ports 8443 and 8444 are the only public listeners. The generated certificate
+includes the loopback SANs; use an SSH tunnel for remote administration.
 
 For released images, set `DSH_RELAY_IMAGE` to an immutable digest and omit
 `--build`, for example `registry.example/dsh-links-relay@sha256:...`.

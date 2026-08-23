@@ -58,6 +58,8 @@ type PendingStream struct {
 	session      *AgentSession
 	agentCloser  io.Closer
 	clientCloser io.Closer
+	bridgeDone   chan struct{}
+	doneOnce     sync.Once
 }
 
 type BridgeInfo struct {
@@ -300,6 +302,7 @@ func (r *Registry) PublishBridge(p *PendingStream, info *BridgeInfo) bool {
 	if current, ok := sess.streams[p.StreamStr]; !ok || current != p {
 		return false
 	}
+	p.bridgeDone = info.Done
 	select {
 	case p.BridgeCh <- info:
 		return true
@@ -322,6 +325,7 @@ func (r *Registry) Cancel(p *PendingStream, reason error) {
 		signalStream(p, reason)
 	}
 	sess.mu.Unlock()
+	p.finishBridge()
 }
 
 // Release removes a completed bridge and releases its budget.
@@ -333,6 +337,7 @@ func (r *Registry) Release(p *PendingStream) {
 		r.totalStreams.Add(-1)
 	}
 	sess.mu.Unlock()
+	p.finishBridge()
 }
 
 // Revoke closes and removes agent and fails pendings.
@@ -378,4 +383,12 @@ func closeStream(p *PendingStream) {
 	if p.agentCloser != nil {
 		_ = p.agentCloser.Close()
 	}
+	p.finishBridge()
+}
+
+func (p *PendingStream) finishBridge() {
+	if p.bridgeDone == nil {
+		return
+	}
+	p.doneOnce.Do(func() { close(p.bridgeDone) })
 }

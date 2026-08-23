@@ -132,7 +132,8 @@ func runControl(configPath string) {
 	})
 
 	// Start HTTP admin
-	adminSrv := control.NewServer(ctrl, adminToken, cfg.AdminUser, adminPassword)
+	adminTLS := strings.TrimSpace(cfg.AdminTLSCert) != ""
+	adminSrv := control.NewServerWithSecureCookies(ctrl, adminToken, cfg.AdminUser, adminPassword, adminTLS)
 	httpSrv := &http.Server{
 		Addr:              cfg.AdminListen,
 		Handler:           adminSrv.Handler(),
@@ -142,12 +143,22 @@ func runControl(configPath string) {
 		IdleTimeout:       60 * time.Second,
 		MaxHeaderBytes:    16 << 10,
 	}
-	if !isLoopbackListen(cfg.AdminListen) && !cfg.AdminAllowNonLoopback {
-		log.Fatalf("admin_listen must be loopback unless admin_allow_non_loopback is explicitly enabled, got %s", cfg.AdminListen)
+	if err := validateAdminTransport(cfg.AdminListen, cfg.AdminAllowNonLoopback, cfg.AdminTLSCert, cfg.AdminTLSKey); err != nil {
+		log.Fatal(err)
 	}
 	go func() {
-		log.Printf("admin API listening on %s", cfg.AdminListen)
-		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		scheme := "http"
+		if adminTLS {
+			scheme = "https"
+		}
+		log.Printf("admin API listening on %s://%s", scheme, cfg.AdminListen)
+		var err error
+		if adminTLS {
+			err = httpSrv.ListenAndServeTLS(cfg.AdminTLSCert, cfg.AdminTLSKey)
+		} else {
+			err = httpSrv.ListenAndServe()
+		}
+		if err != nil && err != http.ErrServerClosed {
 			log.Fatalf("admin http: %v", err)
 		}
 	}()
@@ -284,6 +295,19 @@ func isLoopbackListen(addr string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+func validateAdminTransport(addr string, allowNonLoopback bool, tlsCert, tlsKey string) error {
+	if isLoopbackListen(addr) {
+		return nil
+	}
+	if !allowNonLoopback {
+		return fmt.Errorf("admin_listen must be loopback unless admin_allow_non_loopback is explicitly enabled, got %s", addr)
+	}
+	if strings.TrimSpace(tlsCert) == "" || strings.TrimSpace(tlsKey) == "" {
+		return fmt.Errorf("non-loopback admin_listen requires admin_tls_cert and admin_tls_key")
+	}
+	return nil
 }
 
 // ipcControlAdapter implements ingress.ControlAPI exclusively via IPC. Relay

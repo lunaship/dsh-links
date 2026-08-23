@@ -9,7 +9,8 @@ ipc_auth_token_file = "/etc/dsh-links-relay/ipc.auth"
 # Capability issuer key (Ed25519). Relay gets only the public half.
 issuer_private_key = "/etc/dsh-links-relay/issuer.key"
 
-# Shared with the relay (group-readable by dsh-shared, 0640 root:dsh-shared).
+# Control-only route derivation key. Keep it root:dsh-ctl, mode 0640 (or
+# stricter); the Relay must never be able to read this file.
 route_master_key = "/etc/dsh-links-relay/route-master.key"
 
 admin_token_file = "/etc/dsh-links-relay/admin.token"

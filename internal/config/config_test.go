@@ -71,9 +71,27 @@ func TestLoadAdminPasswordFromFile(t *testing.T) {
 	}
 }
 
+func TestValidateRequiresCompleteAdminTLSKeypair(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.AdminTLSCert = "/tmp/admin.crt"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "configured together") {
+		t.Fatalf("partial admin TLS config error=%v", err)
+	}
+	cfg.AdminTLSKey = "/tmp/admin.key"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("complete admin TLS config rejected: %v", err)
+	}
+}
+
 // The deploy examples must stay loadable with the current config schema.
 func TestDeployExamplesLoad(t *testing.T) {
-	for _, name := range []string{"config.toml.example", "config-control.toml.example", "config-relay.toml.example"} {
+	for _, name := range []string{
+		"config.toml.example",
+		"config-control.toml.example",
+		"config-relay.toml.example",
+		filepath.Join("docker", "control.toml"),
+		filepath.Join("docker", "relay.toml"),
+	} {
 		cfg, err := Load(filepath.Join("..", "..", "deploy", name))
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)

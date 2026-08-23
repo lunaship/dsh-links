@@ -97,6 +97,21 @@ func TestLoginUsesOpaqueRevocableSession(t *testing.T) {
 	}
 }
 
+func TestTLSServerMarksSessionCookieSecure(t *testing.T) {
+	server := NewServerWithSecureCookies(nil, "legacy-token-0123456789", "admin", "correct horse battery staple", true)
+	req := httptest.NewRequest(http.MethodPost, "https://127.0.0.1:8080/login", strings.NewReader(`{"user":"admin","password":"correct horse battery staple"}`))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("login status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	cookies := recorder.Result().Cookies()
+	if len(cookies) != 1 || !cookies[0].Secure {
+		t.Fatalf("TLS session cookie is not Secure: %+v", cookies)
+	}
+}
+
 func TestAdminRequestBodyIsBounded(t *testing.T) {
 	server := NewServer(nil, "legacy-token-0123456789", "admin", "password")
 	body, err := json.Marshal(map[string]string{"user": "admin", "password": strings.Repeat("x", maxAdminBodyBytes)})

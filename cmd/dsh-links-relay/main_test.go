@@ -31,6 +31,18 @@ func TestIsLoopbackListen(t *testing.T) {
 	}
 }
 
+func TestValidateAdminTransportRequiresTLSOffLoopback(t *testing.T) {
+	if err := validateAdminTransport("127.0.0.1:8080", false, "", ""); err != nil {
+		t.Fatalf("loopback HTTP rejected: %v", err)
+	}
+	if err := validateAdminTransport("0.0.0.0:8080", true, "", ""); err == nil {
+		t.Fatal("non-loopback cleartext admin listener accepted")
+	}
+	if err := validateAdminTransport("0.0.0.0:8080", true, "/tmp/admin.crt", "/tmp/admin.key"); err != nil {
+		t.Fatalf("non-loopback TLS listener rejected: %v", err)
+	}
+}
+
 func TestRequireAdminPassword(t *testing.T) {
 	if err := requireAdminPassword(""); err == nil {
 		t.Fatal("empty password accepted")
@@ -82,6 +94,24 @@ func TestInitWritesLoadableConfig(t *testing.T) {
 	}
 	if cfg.ClientListen != "127.0.0.1:8443" {
 		t.Fatalf("client_listen = %q", cfg.ClientListen)
+	}
+}
+
+func TestInitListenAllConfiguresAdminTLS(t *testing.T) {
+	dir := secureTempDir(t)
+	_, configPath, err := initLayout(dir, false, true, []string{"relay.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.AdminAllowNonLoopback || cfg.AdminTLSCert == "" || cfg.AdminTLSKey == "" {
+		t.Fatalf("listen-all admin transport is not TLS protected: %+v", cfg)
+	}
+	if err := validateAdminTransport(cfg.AdminListen, cfg.AdminAllowNonLoopback, cfg.AdminTLSCert, cfg.AdminTLSKey); err != nil {
+		t.Fatal(err)
 	}
 }
 

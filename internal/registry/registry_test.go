@@ -5,6 +5,7 @@ import (
 	"io"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 type testSender struct{ closed atomic.Bool }
@@ -86,6 +87,41 @@ func TestBoundStreamRetainsBudgetsAndRevocationOwnership(t *testing.T) {
 	if got := r.TotalActiveStreams(); got != 0 {
 		t.Fatalf("stream budget leaked after revoke: %d", got)
 	}
+}
+
+func TestRevocationAfterPublishSignalsBridgeCompletion(t *testing.T) {
+	r := New(1)
+	sess := testSession("route", 1)
+	if _, err := r.Register(sess); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := r.CreatePending("route", "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.CompleteBind("route", pending.StreamStr, 1, &testCloser{}); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	if !r.PublishBridge(pending, &BridgeInfo{Done: done}) {
+		t.Fatal("publish bridge failed")
+	}
+
+	r.Revoke("route")
+	if r.AttachClient(pending, &testCloser{}) {
+		t.Fatal("client attached after revocation")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("BIND completion was not signaled after revocation")
+	}
+	if got := r.TotalActiveStreams(); got != 0 {
+		t.Fatalf("stream budget leaked after revocation: %d", got)
+	}
+	// The client path releases defensively after every received BridgeInfo.
+	// Completion must remain idempotent when revocation won the race.
+	r.Release(pending)
 }
 
 var _ io.Closer = (*testCloser)(nil)

@@ -98,6 +98,12 @@ CREATE TABLE IF NOT EXISTS credentials (
   revoked_at INTEGER
 );
 
+CREATE TABLE IF NOT EXISTS renewal_replays (
+  digest BLOB PRIMARY KEY,
+  host_id TEXT NOT NULL REFERENCES hosts(id),
+  expires_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS stats_daily (
   host_id TEXT NOT NULL REFERENCES hosts(id),
   date TEXT NOT NULL,
@@ -110,6 +116,7 @@ CREATE TABLE IF NOT EXISTS stats_daily (
 CREATE INDEX IF NOT EXISTS idx_invites_expires ON invites(expires_at);
 CREATE INDEX IF NOT EXISTS idx_hosts_route ON hosts(route_id);
 CREATE INDEX IF NOT EXISTS idx_hosts_pubkey ON hosts(host_pubkey);
+CREATE INDEX IF NOT EXISTS idx_renewal_replays_expires ON renewal_replays(expires_at);
 `
 	_, err := s.db.Exec(schema)
 	return err

@@ -28,3 +28,26 @@ func TestRateLimiterExpiresInactiveKeys(t *testing.T) {
 		t.Fatalf("bucket count=%d, want 1", got)
 	}
 }
+
+func TestRateLimiterRefreshesLRUWithoutScanningAtCapacity(t *testing.T) {
+	rl := NewRateLimiterWithBounds(3, 1, 3, time.Hour)
+	for _, key := range []string{"a", "b", "c"} {
+		if !rl.Allow(key) {
+			t.Fatalf("initial key %q rejected", key)
+		}
+	}
+	if !rl.Allow("a") {
+		t.Fatal("existing key rejected")
+	}
+	if !rl.Allow("d") {
+		t.Fatal("new key rejected at capacity")
+	}
+	if _, ok := rl.buckets["b"]; ok {
+		t.Fatal("least-recently-used key was not evicted")
+	}
+	for _, key := range []string{"a", "c", "d"} {
+		if _, ok := rl.buckets[key]; !ok {
+			t.Fatalf("recent key %q was evicted", key)
+		}
+	}
+}

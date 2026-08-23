@@ -142,3 +142,43 @@ func TestRenewRejectsExpiredCapability(t *testing.T) {
 		t.Fatalf("expired capability renewed: err=%v", err)
 	}
 }
+
+func TestRenewRejectsExactReplay(t *testing.T) {
+	ctrl, st := newTestControl(t)
+	defer st.Close()
+	invite, err := ctrl.CreateInvite(30 * time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostID := "host-renew-replay"
+	enrollReq := enrollRequest(t, invite, hostID, priv)
+	enrolled, err := ctrl.Enroll(enrollReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonce, _ := cryptoutil.RandomBytes(16)
+	challenge, _ := cryptoutil.RandomBytes(32)
+	ts := time.Now().Unix()
+	proof := ed25519.Sign(priv, cryptoutil.BuildRenewTranscript(enrolled.Capability, ts, nonce, challenge))
+	req := &RenewRequest{
+		RouteId: enrolled.RouteId, HostId: hostID, HostPubKey: enrollReq.HostPublicKey,
+		Ts: ts, Nonce: nonce, Challenge: challenge, Proof: proof, OldCapability: enrolled.Capability,
+	}
+	if _, err := ctrl.Renew(req); err != nil {
+		t.Fatalf("first renewal failed: %v", err)
+	}
+	if _, err := ctrl.Renew(req); err == nil || !strings.Contains(err.Error(), "replay") {
+		t.Fatalf("exact renewal replay accepted: %v", err)
+	}
+	credentials, err := st.ListCredentials(hostID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(credentials) != 2 {
+		t.Fatalf("replay changed credential count to %d, want enrollment plus one renewal", len(credentials))
+	}
+}

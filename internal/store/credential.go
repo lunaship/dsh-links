@@ -4,8 +4,11 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
+	"errors"
 	"time"
 )
+
+var ErrRenewalReplay = errors.New("renewal replay")
 
 type Credential struct {
 	ID             string
@@ -76,4 +79,60 @@ func (s *Store) PruneCredentials(hostID string, keep int) error {
 			SELECT id FROM credentials WHERE host_id=? ORDER BY issued_at DESC, id DESC LIMIT ?
 		)`, hostID, hostID, keep)
 	return err
+}
+
+func (s *Store) IsRenewalReplay(replayDigest []byte, now int64) (bool, error) {
+	var one int
+	err := s.db.QueryRow(`SELECT 1 FROM renewal_replays WHERE digest=? AND expires_at>?`, replayDigest, now).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// RecordRenewal atomically consumes a signed renewal transcript and records
+// its new credential. Concurrent or later replay of the same transcript cannot
+// create or return another capability.
+func (s *Store) RecordRenewal(hostID string, replayDigest, capHash []byte, generation int64, issuedAt, expiresAt, replayExpiresAt int64, keep int) error {
+	if keep < 1 {
+		keep = 1
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM renewal_replays WHERE expires_at <= ?`, time.Now().Unix()); err != nil {
+		return err
+	}
+	result, err := tx.Exec(`INSERT OR IGNORE INTO renewal_replays(digest, host_id, expires_at) VALUES(?,?,?)`, replayDigest, hostID, replayExpiresAt)
+	if err != nil {
+		return err
+	}
+	inserted, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if inserted != 1 {
+		return ErrRenewalReplay
+	}
+	rb := make([]byte, 16)
+	if _, err := rand.Read(rb); err != nil {
+		return err
+	}
+	id := base64.RawURLEncoding.EncodeToString(rb)
+	if _, err := tx.Exec(`INSERT INTO credentials(id, host_id, capability_hash, generation, issued_at, expires_at) VALUES(?,?,?,?,?,?)`,
+		id, hostID, capHash, generation, issuedAt, expiresAt); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(
+		`DELETE FROM credentials WHERE host_id=? AND id NOT IN (
+			SELECT id FROM credentials WHERE host_id=? ORDER BY issued_at DESC, id DESC LIMIT ?
+		)`, hostID, hostID, keep); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

@@ -4,10 +4,12 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -194,6 +196,101 @@ func TestIPCServerCapsConcurrentClients(t *testing.T) {
 	if _, err := extra.Read(buf); err == nil {
 		t.Fatal("connection above IPC client cap remained open")
 	}
+}
+
+func TestIPCServerCapsUnauthenticatedPeersSeparately(t *testing.T) {
+	ctrl, st := newTestControl(t)
+	defer st.Close()
+	tempDir, err := os.MkdirTemp("", "dlr-ipc-preauth-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tempDir)
+	socket := filepath.Join(tempDir, "control.sock")
+	server := NewIPCServer(ctrl, socket, "0123456789abcdef0123456789abcdef")
+	if err := server.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+
+	connections := make([]net.Conn, 0, maxIPCPreAuthConnections)
+	defer func() {
+		for _, conn := range connections {
+			_ = conn.Close()
+		}
+	}()
+	for i := 0; i < maxIPCPreAuthConnections; i++ {
+		conn, err := net.Dial("unix", socket)
+		if err != nil {
+			t.Fatal(err)
+		}
+		connections = append(connections, conn)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		server.mu.Lock()
+		count := server.preAuthConnections
+		server.mu.Unlock()
+		if count == maxIPCPreAuthConnections {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("server tracked %d pre-auth peers, want %d", count, maxIPCPreAuthConnections)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	extra, err := net.Dial("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer extra.Close()
+	_ = extra.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := extra.Write([]byte("x")); err != nil {
+		return
+	}
+	buf := make([]byte, 1)
+	if _, err := extra.Read(buf); err == nil {
+		t.Fatal("connection above pre-auth IPC cap remained open")
+	}
+}
+
+func TestIPCWritesAreIsolatedPerConnection(t *testing.T) {
+	server := &IPCServer{writers: make(map[net.Conn]*sync.Mutex)}
+	blockedServer, blockedClient := net.Pipe()
+	defer blockedServer.Close()
+	defer blockedClient.Close()
+	healthyServer, healthyClient := net.Pipe()
+	defer healthyServer.Close()
+	defer healthyClient.Close()
+	server.writers[blockedServer] = &sync.Mutex{}
+	server.writers[healthyServer] = &sync.Mutex{}
+
+	blockedStarted := make(chan struct{})
+	go func() {
+		close(blockedStarted)
+		server.writeIPC(blockedServer, []byte("blocked\n"))
+	}()
+	<-blockedStarted
+	time.Sleep(20 * time.Millisecond)
+
+	healthyRead := make(chan error, 1)
+	go func() {
+		buf := make([]byte, len("healthy\n"))
+		_, err := io.ReadFull(healthyClient, buf)
+		healthyRead <- err
+	}()
+	if !server.writeIPC(healthyServer, []byte("healthy\n")) {
+		t.Fatal("healthy connection write failed while another peer was blocked")
+	}
+	select {
+	case err := <-healthyRead:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("blocked peer serialized an unrelated IPC write")
+	}
+	_ = blockedClient.Close()
 }
 
 func TestIPCClientReconnectsAfterServerRestart(t *testing.T) {

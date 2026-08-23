@@ -66,7 +66,11 @@ config.toml, and a one-time admin password. Does not start the service.
 	fmt.Printf("Wrote %s\n", configPath)
 	fmt.Printf("Admin user: admin\n")
 	fmt.Printf("Admin password: %s\n", password)
-	fmt.Printf("Admin UI: http://127.0.0.1:8080/ (loopback only)\n")
+	if listenAll {
+		fmt.Printf("Admin UI: https://127.0.0.1:8080/ (TLS required on non-loopback listener)\n")
+	} else {
+		fmt.Printf("Admin UI: http://127.0.0.1:8080/ (loopback only)\n")
+	}
 	fmt.Printf("\nStart control first, then relay:\n")
 	fmt.Printf("  dsh-links-relay control --config %s\n", configPath)
 	fmt.Printf("  dsh-links-relay relay   --config %s\n", configPath)

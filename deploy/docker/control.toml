@@ -2,6 +2,8 @@
 # 127.0.0.1; Relay is attached to a different Docker network.
 admin_listen = "0.0.0.0:8080"
 admin_allow_non_loopback = true
+admin_tls_cert = "/etc/dsh-links-relay/admin.crt"
+admin_tls_key = "/run/secrets/admin-tls-key"
 control_socket = "/run/dsh-links-relay/control.sock"
 ipc_auth_token_file = "/run/secrets/ipc-auth"
 

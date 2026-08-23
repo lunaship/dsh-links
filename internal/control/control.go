@@ -234,6 +234,14 @@ func (c *Control) Renew(req *RenewRequest) (string, error) {
 		return "", errors.New("old capability mismatch")
 	}
 	transcript := cryptoutil.BuildRenewTranscript(req.OldCapability, req.Ts, req.Nonce, req.Challenge)
+	replayDigest := sha256.Sum256(transcript)
+	replayed, err := c.store.IsRenewalReplay(replayDigest[:], time.Now().Unix())
+	if err != nil {
+		return "", fmt.Errorf("check renewal replay: %w", err)
+	}
+	if replayed {
+		return "", errors.New("renew request replayed")
+	}
 	if !ed25519.Verify(ed25519.PublicKey(req.HostPubKey), transcript, req.Proof) {
 		return "", errors.New("renew proof invalid")
 	}
@@ -255,14 +263,14 @@ func (c *Control) Renew(req *RenewRequest) (string, error) {
 		return "", err
 	}
 	hash := sha256.Sum256([]byte(capStr))
-	if _, err := c.store.CreateCredential(req.HostId, hash[:], int64(payload.Generation), payload.Iat, payload.Exp); err != nil {
+	if err := c.store.RecordRenewal(req.HostId, replayDigest[:], hash[:], int64(payload.Generation), payload.Iat, payload.Exp, time.Now().Add(2*time.Minute).Unix(), maxCredentialsPerHost); err != nil {
+		if errors.Is(err, store.ErrRenewalReplay) {
+			return "", errors.New("renew request replayed")
+		}
 		// A capability that is not recorded must not be handed out: revocation
 		// audits and credential tracking would silently diverge.
 		return "", fmt.Errorf("record credential: %w", err)
 	}
-	// Housekeeping only: renewal already succeeded, so a prune failure is not
-	// worth failing the exchange over. Bounds credential rows per host.
-	_ = c.store.PruneCredentials(req.HostId, maxCredentialsPerHost)
 	return capStr, nil
 }
 

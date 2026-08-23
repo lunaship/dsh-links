@@ -16,6 +16,8 @@ type Config struct {
 	AgentListen           string `toml:"agent_listen"`
 	AdminListen           string `toml:"admin_listen"`
 	AdminAllowNonLoopback bool   `toml:"admin_allow_non_loopback"`
+	AdminTLSCert          string `toml:"admin_tls_cert"`
+	AdminTLSKey           string `toml:"admin_tls_key"`
 	ControlSocket         string `toml:"control_socket"`
 
 	TLSCert string `toml:"tls_cert"`
@@ -94,6 +96,9 @@ func Load(path string) (*Config, error) {
 
 func (c *Config) Validate() error {
 	var err error
+	if (strings.TrimSpace(c.AdminTLSCert) == "") != (strings.TrimSpace(c.AdminTLSKey) == "") {
+		return fmt.Errorf("admin_tls_cert and admin_tls_key must be configured together")
+	}
 	if c.HeartbeatIntervalDur, err = time.ParseDuration(c.HeartbeatInterval); err != nil {
 		return fmt.Errorf("heartbeat_interval: %w", err)
 	}

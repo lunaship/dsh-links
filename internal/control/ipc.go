@@ -17,10 +17,12 @@ import (
 )
 
 const (
-	maxIPCFrameBytes       = 16 << 10
-	maxIPCConnections      = 32
-	ipcPartialFrameTimeout = 5 * time.Second
-	ipcWriteTimeout        = 5 * time.Second
+	maxIPCFrameBytes            = 16 << 10
+	maxIPCConnections           = 32
+	maxIPCPreAuthConnections    = 8
+	ipcPartialFrameTimeout      = 5 * time.Second
+	ipcWriteTimeout             = 5 * time.Second
+	ipcAuthenticatedIdleTimeout = 5 * time.Minute
 	// ipcAuthTotalTimeout is an absolute wall-clock bound on the whole auth
 	// frame. Per-segment timeouts alone allowed a byte-trickling peer to hold
 	// an unauthenticated connection slot indefinitely.
@@ -83,21 +85,22 @@ type VerifyRouteMACIPCRequest struct {
 
 // IPCServer runs on control side
 type IPCServer struct {
-	control        *Control
-	socket         string
-	listener       net.Listener
-	mu             sync.Mutex
-	writeMu        sync.Mutex
-	clients        map[net.Conn]struct{}
-	connections    map[net.Conn]struct{}
-	revokeHandlers []func(routeId string)
-	authToken      string // empty = no auth; otherwise HMAC-SHA256 keyed
+	control            *Control
+	socket             string
+	listener           net.Listener
+	mu                 sync.Mutex
+	clients            map[net.Conn]struct{}
+	connections        map[net.Conn]struct{}
+	writers            map[net.Conn]*sync.Mutex
+	preAuthConnections int
+	revokeHandlers     []func(routeId string)
+	authToken          string // empty = no auth; otherwise HMAC-SHA256 keyed
 }
 
 func NewIPCServer(ctrl *Control, socketPath string, authToken string) *IPCServer {
 	return &IPCServer{
 		control: ctrl, socket: socketPath, authToken: authToken,
-		clients: make(map[net.Conn]struct{}), connections: make(map[net.Conn]struct{}),
+		clients: make(map[net.Conn]struct{}), connections: make(map[net.Conn]struct{}), writers: make(map[net.Conn]*sync.Mutex),
 	}
 }
 
@@ -148,22 +151,31 @@ func (s *IPCServer) acceptLoop() {
 			return
 		}
 		s.mu.Lock()
-		if len(s.connections) >= maxIPCConnections {
+		if len(s.connections) >= maxIPCConnections || (s.authToken != "" && s.preAuthConnections >= maxIPCPreAuthConnections) {
 			s.mu.Unlock()
 			_ = conn.Close()
 			continue
 		}
 		s.connections[conn] = struct{}{}
+		s.writers[conn] = &sync.Mutex{}
+		if s.authToken != "" {
+			s.preAuthConnections++
+		}
 		s.mu.Unlock()
 		go s.handleConn(conn)
 	}
 }
 
 func (s *IPCServer) handleConn(conn net.Conn) {
+	authenticated := s.authToken == ""
 	defer func() {
 		s.mu.Lock()
+		if !authenticated && s.authToken != "" {
+			s.preAuthConnections--
+		}
 		delete(s.clients, conn)
 		delete(s.connections, conn)
+		delete(s.writers, conn)
 		s.mu.Unlock()
 		conn.Close()
 	}()
@@ -194,10 +206,14 @@ func (s *IPCServer) handleConn(conn net.Conn) {
 		_ = conn.SetDeadline(time.Time{})
 	}
 	s.mu.Lock()
+	if !authenticated {
+		s.preAuthConnections--
+		authenticated = true
+	}
 	s.clients[conn] = struct{}{}
 	s.mu.Unlock()
 	for {
-		line, err := readIPCFrame(conn, reader, 0)
+		line, err := readIPCFrame(conn, reader, ipcAuthenticatedIdleTimeout)
 		if err != nil {
 			return
 		}
@@ -313,17 +329,17 @@ func (s *IPCServer) BroadcastRevoke(routeId, hostId string) int {
 		clients = append(clients, c)
 	}
 	s.mu.Unlock()
-	count := 0
+	delivered := make(chan bool, len(clients))
 	for _, c := range clients {
-		s.writeMu.Lock()
-		_ = c.SetWriteDeadline(time.Now().Add(ipcWriteTimeout))
-		if _, err := c.Write(line); err == nil {
+		go func(conn net.Conn) {
+			delivered <- s.writeIPC(conn, line)
+		}(c)
+	}
+	count := 0
+	for range clients {
+		if <-delivered {
 			count++
-		} else {
-			_ = c.Close()
 		}
-		_ = c.SetWriteDeadline(time.Time{})
-		s.writeMu.Unlock()
 	}
 	return count
 }
@@ -445,11 +461,26 @@ func (s *IPCServer) sendIPCResponse(conn net.Conn, typ string, payload interface
 	msg := IPCMessage{Type: typ, Payload: b}
 	line, _ := json.Marshal(msg)
 	line = append(line, '\n')
-	s.writeMu.Lock()
+	s.writeIPC(conn, line)
+}
+
+func (s *IPCServer) writeIPC(conn net.Conn, line []byte) bool {
+	s.mu.Lock()
+	writer := s.writers[conn]
+	s.mu.Unlock()
+	if writer == nil {
+		return false
+	}
+	writer.Lock()
+	defer writer.Unlock()
 	_ = conn.SetWriteDeadline(time.Now().Add(ipcWriteTimeout))
-	_, _ = conn.Write(line)
+	_, err := conn.Write(line)
 	_ = conn.SetWriteDeadline(time.Time{})
-	s.writeMu.Unlock()
+	if err != nil {
+		_ = conn.Close()
+		return false
+	}
+	return true
 }
 
 func (s *IPCServer) sendIPCError(conn net.Conn, code, msg string) {
@@ -796,9 +827,8 @@ func hmacSHA256(key, data []byte) []byte {
 	return m.Sum(nil)
 }
 
-// readIPCFrame waits indefinitely for an idle authenticated peer's first byte,
-// but once a frame starts it must finish quickly and stay within the fixed
-// buffer. firstByteTimeout is used for the unauthenticated auth frame.
+// readIPCFrame applies a caller-selected first-byte deadline. Once a frame
+// starts it must finish quickly and stay within the fixed buffer.
 func readIPCFrame(conn net.Conn, reader *bufio.Reader, firstByteTimeout time.Duration) ([]byte, error) {
 	if firstByteTimeout > 0 {
 		_ = conn.SetReadDeadline(time.Now().Add(firstByteTimeout))

@@ -37,12 +37,15 @@ services:
     configs:
       - source: control-config
         target: /etc/dsh-links-relay/config.toml
+      - source: relay-certificate
+        target: /etc/dsh-links-relay/admin.crt
     secrets:
       - issuer-private
       - route-master
       - admin-token
       - admin-password
       - ipc-auth
+      - admin-tls-key
 
   relay:
     <<: *runtime
@@ -107,4 +110,6 @@ secrets:
   ipc-auth:
     file: ${DSH_DOCKER_SECRETS_DIR:-./.docker-secrets}/ipc.auth
   relay-tls-key:
+    file: ${DSH_DOCKER_SECRETS_DIR:-./.docker-secrets}/relay.key
+  admin-tls-key:
     file: ${DSH_DOCKER_SECRETS_DIR:-./.docker-secrets}/relay.key
