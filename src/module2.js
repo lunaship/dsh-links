@@ -427,22 +427,25 @@ const createPanelModule = (require) => {
   function RelayForm({ relay, onEnroll, onDisconnect }) {
     const [address, setAddress] = React.useState(displayRelayHost(relay?.agentAddress))
     const [invite, setInvite] = React.useState('')
-    const [insecureTls, setInsecureTls] = React.useState(relay?.insecureTls !== false)
+    const [insecureTls, setInsecureTls] = React.useState(relay?.insecureTls === true)
+    const [tlsFingerprint, setTlsFingerprint] = React.useState(relay?.tlsPinTrusted ? (relay?.tlsFingerprint || '') : '')
     const [busy, setBusy] = React.useState(false)
     const [message, setMessage] = React.useState('')
     React.useEffect(() => {
       if (relay?.agentAddress) setAddress((cur) => cur || displayRelayHost(relay.agentAddress))
-      if (relay && 'insecureTls' in relay) setInsecureTls(relay.insecureTls !== false)
-    }, [relay?.agentAddress, relay?.insecureTls])
+      if (relay && 'insecureTls' in relay) setInsecureTls(relay.insecureTls === true)
+      if (relay?.tlsPinTrusted && relay?.tlsFingerprint) setTlsFingerprint(relay.tlsFingerprint)
+    }, [relay?.agentAddress, relay?.insecureTls, relay?.tlsFingerprint, relay?.tlsPinTrusted])
     const online = relay?.status === 'online'
-    const canSubmit = address.trim() && invite.trim() && !busy
+    const normalizedFingerprint = tlsFingerprint.replace(/[:\s]/g, '')
+    const canSubmit = address.trim() && invite.trim() && (!insecureTls || /^[0-9a-f]{64}$/i.test(normalizedFingerprint)) && !busy
     const submit = async (event) => {
       event.preventDefault()
       if (!canSubmit) return
       setBusy(true)
       setMessage('')
       try {
-        await onEnroll({ address, inviteCode: invite, insecureTls })
+        await onEnroll({ address, inviteCode: invite, insecureTls, tlsFingerprint: normalizedFingerprint })
         setInvite('')
         setAddress(displayRelayHost(address))
       } catch (err) {
@@ -496,6 +499,21 @@ const createPanelModule = (require) => {
             '允许自签 TLS（自托管试验）',
           ],
         }),
+        insecureTls ? jsxs('div', {
+          className: 'dshlink-relay-row',
+          children: [
+            jsx('label', { htmlFor: 'dsh-relay-fingerprint', children: 'TLS SHA-256 指纹' }),
+            jsx('input', {
+              id: 'dsh-relay-fingerprint',
+              className: 'dshlink-field',
+              value: tlsFingerprint,
+              placeholder: '维护者通过独立渠道提供的 64 位指纹',
+              onChange: (event) => setTlsFingerprint(event.target.value),
+              autoComplete: 'off',
+              spellCheck: false,
+            }),
+          ],
+        }) : null,
         jsxs('div', {
           className: 'dshlink-relay-actions',
           children: [
@@ -671,11 +689,11 @@ const createPanelModule = (require) => {
       }
     }
 
-    const onEnroll = async ({ address, inviteCode, insecureTls }) => {
+    const onEnroll = async ({ address, inviteCode, insecureTls, tlsFingerprint }) => {
       const res = await fetch('/dsh-link/relay-enroll', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ address, inviteCode, insecureTls }),
+        body: JSON.stringify({ address, inviteCode, insecureTls, tlsFingerprint }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)

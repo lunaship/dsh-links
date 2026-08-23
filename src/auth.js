@@ -18,6 +18,8 @@ export const PAIR_COOLDOWN_MS = 15 * 60 * 1000    // 冷却 15 分钟
 export const PAIR_CHALLENGE_FAIL_LIMIT = 25       // 当前配对码跨 IP 总失败上限
 export const PAIR_GLOBAL_FAIL_LIMIT = 40          // 进程级失败预算
 export const PAIR_GLOBAL_COOLDOWN_MS = 60 * 1000  // 全局短冷却
+export const PAIR_RATE_BUCKET_MAX = 1024
+const PAIR_RATE_BUCKET_TTL_MS = PAIR_COOLDOWN_MS * 2
 
 const liveCodes = new WeakMap()
 
@@ -87,16 +89,31 @@ function normalizeClientKey(clientKey) {
   return raw.replace(/^::ffff:/i, "")
 }
 
-/** 按客户端键隔离的限流桶（仅内存，不落盘）。 */
-function pairingRateFor(state, clientKey = "unknown") {
-  if (!state.pairingRates || typeof state.pairingRates !== "object") {
-    state.pairingRates = Object.create(null)
+function pairingRates(state) {
+  if (!(state.pairingRates instanceof Map)) state.pairingRates = new Map()
+  return state.pairingRates
+}
+
+function prunePairingRates(state, nowMs = Date.now()) {
+  const rates = pairingRates(state)
+  for (const [key, rate] of rates) {
+    if (nowMs - (rate.lastSeenAt ?? 0) > PAIR_RATE_BUCKET_TTL_MS) rates.delete(key)
   }
+  while (rates.size >= PAIR_RATE_BUCKET_MAX) rates.delete(rates.keys().next().value)
+}
+
+/** 按客户端键隔离的限流桶（仅内存、不落盘、有界）。 */
+export function pairingRateFor(state, clientKey = "unknown", create = true) {
+  const rates = pairingRates(state)
   const key = normalizeClientKey(clientKey)
-  if (!state.pairingRates[key]) {
-    state.pairingRates[key] = { failCount: 0, cooldownUntil: 0 }
+  let rate = rates.get(key)
+  if (!rate && create) {
+    prunePairingRates(state)
+    rate = { failCount: 0, cooldownUntil: 0, lastSeenAt: Date.now() }
+    rates.set(key, rate)
   }
-  return state.pairingRates[key]
+  if (rate) rate.lastSeenAt = Date.now()
+  return rate ?? null
 }
 
 function pairingGlobal(state) {
@@ -177,15 +194,15 @@ export function ensurePairingCode(state, ttlSeconds) {
  * @param {string} [clientKey] 客户端标识（通常为 remoteAddress），用于隔离失败限流
  */
 export function verifyPairingCode(state, code, clientKey = "unknown") {
-  const rate = pairingRateFor(state, clientKey)
   const global = pairingGlobal(state)
   if (Date.now() < (global.cooldownUntil ?? 0)) return { ok: false, error: "尝试过于频繁，请稍后再试" }
-  if (Date.now() < (rate.cooldownUntil ?? 0)) return { ok: false, error: "尝试过于频繁，请稍后再试" }
   const p = state.pairing ?? {}
   const live = getLivePairingCode(state)
   if (!p.codeHash && !live) return { ok: false, error: "尚未生成配对码" }
   if (p.consumed) return { ok: false, error: "配对码已使用" }
   if (Date.now() > (p.expiresAt ?? 0)) return { ok: false, error: "配对码已过期" }
+  const rate = pairingRateFor(state, clientKey)
+  if (Date.now() < (rate.cooldownUntil ?? 0)) return { ok: false, error: "尝试过于频繁，请稍后再试" }
 
   const offered = String(code ?? "")
   let match = false

@@ -25,7 +25,7 @@ import { loadEventsAfter, sseMessageFrame } from "./stream-cursor.js"
 import { flushSeedQueue, respondQuestion, startMuxQuestionBridge } from "./question-bridge.js"
 import { callLocalRpc } from "./local-rpc.js"
 import { deriveAddresses, generateHostKey, hostKeyFromSeed, unb64u } from "./relay/crypto.js"
-import { enroll as enrollRelay, RelayAgent } from "./relay/agent.js"
+import { enroll as enrollRelay, normalizeTlsFingerprint, RelayAgent } from "./relay/agent.js"
 
 export const name = "dsh-links"
 export const inject = ["webServer"]
@@ -581,10 +581,11 @@ function uniqueRpcPayloads(payloads) {
   return out
 }
 
-async function selectSessionModel(targetPort, sessionId, provider, model, reasoningEffort) {
+async function selectSessionModel(targetPort, sessionId, provider, model, reasoningEffort, stillAuthorized = () => true) {
   let groups = []
   try {
     const catalog = await callLocalRpc(targetPort, "session.models", { sessionId })
+    if (!stillAuthorized()) throw new Error("设备已被吊销")
     groups = catalog?.groups ?? []
   } catch {
     groups = []
@@ -615,6 +616,7 @@ async function selectSessionModel(targetPort, sessionId, provider, model, reason
   ])
   let lastErr
   for (const payload of attempts) {
+    if (!stillAuthorized()) throw new Error("设备已被吊销")
     try {
       return await callLocalRpc(targetPort, "session.selectModel", payload)
     } catch (err) {
@@ -646,6 +648,7 @@ function createRuntime() {
     gapPolls: new Map(),
     pendingApprovals: new Map(),
     reasoningCache: new Map(),
+    deviceRequests: new Map(),
   }
 }
 
@@ -671,6 +674,50 @@ function closeSseForDevice(rt, deviceId) {
     if (writers.size === 0) dropSession(rt, sessionId)
   }
   settleOrphanApprovals(rt)
+}
+
+function trackDeviceRequest(rt, deviceId, req, res) {
+  let requests = rt.deviceRequests.get(deviceId)
+  if (!requests) {
+    requests = new Set()
+    rt.deviceRequests.set(deviceId, requests)
+  }
+  const record = { req, res }
+  requests.add(record)
+  const done = () => {
+    requests.delete(record)
+    if (requests.size === 0) rt.deviceRequests.delete(deviceId)
+  }
+  req.once?.("aborted", done)
+  res.once?.("finish", done)
+  res.once?.("close", done)
+  return done
+}
+
+function closeRequestsForDevice(rt, deviceId, exceptReq) {
+  const requests = rt.deviceRequests.get(deviceId)
+  if (!requests) return
+  for (const record of [...requests]) {
+    if (record.req === exceptReq) continue
+    requests.delete(record)
+    try { record.req.destroy() } catch {}
+    try { record.res.destroy() } catch {}
+  }
+  if (requests.size === 0) rt.deviceRequests.delete(deviceId)
+}
+
+function isDeviceAuthorized(state, device) {
+  return Boolean(device?.deviceId && (state.devices ?? []).some((item) => item === device || item.deviceId === device.deviceId))
+}
+
+async function readAuthorizedJson(req, res, state, device, limit) {
+  const body = await readJson(req, res, limit)
+  if (!body) return null
+  if (!isDeviceAuthorized(state, device)) {
+    if (!res.headersSent) json(res, 401, { error: "设备已被吊销" })
+    return null
+  }
+  return body
 }
 
 function settleOrphanApprovals(rt) {
@@ -924,7 +971,7 @@ function mobileSessionSummary(item) {
   }
 }
 
-function revokeDeviceEntry(state, stateFile, rt, { name, deviceId }) {
+function revokeDeviceEntry(state, stateFile, rt, { name, deviceId }, exceptReq) {
   const targetName = String(name ?? "").trim()
   const targetId = String(deviceId ?? "").trim()
   if (!targetName && !targetId) return { status: 400, body: { error: "缺少设备名或 deviceId" } }
@@ -933,6 +980,7 @@ function revokeDeviceEntry(state, stateFile, rt, { name, deviceId }) {
   state.devices = (state.devices ?? []).filter((d) => d.deviceId !== target.deviceId)
   revokeDevice(null, target.deviceId)
   closeSseForDevice(rt, target.deviceId)
+  closeRequestsForDevice(rt, target.deviceId, exceptReq)
   saveState(stateFile, state)
   return { status: 200, body: { ok: true, removed: 1, deviceId: target.deviceId } }
 }
@@ -978,7 +1026,7 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
     }
 
     if (req.method === "POST" && pathname === "/dsh-link/mobile/sessions") {
-      const body = await readJson(req, res)
+      const body = await readAuthorizedJson(req, res, state, device)
   if (!body) return
       const payload = {}
       if (typeof body.cwd === "string" && body.cwd.trim()) payload.cwd = body.cwd.trim()
@@ -1027,12 +1075,12 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
     const modelMatch = pathname.match(/^\/dsh-link\/mobile\/sessions\/([^/]+)\/model$/)
     if (req.method === "POST" && modelMatch) {
       const sessionId = decodeURIComponent(modelMatch[1])
-      const body = await readJson(req, res)
+      const body = await readAuthorizedJson(req, res, state, device)
   if (!body) return
       const provider = String(body.provider ?? "").trim()
       const model = String(body.model ?? "").trim()
       if (!provider || !model) return json(res, 400, { error: "缺少 provider 或 model" })
-      const value = await selectSessionModel(targetPort, sessionId, provider, model, body.reasoningEffort)
+      const value = await selectSessionModel(targetPort, sessionId, provider, model, body.reasoningEffort, () => isDeviceAuthorized(state, device))
       return json(res, 200, { ok: true, selected: value.selected ?? null })
     }
 
@@ -1042,7 +1090,7 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
     }
 
     if (req.method === "POST" && pathname === "/dsh-link/mobile/workspaces") {
-      const body = await readJson(req, res)
+      const body = await readAuthorizedJson(req, res, state, device)
   if (!body) return
       const path = String(body.path ?? "").trim()
       if (!path) return json(res, 400, { error: "缺少工作区路径" })
@@ -1052,11 +1100,12 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
 
     // 删除工作区（取消注册；会话日志不删除，DSH workspace.delete 语义）
     if (req.method === "POST" && pathname === "/dsh-link/mobile/workspaces/delete") {
-      const body = await readJson(req, res)
+      const body = await readAuthorizedJson(req, res, state, device)
   if (!body) return
       const path = String(body.path ?? "").trim()
       if (!path) return json(res, 400, { error: "缺少工作区路径" })
       const list = await callLocalRpc(targetPort, "workspace.list", {})
+      if (!isDeviceAuthorized(state, device)) return json(res, 401, { error: "设备已被吊销" })
       const item = (list.items ?? []).find((w) => w.path === path)
       if (!item) return json(res, 404, { error: "工作区不存在" })
       const value = await callLocalRpc(targetPort, "workspace.delete", { workspaceId: item.workspaceId })
@@ -1082,7 +1131,7 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
     }
 
     if (req.method === "POST" && pathname === "/dsh-link/mobile/settings/update") {
-      const body = await readJson(req, res)
+      const body = await readAuthorizedJson(req, res, state, device)
   if (!body) return
       const ns = String(body.ns ?? "").trim()
       if (!ns) return json(res, 400, { error: "缺少命名空间" })
@@ -1131,19 +1180,19 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
     }
 
     if (req.method === "POST" && pathname === "/dsh-link/mobile/revoke") {
-      const body = await readJson(req, res)
+      const body = await readAuthorizedJson(req, res, state, device)
       if (!body) return
       const result = revokeDeviceEntry(state, stateFile, rt, {
         name: body.name,
         deviceId: body.deviceId,
-      })
+      }, req)
       return json(res, result.status, result.body)
     }
 
     const renameMatch = pathname.match(/^\/dsh-link\/mobile\/sessions\/([^/]+)\/rename$/)
     if (req.method === "POST" && renameMatch) {
       const sessionId = decodeURIComponent(renameMatch[1])
-      const body = await readJson(req, res)
+      const body = await readAuthorizedJson(req, res, state, device)
   if (!body) return
       const title = String(body.title ?? "").trim()
       if (!title) return json(res, 400, { error: "缺少会话名称" })
@@ -1169,7 +1218,7 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
     const approvalMatch = pathname.match(/^\/dsh-link\/mobile\/sessions\/([^/]+)\/approval$/)
     if (req.method === "POST" && approvalMatch) {
       const sessionId = decodeURIComponent(approvalMatch[1])
-      const body = await readJson(req, res)
+      const body = await readAuthorizedJson(req, res, state, device)
   if (!body) return
       const approvalId = String(body.approvalId ?? "").trim()
       const outcome = String(body.outcome ?? "").trim()
@@ -1187,7 +1236,7 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
     const questionMatch = pathname.match(/^\/dsh-link\/mobile\/sessions\/([^/]+)\/question$/)
     if (req.method === "POST" && questionMatch) {
       const sessionId = decodeURIComponent(questionMatch[1])
-      const body = await readJson(req, res)
+      const body = await readAuthorizedJson(req, res, state, device)
       if (!body) return
       const rpcId = String(body.rpcId ?? "").trim()
       const answer = body.answer
@@ -1256,7 +1305,7 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
     const promptMatch = pathname.match(/^\/dsh-link\/mobile\/sessions\/([^/]+)\/prompt$/)
     if (req.method === "POST" && promptMatch) {
       const sessionId = decodeURIComponent(promptMatch[1])
-      const body = await readJson(req, res, PROMPT_BODY_LIMIT)
+      const body = await readAuthorizedJson(req, res, state, device, PROMPT_BODY_LIMIT)
       if (!body) return
       const text = String(body.text ?? "").trim()
       // 图片附件（DSH prompt image 块：base64 data + mediaType）
@@ -1358,6 +1407,10 @@ export function apply(ctx, config) {
   const startRelayAgent = () => {
     stopRelayAgent()
     if (!state.relay?.routeSecret || !state.relay?.agentAddress) return
+    if (state.relay.insecureTls && !state.relay.tlsPinTrusted) {
+      ctx.logger.warn("dsh-links relay: 旧版自签 TLS 配置未经过指纹确认，请重新接入")
+      return
+    }
     relayAgent = new RelayAgent({
       address: state.relay.agentAddress,
       credentials: {
@@ -1370,6 +1423,7 @@ export function apply(ctx, config) {
       pluginPort: config.port,
       logger: ctx.logger,
       insecureTls: Boolean(state.relay.insecureTls),
+      tlsFingerprint: state.relay.tlsFingerprint ?? "",
     })
     relayAgent.start().catch((err) => ctx.logger.warn(`dsh-links relay: ${err?.message ?? err}`))
   }
@@ -1428,6 +1482,8 @@ export function apply(ctx, config) {
           agentAddress: state.relay?.agentAddress ?? "",
           clientAddress: state.relay?.clientAddress ?? "",
           insecureTls: Boolean(state.relay?.insecureTls),
+          tlsFingerprint: state.relay?.tlsFingerprint ?? "",
+          tlsPinTrusted: Boolean(state.relay?.tlsPinTrusted),
         })
       },
     }),
@@ -1441,7 +1497,15 @@ export function apply(ctx, config) {
         if (!body) return
         const inviteCode = String(body.inviteCode ?? "").trim()
         const address = String(body.address ?? "").trim()
-        const insecureTls = body.insecureTls !== false
+        const insecureTls = body.insecureTls === true
+        let tlsFingerprint = ""
+        if (insecureTls) {
+          try {
+            tlsFingerprint = normalizeTlsFingerprint(body.tlsFingerprint)
+          } catch (err) {
+            return json(res, 400, { error: err?.message ?? "TLS 指纹无效" })
+          }
+        }
         if (!inviteCode || !address) return json(res, 400, { error: "请填写 Relay 地址和接入码" })
         try {
           const derived = deriveAddresses(address)
@@ -1457,6 +1521,7 @@ export function apply(ctx, config) {
             hostId: state.deviceId,
             keys,
             insecureTls,
+            tlsFingerprint,
           })
           state.relay = {
             agentAddress: derived.agentAddress,
@@ -1469,6 +1534,7 @@ export function apply(ctx, config) {
             generation: enrolled.generation,
             tlsFingerprint: enrolled.tlsFingerprint,
             insecureTls,
+            tlsPinTrusted: insecureTls,
           }
           saveState(stateFile, state)
           startRelayAgent()
@@ -1491,6 +1557,7 @@ export function apply(ctx, config) {
           delete state.relay.capability
           delete state.relay.generation
           delete state.relay.tlsFingerprint
+          delete state.relay.tlsPinTrusted
         }
         saveState(stateFile, state)
         json(res, 200, { ok: true })
@@ -1546,13 +1613,14 @@ export function apply(ctx, config) {
       if (!device) {
         return json(res, 401, { error: "缺少或无效的连接 token" })
       }
+      trackDeviceRequest(rt, device.deviceId, req, res)
       touchDevice(state, device, stateFile)
       if (pathname.startsWith("/dsh-link/mobile/")) {
         const permissionMatch = pathname.match(/^\/dsh-link\/mobile\/sessions\/([^/]+)\/permission$/)
         if (req.method === "POST" && permissionMatch) {
           if (!requireJsonWrite(req, res)) return
           const sessionId = decodeURIComponent(permissionMatch[1])
-          const body = await readJson(req, res)
+          const body = await readAuthorizedJson(req, res, state, device)
   if (!body) return
           const preset = String(body.preset ?? "").trim()
           const PRESET_SPECS = {
@@ -1565,6 +1633,7 @@ export function apply(ctx, config) {
           try {
             const sessions = ctx.get("sessions")
             const session = typeof sessions?.get === "function" ? await sessions.get(sessionId) : undefined
+            if (!isDeviceAuthorized(state, device)) return json(res, 401, { error: "设备已被吊销" })
             if (!session) return json(res, 404, { error: "会话不存在" })
             session.append("permission/preset", { preset })
             session.append("approval/policy", { policy: spec.approval })

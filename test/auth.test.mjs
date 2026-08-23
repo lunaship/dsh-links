@@ -358,6 +358,40 @@ test("POST pair 非 JSON content-type → 415", async () => {
   assert.equal(r.status, 415)
 })
 
+test("设备在请求体尚未完成时被吊销，连接立即终止", async () => {
+  const info = await callRoute(pairInfoRoute())
+  const pair = await proxyFetch(`/dsh-link/pair`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code: info.body.pairingCode, deviceName: "测试机-并发吊销" }),
+  })
+  assert.equal(pair.status, 200)
+  const stagedDevice = await pair.json()
+  const outcome = new Promise((resolve) => {
+    const req = https.request(new URL(`https://127.0.0.1:${proxyPort}/dsh-link/mobile/sessions/demo/prompt`), {
+      method: "POST",
+      agent: pinAgent(),
+      headers: {
+        ...tokenHeaders(stagedDevice.token),
+        "content-length": "128",
+      },
+    }, (res) => resolve({ type: "response", status: res.statusCode }))
+    req.once("error", (err) => resolve({ type: "closed", error: err }))
+    req.flushHeaders()
+    globalThis.__stagedRequest = req
+  })
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  const revoked = await callRoute(revokeRoute(), { body: { deviceId: stagedDevice.deviceId } })
+  assert.equal(revoked.status, 200)
+  if (!globalThis.__stagedRequest.destroyed) globalThis.__stagedRequest.end(JSON.stringify({ text: "不应送达" }))
+  const result = await Promise.race([
+    outcome,
+    new Promise((resolve) => setTimeout(() => resolve({ type: "timeout" }), 1000)),
+  ])
+  delete globalThis.__stagedRequest
+  assert.equal(result.type, "closed")
+})
+
 test("5 次失败后 pair-info 不换发新码，冷却仍在", async () => {
   const before = await callRoute(pairInfoRoute())
   assert.equal(before.status, 200)
@@ -499,6 +533,17 @@ test("配对码跨 IP 总失败次数达到上限后作废", async () => {
   const after = verifyPairingCode(state, code, "10.2.0.1")
   assert.equal(after.ok, false)
   assert.match(after.error, /失效|已使用|频繁/)
+})
+
+test("无效或已消费的配对请求不分配限流桶，桶总量有硬上限", async () => {
+  const { PAIR_RATE_BUCKET_MAX, pairingRateFor, verifyPairingCode } = await import("../src/auth.js")
+  const invalid = {}
+  for (let i = 0; i < 2000; i++) verifyPairingCode(invalid, "000000", `192.0.2.${i}`)
+  assert.equal(invalid.pairingRates, undefined)
+
+  const bounded = {}
+  for (let i = 0; i < PAIR_RATE_BUCKET_MAX + 100; i++) pairingRateFor(bounded, `198.51.100.${i}`)
+  assert.equal(bounded.pairingRates.size, PAIR_RATE_BUCKET_MAX)
 })
 
 test("设备 token 落盘哈希为每安装 HMAC：跨安装不同、同安装稳定", async () => {
