@@ -1,0 +1,33 @@
+services:
+  control:
+    build: .
+    image: dsh-links-relay:local
+    command: ["control", "--config", "/data/config.toml"]
+    restart: unless-stopped
+    environment:
+      RELAY_HOST: relay.dshlinks.com
+    volumes:
+      - relay-data:/data
+    healthcheck:
+      test: ["CMD", "dsh-links-relay", "help"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  relay:
+    image: dsh-links-relay:local
+    build: .
+    command: ["relay", "--config", "/data/config.toml"]
+    restart: unless-stopped
+    depends_on:
+      - control
+    environment:
+      RELAY_HOST: relay.dshlinks.com
+    volumes:
+      - relay-data:/data
+    ports:
+      - "8443:8443"
+      - "8444:8444"
+
+volumes:
+  relay-data:
