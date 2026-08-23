@@ -1,0 +1,37 @@
+# Personal OpenShip deploy only. Product default is docker-compose.yml.
+services:
+  control:
+    build:
+      context: .
+      dockerfile: Dockerfile.openship
+    image: dsh-links-relay:openship
+    command: ["control"]
+    restart: unless-stopped
+    environment:
+      RELAY_HOST: ${RELAY_HOST:-relay.dshlinks.com}
+      RELAY_DATA: /data
+    volumes:
+      - relay-data:/data
+    ports:
+      - "127.0.0.1:8080:8080"
+
+  relay:
+    image: dsh-links-relay:openship
+    build:
+      context: .
+      dockerfile: Dockerfile.openship
+    command: ["relay"]
+    restart: unless-stopped
+    depends_on:
+      - control
+    environment:
+      RELAY_HOST: ${RELAY_HOST:-relay.dshlinks.com}
+      RELAY_DATA: /data
+    volumes:
+      - relay-data:/data
+    ports:
+      - "8443:8443"
+      - "8444:8444"
+
+volumes:
+  relay-data:
