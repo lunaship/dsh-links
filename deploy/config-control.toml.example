@@ -22,4 +22,7 @@ admin_password = ""
 
 database = "/var/lib/dsh-links-relay/control.db"
 
+# Hostname the plugin should dial for Agent TLS (8444).
+# public_host = "relay.example.com"
+
 default_max_streams_per_route = 8

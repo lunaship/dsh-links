@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/dsh-links/dsh-links-relay/internal/config"
+	"github.com/dsh-links/dsh-links-relay/internal/cryptoutil"
 )
 
 func TestIsLoopbackListen(t *testing.T) {
@@ -92,6 +93,13 @@ func TestInitWritesLoadableConfig(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "relay.crt")); err != nil {
 		t.Fatal(err)
 	}
+	fp, err := cryptoutil.CertSHA256FingerprintFile(filepath.Join(dir, "relay.crt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fp) != 64 {
+		t.Fatalf("tls fingerprint %q", fp)
+	}
 	if cfg.ClientListen != "127.0.0.1:8443" {
 		t.Fatalf("client_listen = %q", cfg.ClientListen)
 	}
@@ -112,6 +120,9 @@ func TestInitListenAllConfiguresAdminTLS(t *testing.T) {
 	}
 	if err := validateAdminTransport(cfg.AdminListen, cfg.AdminAllowNonLoopback, cfg.AdminTLSCert, cfg.AdminTLSKey); err != nil {
 		t.Fatal(err)
+	}
+	if cfg.PublicHost != "relay.example.com" {
+		t.Fatalf("public_host = %q", cfg.PublicHost)
 	}
 }
 

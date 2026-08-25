@@ -8,6 +8,10 @@ if [ ! -f "$DATA/config.toml" ]; then
   echo "initializing relay data dir $DATA (host $HOST)"
   dsh-links-relay init --dir "$DATA" --listen-all --host "$HOST"
   echo "admin password is in $DATA/admin.password"
+elif ! grep -q '^public_host' "$DATA/config.toml"; then
+  # Existing volumes were created before enroll URIs. Keep keys; just record
+  # the hostname the plugin should dial.
+  printf '\npublic_host = "%s"\n' "$HOST" >> "$DATA/config.toml"
 fi
 role="${1:-control}"
 if [ "$role" = "relay" ]; then

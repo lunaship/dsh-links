@@ -15,3 +15,5 @@ admin_user = "admin"
 
 database = "/var/lib/dsh-links-relay/control.db"
 default_max_streams_per_route = 8
+# Hostname the plugin should dial for Agent TLS (8444).
+# public_host = "relay.example.com"

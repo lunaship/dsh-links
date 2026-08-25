@@ -15,7 +15,7 @@
 
 ```bash
 dsh-links-relay init --dir /opt/dsh-links-relay-test
-# 记下打印出的 admin 密码。管理口仍是 127.0.0.1:8080。
+# 记下打印出的 admin 密码和 TLS SHA-256 指纹。管理口仍是 127.0.0.1:8080。
 ```
 
 需要绑定全部网卡时再加 `--listen-all`，并按需 `--host <公网IP或域名>` 写入自签证书 SAN。正式证书仍建议 Let's Encrypt，替换 `relay.crt` / `relay.key`。
@@ -75,7 +75,7 @@ systemctl status dsh-links-relay-*
 # 通过 SSH 隧道打开 Control
 ssh -N -L 8080:127.0.0.1:8080 user@relay.example.com &
 curl -H "Authorization: Bearer $(cat /etc/dsh-links-relay/admin.token)" -H "Content-Type: application/json" -d '{}' http://127.0.0.1:8080/v1/invites
-# 得到 inviteCode, 复制给插件 Agent (有效 30分钟, 一次性)
+# 得到 enroll（接入信息）和 inviteCode。把 enroll 整段贴进插件（有效 30分钟, 一次性）
 ```
 
 插件完成 ENROLL 后会在 Control UI 看到 Host, Relay 日志显示 `agent registered`.

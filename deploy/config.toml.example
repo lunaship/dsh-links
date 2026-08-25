@@ -16,6 +16,8 @@ ipc_auth_token_file = "/etc/dsh-links-relay/ipc.auth"
 # TLS for outer layer (public CA, e.g., Let's Encrypt)
 tls_cert = "/etc/dsh-links-relay/relay.crt"
 tls_key = "/etc/dsh-links-relay/relay.key"
+# Hostname the plugin dials (Agent 8444). Used to mint one-paste enroll URIs.
+# public_host = "relay.example.com"
 
 # Capability issuer keys (Ed25519, 32 or 64 bytes, base64 or raw)
 issuer_private_key = "/etc/dsh-links-relay/issuer.key"

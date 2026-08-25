@@ -23,6 +23,11 @@ type Config struct {
 	TLSCert string `toml:"tls_cert"`
 	TLSKey  string `toml:"tls_key"`
 
+	// PublicHost is the hostname (or IP) the plugin should dial for Agent
+	// TLS on 8444. Used to mint one-paste enroll URIs. Empty falls back to
+	// a non-loopback SAN on tls_cert when that file is readable.
+	PublicHost string `toml:"public_host"`
+
 	IssuerPrivateKey  string `toml:"issuer_private_key"`
 	IssuerPublicKey   string `toml:"issuer_public_key"`
 	RouteMasterKey    string `toml:"route_master_key"`

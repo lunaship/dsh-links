@@ -122,14 +122,31 @@
               </div>
             </header>
             <div class="invite-body">
-              <p class="invite-action-copy">生成后立即复制给插件。邀请码不会再次从控制面返回。</p>
+              <p class="invite-action-copy">创建后复制「接入信息」到插件。主机、一次性接入码和自签指纹会打成一条，不必再手填指纹。</p>
+              <div class="tls-pin" id="tlsFingerprintBlock" hidden>
+                <span class="stat-label">TLS SHA-256 指纹</span>
+                <div class="invite-code-row">
+                  <code class="invite-code" id="tlsFingerprint"></code>
+                  <button class="button" id="btnCopyFingerprint" type="button">复制</button>
+                </div>
+                <span class="stat-note">仅在自签证书时随接入信息带上。Let's Encrypt 等公网证书走系统信任，插件不用填。</span>
+              </div>
+              <p class="stat-note" id="tlsFingerprintMissing" hidden>控制面未读到 Relay 证书。自签部署请确认 control 能读取 tls_cert，或在 config 设置 public_host。</p>
               <div><button class="button button--primary" id="btnInvite" type="button">创建邀请码</button></div>
               <p class="inline-message" id="inviteMessage" role="alert"></p>
               <div class="invite-result" id="inviteResult" hidden>
-                <span class="stat-label">新邀请码</span>
+                <div id="enrollBlock" hidden>
+                  <span class="stat-label">接入信息</span>
+                  <div class="invite-code-row">
+                    <code class="invite-code" id="enrollURI"></code>
+                    <button class="button button--primary" id="btnCopyEnroll" type="button">复制接入信息</button>
+                  </div>
+                  <span class="stat-note">整段贴进插件即可。邀请码含在其中，不会再次从控制面返回。</span>
+                </div>
+                <span class="stat-label">邀请码</span>
                 <div class="invite-code-row">
                   <code class="invite-code" id="inviteCode"></code>
-                  <button class="button" id="btnCopyInvite" type="button">复制</button>
+                  <button class="button" id="btnCopyInvite" type="button">复制邀请码</button>
                 </div>
                 <span class="stat-note">该值仅在本次创建后显示。</span>
               </div>

@@ -10,6 +10,8 @@ const REFRESH_MS = 5000;
 const ARM_MS = 5000;
 let refreshTimer = null;
 let latestInviteCode = '';
+let latestTlsFingerprint = '';
+let latestEnrollURI = '';
 const armTimers = new WeakMap();
 
 const byId = id => document.getElementById(id);
@@ -151,6 +153,16 @@ function renderOverview(data) {
     hour: '2-digit', minute: '2-digit', second: '2-digit'
   }).format(new Date())}`;
   setConnectionState(true);
+  renderTlsFingerprint(data && data.tlsFingerprint);
+}
+
+function renderTlsFingerprint(value) {
+  const fingerprint = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  const valid = /^[0-9a-f]{64}$/.test(fingerprint);
+  latestTlsFingerprint = valid ? fingerprint : '';
+  byId('tlsFingerprint').textContent = latestTlsFingerprint;
+  byId('tlsFingerprintBlock').hidden = !valid;
+  byId('tlsFingerprintMissing').hidden = valid;
 }
 
 async function loadOverview() {
@@ -359,11 +371,14 @@ byId('btnInvite').addEventListener('click', async () => {
         method: 'POST', body: JSON.stringify({})
       });
       latestInviteCode = result.inviteCode || '';
+      latestEnrollURI = result.enroll || '';
       byId('inviteCode').textContent = latestInviteCode;
+      byId('enrollURI').textContent = latestEnrollURI;
+      byId('enrollBlock').hidden = !latestEnrollURI;
       byId('inviteResult').hidden = false;
-      byId('btnCopyInvite').focus();
+      (latestEnrollURI ? byId('btnCopyEnroll') : byId('btnCopyInvite')).focus();
       await Promise.all([loadInvites(), loadOverview()]);
-      announce('邀请码已创建。请立即复制。');
+      announce(latestEnrollURI ? '接入信息已创建。请立即复制到插件。' : '邀请码已创建。请立即复制。');
     });
   } catch (error) {
     byId('inviteMessage').textContent = `邀请码未创建：${error.message}`;
@@ -395,9 +410,33 @@ byId('btnCopyInvite').addEventListener('click', async () => {
     await copyText(latestInviteCode);
     setButtonState(button, 'success', '已复制');
     announce('邀请码已复制。');
-    window.setTimeout(() => setButtonState(button, '', '复制'), 2500);
+    window.setTimeout(() => setButtonState(button, '', '复制邀请码'), 2500);
   } catch (_) {
     byId('inviteMessage').textContent = '无法写入剪贴板。请手动选择并复制邀请码。';
+  }
+});
+
+byId('btnCopyEnroll').addEventListener('click', async () => {
+  const button = byId('btnCopyEnroll');
+  try {
+    await copyText(latestEnrollURI);
+    setButtonState(button, 'success', '已复制');
+    announce('接入信息已复制。');
+    window.setTimeout(() => setButtonState(button, '', '复制接入信息'), 2500);
+  } catch (_) {
+    byId('inviteMessage').textContent = '无法写入剪贴板。请手动选择并复制接入信息。';
+  }
+});
+
+byId('btnCopyFingerprint').addEventListener('click', async () => {
+  const button = byId('btnCopyFingerprint');
+  try {
+    await copyText(latestTlsFingerprint);
+    setButtonState(button, 'success', '已复制');
+    announce('TLS 指纹已复制。');
+    window.setTimeout(() => setButtonState(button, '', '复制'), 2500);
+  } catch (_) {
+    byId('inviteMessage').textContent = '无法写入剪贴板。请手动选择并复制 TLS 指纹。';
   }
 });
 

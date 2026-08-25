@@ -134,6 +134,7 @@ func runControl(configPath string) {
 	// Start HTTP admin
 	adminTLS := strings.TrimSpace(cfg.AdminTLSCert) != ""
 	adminSrv := control.NewServerWithSecureCookies(ctrl, adminToken, cfg.AdminUser, adminPassword, adminTLS)
+	applyEnrollMeta(adminSrv, cfg)
 	httpSrv := &http.Server{
 		Addr:              cfg.AdminListen,
 		Handler:           adminSrv.Handler(),
@@ -181,6 +182,9 @@ func runRelay(configPath string) {
 	tlsConfig, err := loadTLS(cfg.TLSCert, cfg.TLSKey)
 	if err != nil {
 		log.Fatalf("load tls: %v", err)
+	}
+	if fp, err := cryptoutil.CertSHA256FingerprintFile(cfg.TLSCert); err == nil {
+		log.Printf("relay TLS SHA-256 fingerprint %s", fp)
 	}
 	// Load issuer public key
 	issuerPubBytes, err := loadIssuerPub(cfg.IssuerPublicKey)
@@ -314,6 +318,27 @@ func validateAdminTransport(addr string, allowNonLoopback bool, tlsCert, tlsKey 
 		return fmt.Errorf("non-loopback admin_listen requires admin_tls_cert and admin_tls_key")
 	}
 	return nil
+}
+
+func applyEnrollMeta(server *control.Server, cfg *config.Config) {
+	if fp, err := cryptoutil.CertSHA256FingerprintFile(cfg.TLSCert); err == nil {
+		server.SetTLSFingerprint(fp)
+	}
+	host := strings.TrimSpace(cfg.PublicHost)
+	pin := false
+	if pem, err := os.ReadFile(cfg.TLSCert); err == nil {
+		if cert, err := cryptoutil.ParseLeafCert(pem); err == nil {
+			pin = cryptoutil.CertIsSelfSigned(cert)
+		}
+		if host == "" {
+			host = cryptoutil.PublicHostFromCert(pem)
+		}
+	}
+	_, agentPort, err := net.SplitHostPort(cfg.AgentListen)
+	if err != nil || strings.TrimSpace(agentPort) == "" {
+		agentPort = cryptoutil.DefaultAgentPort
+	}
+	server.SetEnrollMeta(host, agentPort, pin)
 }
 
 // ipcControlAdapter implements ingress.ControlAPI exclusively via IPC. Relay

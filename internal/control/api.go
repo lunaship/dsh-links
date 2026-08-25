@@ -39,14 +39,18 @@ const (
 // Admin API: only 127.0.0.1:8080 + Bearer token or session cookie
 
 type Server struct {
-	control       *Control
-	adminToken    string // legacy token auth
-	adminUser     string
-	adminPassword string
-	secureCookies bool
-	loginLimiter  *registry.RateLimiter
-	sessionsMu    sync.Mutex
-	sessions      map[[sha256.Size]byte]time.Time
+	control        *Control
+	adminToken     string // legacy token auth
+	adminUser      string
+	adminPassword  string
+	secureCookies  bool
+	tlsFingerprint string
+	publicHost     string
+	agentPort      string
+	pinFingerprint bool
+	loginLimiter   *registry.RateLimiter
+	sessionsMu     sync.Mutex
+	sessions       map[[sha256.Size]byte]time.Time
 }
 
 func NewServer(ctrl *Control, adminToken, adminUser, adminPassword string) *Server {
@@ -60,6 +64,31 @@ func NewServerWithSecureCookies(ctrl *Control, adminToken, adminUser, adminPassw
 		loginLimiter:  registry.NewRateLimiter(loginBurstAttempts, 5),
 		sessions:      make(map[[sha256.Size]byte]time.Time),
 	}
+}
+
+// SetTLSFingerprint stores the Relay data-plane certificate SHA-256 (64 hex
+// chars). The control UI shows it so operators can paste it into the plugin
+// when using a self-signed Relay certificate. It is not a secret.
+func (s *Server) SetTLSFingerprint(fp string) {
+	s.tlsFingerprint = strings.ToLower(strings.TrimSpace(fp))
+}
+
+// SetEnrollMeta records the public Agent endpoint used to mint one-paste
+// enroll URIs. pinFingerprint includes the TLS SHA-256 only for self-signed
+// Relay certificates; public-CA deployments omit it so the plugin uses the
+// system trust store.
+func (s *Server) SetEnrollMeta(host, agentPort string, pinFingerprint bool) {
+	s.publicHost = strings.TrimSpace(host)
+	s.agentPort = strings.TrimSpace(agentPort)
+	s.pinFingerprint = pinFingerprint
+}
+
+func (s *Server) enrollURI(invite string) string {
+	fp := ""
+	if s.pinFingerprint {
+		fp = s.tlsFingerprint
+	}
+	return cryptoutil.BuildEnrollURI(s.publicHost, s.agentPort, invite, fp)
 }
 
 func (s *Server) Handler() http.Handler {
@@ -224,7 +253,11 @@ func (s *Server) handleInvites(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]string{"inviteCode": code, "expiresIn": ttl.String()})
+		out := map[string]string{"inviteCode": code, "expiresIn": ttl.String()}
+		if enroll := s.enrollURI(code); enroll != "" {
+			out["enroll"] = enroll
+		}
+		json.NewEncoder(w).Encode(out)
 	case "GET":
 		list, err := s.control.ListInvites()
 		if err != nil {
@@ -443,10 +476,17 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	}
 	hosts, _ := s.control.ListHosts()
 	invites, _ := s.control.ListInvites()
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	out := map[string]any{
 		"hosts":   len(hosts),
 		"invites": len(invites),
-	})
+	}
+	if len(s.tlsFingerprint) == 64 {
+		out["tlsFingerprint"] = s.tlsFingerprint
+	}
+	if host := strings.TrimSpace(s.publicHost); host != "" {
+		out["publicHost"] = host
+	}
+	json.NewEncoder(w).Encode(out)
 }
 
 func (s *Server) handleUI(w http.ResponseWriter, r *http.Request) {

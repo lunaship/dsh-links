@@ -411,6 +411,10 @@ a.brand-lockup:active, .rail-link:active, .rail-menu summary:active { transform:
   overflow-wrap: anywhere;
   user-select: all;
 }
+.tls-pin {
+  display: grid;
+  gap: var(--space-sm);
+}
 .security-note {
   display: grid;
   gap: var(--space-sm);

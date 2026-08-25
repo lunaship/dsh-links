@@ -39,6 +39,9 @@ func TestHandlerServesWebAssets(t *testing.T) {
 			if !strings.Contains(recorder.Body.String(), test.marker) {
 				t.Fatalf("response for %s does not contain %q", test.path, test.marker)
 			}
+			if test.path == "/" && !strings.Contains(recorder.Body.String(), "接入信息") {
+				t.Fatal("control UI is missing the enroll copy surface")
+			}
 		})
 	}
 }
@@ -268,6 +271,114 @@ func TestSecurityAndCachingHeaders(t *testing.T) {
 	}
 	if got := uiRecorder.Header().Get("Cache-Control"); got == "no-store" {
 		t.Fatal("static UI assets must remain cacheable")
+	}
+}
+
+func TestOverviewIncludesTLSFingerprint(t *testing.T) {
+	ctrl, st := newTestControl(t)
+	defer st.Close()
+	server := NewServer(ctrl, "legacy-token-0123456789", "admin", "correct horse battery staple")
+	fp := strings.Repeat("ab", 32)
+	server.SetTLSFingerprint("  " + strings.ToUpper(fp) + "  ")
+	handler := server.Handler()
+
+	login := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(`{"user":"admin","password":"correct horse battery staple"}`))
+	login.Header.Set("Content-Type", "application/json")
+	loginRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(loginRecorder, login)
+	if loginRecorder.Code != http.StatusOK {
+		t.Fatalf("login status=%d body=%s", loginRecorder.Code, loginRecorder.Body.String())
+	}
+	cookies := loginRecorder.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("session cookies=%d, want 1", len(cookies))
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/overview", nil)
+	req.AddCookie(cookies[0])
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("overview status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["tlsFingerprint"] != fp {
+		t.Fatalf("tlsFingerprint=%v want %s", body["tlsFingerprint"], fp)
+	}
+
+	plain := NewServer(ctrl, "legacy-token-0123456789", "admin", "correct horse battery staple")
+	plainHandler := plain.Handler()
+	login2 := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(`{"user":"admin","password":"correct horse battery staple"}`))
+	login2.Header.Set("Content-Type", "application/json")
+	login2Rec := httptest.NewRecorder()
+	plainHandler.ServeHTTP(login2Rec, login2)
+	plainReq := httptest.NewRequest(http.MethodGet, "/v1/overview", nil)
+	plainReq.AddCookie(login2Rec.Result().Cookies()[0])
+	plainRec := httptest.NewRecorder()
+	plainHandler.ServeHTTP(plainRec, plainReq)
+	var plainBody map[string]any
+	if err := json.Unmarshal(plainRec.Body.Bytes(), &plainBody); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := plainBody["tlsFingerprint"]; ok {
+		t.Fatalf("overview leaked tlsFingerprint=%v", plainBody["tlsFingerprint"])
+	}
+}
+
+func TestCreateInviteReturnsEnrollURI(t *testing.T) {
+	ctrl, st := newTestControl(t)
+	defer st.Close()
+	server := NewServer(ctrl, "legacy-token-0123456789", "admin", "correct horse battery staple")
+	fp := strings.Repeat("cd", 32)
+	server.SetTLSFingerprint(fp)
+	server.SetEnrollMeta("relay.dshlinks.com", "8444", true)
+	handler := server.Handler()
+
+	login := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(`{"user":"admin","password":"correct horse battery staple"}`))
+	login.Header.Set("Content-Type", "application/json")
+	loginRec := httptest.NewRecorder()
+	handler.ServeHTTP(loginRec, login)
+	if loginRec.Code != http.StatusOK {
+		t.Fatalf("login status=%d body=%s", loginRec.Code, loginRec.Body.String())
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/invites", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(loginRec.Result().Cookies()[0])
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("invite status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var body map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["inviteCode"] == "" {
+		t.Fatal("missing inviteCode")
+	}
+	if body["enroll"] == "" || !strings.Contains(body["enroll"], body["inviteCode"]) || !strings.Contains(body["enroll"], "dsh-relay://relay.dshlinks.com/") {
+		t.Fatalf("enroll=%q", body["enroll"])
+	}
+	if !strings.Contains(body["enroll"], fp) {
+		t.Fatalf("self-signed enroll missing fingerprint: %s", body["enroll"])
+	}
+
+	server.SetEnrollMeta("relay.dshlinks.com", "8444", false)
+	req2 := httptest.NewRequest(http.MethodPost, "/v1/invites", strings.NewReader(`{}`))
+	req2.Header.Set("Content-Type", "application/json")
+	req2.AddCookie(loginRec.Result().Cookies()[0])
+	rec2 := httptest.NewRecorder()
+	handler.ServeHTTP(rec2, req2)
+	var body2 map[string]string
+	if err := json.Unmarshal(rec2.Body.Bytes(), &body2); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(body2["enroll"], "fp=") {
+		t.Fatalf("public-CA enroll leaked fingerprint: %s", body2["enroll"])
 	}
 }
 
