@@ -1155,8 +1155,8 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
       const body = await readAuthorizedJson(req, res, state, device)
   if (!body) return
       const payload = {}
-      if (typeof body.cwd === "string" && body.cwd.trim()) payload.cwd = body.cwd.trim()
       if (typeof body.workspaceId === "string" && body.workspaceId.trim()) payload.workspaceId = body.workspaceId.trim()
+      else if (typeof body.cwd === "string" && body.cwd.trim()) payload.cwd = body.cwd.trim()
       if (typeof body.agentPreset === "string" && body.agentPreset.trim()) payload.agentPreset = body.agentPreset.trim()
       const value = await callLocalRpc(targetPort, "session.create", payload)
       return json(res, 201, { version: 1, sessionId: value.sessionId, agentPreset: value.agentPreset ?? null })
