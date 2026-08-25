@@ -94,9 +94,9 @@ func (s *Server) enrollURI(invite string) string {
 func (s *Server) Handler() http.Handler {
 	apiMux := http.NewServeMux()
 	apiMux.HandleFunc("/v1/invites", s.handleInvites)
-	apiMux.HandleFunc("/v1/invites/", s.handleInviteRevoke)
+	apiMux.HandleFunc("/v1/invites/", s.handleInviteItem)
 	apiMux.HandleFunc("/v1/hosts", s.handleHosts)
-	apiMux.HandleFunc("/v1/hosts/", s.handleHostRevoke)
+	apiMux.HandleFunc("/v1/hosts/", s.handleHostItem)
 	apiMux.HandleFunc("/v1/overview", s.handleOverview)
 
 	// UI without auth (initial page), API with auth
@@ -383,14 +383,10 @@ func decodeOneJSON(r io.Reader, dst any, allowEmpty bool) error {
 	return nil
 }
 
-// revokeTarget validates that a POST path is exactly /v1/<kind>/<id>/revoke
-// and returns the id. Requiring the literal /revoke suffix keeps the catch-all
-// routes below from treating an arbitrary trailing segment as a revoke trigger.
-func revokeTarget(path, kind string) (string, bool) {
+func actionTarget(path, kind, action string) (string, bool) {
 	p := strings.TrimSuffix(path, "/")
 	parts := strings.Split(p, "/")
-	// ["", "v1", kind, id, "revoke"]
-	if len(parts) != 5 || parts[1] != "v1" || parts[2] != kind || parts[4] != "revoke" {
+	if len(parts) != 5 || parts[1] != "v1" || parts[2] != kind || parts[4] != action {
 		return "", false
 	}
 	if parts[3] == "" {
@@ -399,22 +395,52 @@ func revokeTarget(path, kind string) (string, bool) {
 	return parts[3], true
 }
 
-func (s *Server) handleInviteRevoke(w http.ResponseWriter, r *http.Request) {
+// revokeTarget validates that a POST path is exactly /v1/<kind>/<id>/revoke
+// and returns the id. Requiring the literal /revoke suffix keeps the catch-all
+// routes below from treating an arbitrary trailing segment as a revoke trigger.
+func revokeTarget(path, kind string) (string, bool) {
+	return actionTarget(path, kind, "revoke")
+}
+
+func writeJSONOK(w http.ResponseWriter, extra map[string]any) {
+	out := map[string]any{"ok": true}
+	for k, v := range extra {
+		out[k] = v
+	}
+	json.NewEncoder(w).Encode(out)
+}
+
+func (s *Server) handleInviteItem(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	// path /v1/invites/:id/revoke
-	id, ok := revokeTarget(r.URL.Path, "invites")
-	if !ok {
-		http.Error(w, "bad path", http.StatusBadRequest)
+	if strings.TrimSuffix(r.URL.Path, "/") == "/v1/invites/purge" {
+		n, err := s.control.PurgeStaleInvites()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSONOK(w, map[string]any{"deleted": n})
 		return
 	}
-	if err := s.control.RevokeInvite(id); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	if id, ok := actionTarget(r.URL.Path, "invites", "revoke"); ok {
+		if err := s.control.RevokeInvite(id); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSONOK(w, nil)
 		return
 	}
-	w.Write([]byte(`{"ok":true}`))
+	if id, ok := actionTarget(r.URL.Path, "invites", "delete"); ok {
+		if err := s.control.DeleteInvite(id); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSONOK(w, nil)
+		return
+	}
+	http.Error(w, "bad path", http.StatusBadRequest)
 }
 
 func (s *Server) handleHosts(w http.ResponseWriter, r *http.Request) {
@@ -450,23 +476,37 @@ func (s *Server) handleHosts(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(res)
 }
 
-func (s *Server) handleHostRevoke(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleHostItem(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	// /v1/hosts/:id/revoke
-	id, ok := revokeTarget(r.URL.Path, "hosts")
-	if !ok {
-		http.Error(w, "bad path", http.StatusBadRequest)
+	if strings.TrimSuffix(r.URL.Path, "/") == "/v1/hosts/purge" {
+		n, err := s.control.PurgeRevokedHosts()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSONOK(w, map[string]any{"deleted": n})
 		return
 	}
-	if err := s.control.RevokeHost(id); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	if id, ok := actionTarget(r.URL.Path, "hosts", "revoke"); ok {
+		if err := s.control.RevokeHost(id); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSONOK(w, nil)
 		return
 	}
-	// Relay will see revoked_at via store poll (1s) and close Agent + streams; no extra IPC push required for correctness
-	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+	if id, ok := actionTarget(r.URL.Path, "hosts", "delete"); ok {
+		if err := s.control.DeleteHost(id); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSONOK(w, nil)
+		return
+	}
+	http.Error(w, "bad path", http.StatusBadRequest)
 }
 
 func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {

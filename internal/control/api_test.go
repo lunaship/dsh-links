@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestHandlerServesWebAssets(t *testing.T) {
@@ -41,6 +42,9 @@ func TestHandlerServesWebAssets(t *testing.T) {
 			}
 			if test.path == "/" && !strings.Contains(recorder.Body.String(), "接入码") {
 				t.Fatal("control UI is missing the invite copy surface")
+			}
+			if test.path == "/" && !strings.Contains(recorder.Body.String(), "清理失效") {
+				t.Fatal("control UI is missing invite record cleanup")
 			}
 		})
 	}
@@ -388,11 +392,23 @@ func TestRevokeTargetRequiresRevokeSuffix(t *testing.T) {
 		{"/v1/hosts/h1/revoke", "hosts", "h1"},
 		{"/v1/invites/abc/revoke", "invites", "abc"},
 		{"/v1/hosts/h1/revoke/", "hosts", "h1"}, // trailing slash tolerated
+		{"/v1/hosts/h1/delete", "hosts", "h1"},
+		{"/v1/invites/abc/delete", "invites", "abc"},
 	}
 	for _, tc := range valid {
-		id, ok := revokeTarget(tc.path, tc.kind)
+		action := "revoke"
+		if strings.HasSuffix(strings.TrimSuffix(tc.path, "/"), "delete") {
+			action = "delete"
+		}
+		id, ok := actionTarget(tc.path, tc.kind, action)
 		if !ok || id != tc.id {
-			t.Fatalf("revokeTarget(%q, %q) = (%q,%v), want (%q,true)", tc.path, tc.kind, id, ok, tc.id)
+			t.Fatalf("actionTarget(%q, %q, %q) = (%q,%v), want (%q,true)", tc.path, tc.kind, action, id, ok, tc.id)
+		}
+		if action == "revoke" {
+			id, ok := revokeTarget(tc.path, tc.kind)
+			if !ok || id != tc.id {
+				t.Fatalf("revokeTarget(%q, %q) = (%q,%v), want (%q,true)", tc.path, tc.kind, id, ok, tc.id)
+			}
 		}
 	}
 	// These paths must NOT be treated as a revocation trigger, even though the
@@ -413,5 +429,58 @@ func TestRevokeTargetRequiresRevokeSuffix(t *testing.T) {
 				t.Fatalf("revokeTarget(%q, %q) = (%q,true), want rejected", p, kind, id)
 			}
 		}
+	}
+}
+
+func TestDeleteAndPurgeInviteAPI(t *testing.T) {
+	ctrl, st := newTestControl(t)
+	defer st.Close()
+	server := NewServer(ctrl, "legacy-token-0123456789", "admin", "correct horse battery staple")
+	handler := server.Handler()
+	login := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(`{"user":"admin","password":"correct horse battery staple"}`))
+	login.Header.Set("Content-Type", "application/json")
+	loginRec := httptest.NewRecorder()
+	handler.ServeHTTP(loginRec, login)
+	cookie := loginRec.Result().Cookies()[0]
+
+	if _, err := ctrl.CreateInvite(time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ctrl.CreateInvite(time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	list, err := ctrl.ListInvites()
+	if err != nil || len(list) != 2 {
+		t.Fatalf("invites: %v count=%d", err, len(list))
+	}
+
+	del := httptest.NewRequest(http.MethodPost, "/v1/invites/"+list[0].ID+"/delete", strings.NewReader(`{}`))
+	del.Header.Set("Content-Type", "application/json")
+	del.AddCookie(cookie)
+	delRec := httptest.NewRecorder()
+	handler.ServeHTTP(delRec, del)
+	if delRec.Code != http.StatusOK {
+		t.Fatalf("delete invite status=%d body=%s", delRec.Code, delRec.Body.String())
+	}
+
+	left, err := ctrl.ListInvites()
+	if err != nil || len(left) != 1 {
+		t.Fatalf("after delete: %v count=%d", err, len(left))
+	}
+	if err := ctrl.RevokeInvite(left[0].ID); err != nil {
+		t.Fatal(err)
+	}
+
+	purge := httptest.NewRequest(http.MethodPost, "/v1/invites/purge", strings.NewReader(`{}`))
+	purge.Header.Set("Content-Type", "application/json")
+	purge.AddCookie(cookie)
+	purgeRec := httptest.NewRecorder()
+	handler.ServeHTTP(purgeRec, purge)
+	if purgeRec.Code != http.StatusOK {
+		t.Fatalf("purge invites status=%d body=%s", purgeRec.Code, purgeRec.Body.String())
+	}
+	final, err := ctrl.ListInvites()
+	if err != nil || len(final) != 0 {
+		t.Fatalf("after purge: %v count=%d", err, len(final))
 	}
 }

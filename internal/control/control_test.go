@@ -268,3 +268,85 @@ func TestRenewRejectsExactReplay(t *testing.T) {
 		t.Fatalf("replay changed credential count to %d, want enrollment plus one renewal", len(credentials))
 	}
 }
+
+func TestDeleteHostRemovesRecordAndAllowsReenroll(t *testing.T) {
+	ctrl, st := newTestControl(t)
+	defer st.Close()
+	invite, err := ctrl.CreateInvite(time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostID := "host-delete-me"
+	if _, err := ctrl.Enroll(enrollRequest(t, invite, hostID, priv)); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	ctrl.SetRevokeFn(func(routeId, id string) {
+		called = true
+		if id != hostID || routeId == "" {
+			t.Fatalf("revokeFn route=%q id=%q", routeId, id)
+		}
+	})
+	if err := ctrl.DeleteHost(hostID); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("delete did not notify relay")
+	}
+	hosts, err := ctrl.ListHosts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hosts) != 0 {
+		t.Fatalf("hosts leftover=%d", len(hosts))
+	}
+	next, err := ctrl.CreateInvite(time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ctrl.Enroll(enrollRequest(t, next, hostID, priv)); err != nil {
+		t.Fatalf("re-enroll after delete: %v", err)
+	}
+}
+
+func TestPurgeStaleInvitesLeavesLiveCode(t *testing.T) {
+	ctrl, st := newTestControl(t)
+	defer st.Close()
+	if _, err := ctrl.CreateInvite(time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ctrl.CreateInvite(time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	list, err := ctrl.ListInvites()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("invites=%d", len(list))
+	}
+	if err := ctrl.RevokeInvite(list[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	n, err := ctrl.PurgeStaleInvites()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("purged=%d want 1", n)
+	}
+	left, err := ctrl.ListInvites()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) != 1 {
+		t.Fatalf("left=%d", len(left))
+	}
+	if err := ctrl.DeleteInvite(left[0].ID); err != nil {
+		t.Fatal(err)
+	}
+}

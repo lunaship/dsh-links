@@ -100,8 +100,8 @@ curl -H "Authorization: Bearer $(cat /etc/dsh-links-relay/admin.token)" -H "Cont
 
 ## 6. 吊销
 - **手机**: 在插件 UI 吊销设备, 后续 Token 401, 已有 SSE 关闭
-- **Host**: `curl -X POST -H "Authorization: Bearer ..." -H "Content-Type: application/json" -d '{}' http://127.0.0.1:8080/v1/hosts/:id/revoke` — 1秒内关闭该 route 的 Agent 控制连接与全部 stream；LAN 仍可用
-- **邀请**: `POST /v1/invites/:id/revoke` 仅对未消费有效
+- **Host**: `POST /v1/hosts/:id/revoke` 断开该 route；`POST /v1/hosts/:id/delete` 吊销并删除记录；`POST /v1/hosts/purge` 清理全部已吊销 Host
+- **邀请**: `POST /v1/invites/:id/revoke` 仅对未消费有效；`POST /v1/invites/:id/delete` 删除记录；`POST /v1/invites/purge` 清理已消费 / 过期 / 已吊销
 
 ## 7. 回滚
 - 插件默认 `relay.enabled=false`, 关闭后仅 LAN

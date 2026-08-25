@@ -73,6 +73,7 @@ async function showMain(overview) {
   refreshTimer = window.setInterval(() => {
     loadOverview();
     loadHosts();
+    loadInvites();
   }, REFRESH_MS);
 }
 
@@ -223,15 +224,19 @@ function resetArmedButton(button) {
   if (timer) window.clearTimeout(timer);
   armTimers.delete(button);
   button.dataset.state = '';
-  button.textContent = '吊销';
-  button.setAttribute('aria-label', button.dataset.ariaLabel || '吊销');
+  button.textContent = button.dataset.idleLabel || '吊销';
+  button.setAttribute('aria-label', button.dataset.ariaLabel || button.textContent);
 }
 
-function armDestructive(button, ariaLabel, action) {
+function armDestructive(button, ariaLabel, action, labels = {}) {
+  const idleLabel = labels.idle || '吊销';
+  const confirmLabel = labels.confirm || '确认吊销';
+  const loadingLabel = labels.loading || '处理中';
   button.dataset.ariaLabel = ariaLabel;
+  button.dataset.idleLabel = idleLabel;
   if (button.dataset.state !== 'confirm') {
     button.dataset.state = 'confirm';
-    button.textContent = '确认吊销';
+    button.textContent = confirmLabel;
     button.setAttribute('aria-label', `${ariaLabel}。再次点击确认。`);
     announce(`${ariaLabel}：请在 5 秒内再次点击确认。`);
     armTimers.set(button, window.setTimeout(() => resetArmedButton(button), ARM_MS));
@@ -241,17 +246,37 @@ function armDestructive(button, ariaLabel, action) {
   const timer = armTimers.get(button);
   if (timer) window.clearTimeout(timer);
   armTimers.delete(button);
-  withLoading(button, '吊销中', action).catch(error => {
+  button.dataset.state = '';
+  button.textContent = idleLabel;
+  withLoading(button, loadingLabel, action).catch(error => {
     resetArmedButton(button);
-    announce(`吊销失败：${error.message}`);
+    announce(`操作失败：${error.message}`);
   });
+}
+
+function createDangerButton(label, ariaLabel, action) {
+  const button = createElement('button', 'button button--danger', label);
+  button.type = 'button';
+  button.setAttribute('aria-label', ariaLabel);
+  button.addEventListener('click', () => armDestructive(button, ariaLabel, action, {
+    idle: label,
+    confirm: `确认${label}`,
+    loading: `${label}中`
+  }));
+  return button;
+}
+
+function createActionGroup(buttons) {
+  const wrap = createElement('div', 'cell-actions');
+  buttons.forEach(button => wrap.append(button));
+  return wrap;
 }
 
 function renderHosts(list) {
   const root = byId('hosts');
   root.replaceChildren();
   if (!Array.isArray(list) || list.length === 0) {
-    root.append(createEmptyState('暂无 Host', '插件完成注册后，Host 路由会显示在这里。'));
+    root.append(createEmptyState('暂无 Host', '插件接入后会出现在这里。'));
     return;
   }
 
@@ -271,22 +296,25 @@ function renderHosts(list) {
     appendCell(row, 'Streams', String(host.maxStreams ?? '—'), 'tnum');
     appendCell(row, '最近心跳', formatTime(host.lastSeenAt), 'tnum');
 
-    if (host.revokedAt) {
-      appendCell(row, '操作', '—');
-    } else {
-      const button = createElement('button', 'button button--danger', '吊销');
-      button.type = 'button';
-      const label = `吊销 Host ${host.hostName || host.id}`;
-      button.setAttribute('aria-label', label);
-      button.addEventListener('click', () => armDestructive(button, label, async () => {
+    const name = host.hostName || host.id;
+    const actions = [];
+    if (!host.revokedAt) {
+      actions.push(createDangerButton('吊销', `吊销 Host ${name}`, async () => {
         await request(`${ENDPOINTS.hosts}/${encodeURIComponent(host.id)}/revoke`, {
           method: 'POST', body: '{}'
         });
-        await loadHosts();
-        announce(`${host.hostName || host.id} 已吊销。`);
+        await Promise.all([loadHosts(), loadOverview()]);
+        announce(`${name} 已吊销。`);
       }));
-      appendCell(row, '操作', button);
     }
+    actions.push(createDangerButton('删除', `删除 Host ${name}`, async () => {
+      await request(`${ENDPOINTS.hosts}/${encodeURIComponent(host.id)}/delete`, {
+        method: 'POST', body: '{}'
+      });
+      await Promise.all([loadHosts(), loadOverview()]);
+      announce(`${name} 已删除。`);
+    }));
+    appendCell(row, '操作', createActionGroup(actions));
     tbody.append(row);
   });
 
@@ -314,7 +342,7 @@ function renderInvites(list) {
   const root = byId('invites');
   root.replaceChildren();
   if (!Array.isArray(list) || list.length === 0) {
-    root.append(createEmptyState('暂无邀请', '创建一次性邀请码后，状态记录会显示在这里。'));
+    root.append(createEmptyState('暂无邀请', '创建邀请码后会出现在这里。'));
     return;
   }
 
@@ -326,27 +354,30 @@ function renderInvites(list) {
   list.forEach(invite => {
     const row = document.createElement('tr');
     const [status, tone] = inviteState(invite);
-    appendCell(row, '邀请 ID', createElement('code', 'cell-secondary', `${String(invite.id).slice(0, 8)}…`));
+    const shortId = String(invite.id).slice(0, 8);
+    appendCell(row, '邀请 ID', createElement('code', 'cell-secondary', `${shortId}…`));
     appendCell(row, '状态', createStatus(status, tone));
     appendCell(row, '创建时间', formatTime(invite.createdAt), 'tnum');
     appendCell(row, '过期时间', formatTime(invite.expiresAt), 'tnum');
 
+    const actions = [];
     if (status === '有效') {
-      const button = createElement('button', 'button button--danger', '吊销');
-      button.type = 'button';
-      const label = `吊销邀请 ${String(invite.id).slice(0, 8)}`;
-      button.setAttribute('aria-label', label);
-      button.addEventListener('click', () => armDestructive(button, label, async () => {
+      actions.push(createDangerButton('吊销', `吊销邀请 ${shortId}`, async () => {
         await request(`${ENDPOINTS.invites}/${encodeURIComponent(invite.id)}/revoke`, {
           method: 'POST', body: '{}'
         });
-        await loadInvites();
+        await Promise.all([loadInvites(), loadOverview()]);
         announce('邀请码已吊销。');
       }));
-      appendCell(row, '操作', button);
-    } else {
-      appendCell(row, '操作', '—');
     }
+    actions.push(createDangerButton('删除', `删除邀请 ${shortId}`, async () => {
+      await request(`${ENDPOINTS.invites}/${encodeURIComponent(invite.id)}/delete`, {
+        method: 'POST', body: '{}'
+      });
+      await Promise.all([loadInvites(), loadOverview()]);
+      announce('邀请记录已删除。');
+    }));
+    appendCell(row, '操作', createActionGroup(actions));
     tbody.append(row);
   });
 
@@ -378,11 +409,29 @@ byId('btnInvite').addEventListener('click', async () => {
       byId('inviteResult').hidden = false;
       byId('btnCopyInvite').focus();
       await Promise.all([loadInvites(), loadOverview()]);
-      announce('接入码已创建。请立即复制到插件。');
+      announce('接入码已创建。');
     });
   } catch (error) {
     byId('inviteMessage').textContent = `邀请码未创建：${error.message}`;
   }
+});
+
+byId('btnPurgeHosts').addEventListener('click', () => {
+  const button = byId('btnPurgeHosts');
+  armDestructive(button, '清理已吊销 Host', async () => {
+    const result = await request(`${ENDPOINTS.hosts}/purge`, { method: 'POST', body: '{}' });
+    await Promise.all([loadHosts(), loadOverview()]);
+    announce(`已删除 ${result.deleted ?? 0} 条已吊销 Host。`);
+  }, { idle: '清理已吊销', confirm: '确认清理', loading: '清理中' });
+});
+
+byId('btnPurgeInvites').addEventListener('click', () => {
+  const button = byId('btnPurgeInvites');
+  armDestructive(button, '清理失效邀请', async () => {
+    const result = await request(`${ENDPOINTS.invites}/purge`, { method: 'POST', body: '{}' });
+    await Promise.all([loadInvites(), loadOverview()]);
+    announce(`已删除 ${result.deleted ?? 0} 条失效邀请。`);
+  }, { idle: '清理失效', confirm: '确认清理', loading: '清理中' });
 });
 
 async function copyText(value) {

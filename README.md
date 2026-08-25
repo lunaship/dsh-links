@@ -49,7 +49,7 @@ VPS 推荐使用加固双容器部署，见 `deploy/docker/README.md`；systemd 
 
 - 仅 `127.0.0.1:8080`，浏览器用 `admin` + `admin_password` 登录；API 也可 `Authorization: Bearer <admin-token>`。建议 `ssh -L 8080:127.0.0.1:8080 relay`
 - UI: `http://127.0.0.1:8080/` (邀请、Host、概览，Secret 不显示)
-- API: `POST /v1/invites`, `GET /v1/hosts`, `POST /v1/hosts/:id/revoke`, `GET /v1/overview`
+- API: `POST /v1/invites`, `GET /v1/hosts`, `POST /v1/hosts/:id/revoke`, `POST /v1/hosts/:id/delete`, `POST /v1/hosts/purge`, `POST /v1/invites/:id/revoke`, `POST /v1/invites/:id/delete`, `POST /v1/invites/purge`, `GET /v1/overview`
 
 ## 安全不变量
 

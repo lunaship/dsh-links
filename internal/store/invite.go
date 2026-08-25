@@ -191,11 +191,40 @@ func (s *Store) RevokeInvite(id string) error {
 	return nil
 }
 
+func (s *Store) DeleteInvite(id string) error {
+	res, err := s.db.Exec(`DELETE FROM invites WHERE id=?`, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrInviteNotFound
+	}
+	return nil
+}
+
+func (s *Store) PurgeStaleInvites(now int64) (int64, error) {
+	if now <= 0 {
+		now = time.Now().Unix()
+	}
+	res, err := s.db.Exec(
+		`DELETE FROM invites WHERE consumed_at IS NOT NULL OR revoked_at IS NOT NULL OR expires_at < ?`,
+		now,
+	)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
 var (
 	ErrInviteConsumed     = errStr("invite already consumed")
 	ErrInviteRevoked      = errStr("invite revoked")
 	ErrInviteExpired      = errStr("invite expired")
 	ErrInviteNotRevocable = errStr("invite not revocable")
+	ErrInviteNotFound     = errStr("invite not found")
+	ErrHostNotFound       = errStr("host not found")
 )
 
 type errStr string

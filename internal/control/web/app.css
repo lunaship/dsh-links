@@ -451,6 +451,7 @@ tbody tr:first-child { border-block-start: 0; }
 .cell-stack { min-width: 0; display: grid; gap: var(--space-2xs); }
 .cell-stack strong { min-width: 0; color: var(--color-ink); font-weight: 700; overflow-wrap: anywhere; }
 .cell-stack code, .cell-secondary { min-width: 0; color: var(--color-muted); font-size: var(--text-xs); overflow-wrap: anywhere; }
+.cell-actions { display: flex; flex-wrap: wrap; gap: var(--space-xs); justify-content: flex-end; }
 
 .status-badge {
   display: inline-flex;

@@ -316,6 +316,40 @@ func (c *Control) RevokeHost(hostId string) error {
 	return nil
 }
 
+// DeleteHost disconnects a live host if needed, then removes the record.
+func (c *Control) DeleteHost(hostId string) error {
+	h, err := c.store.GetHostByID(hostId)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return store.ErrHostNotFound
+		}
+		return err
+	}
+	routeStr := base64.RawURLEncoding.EncodeToString(h.RouteID)
+	if h.RevokedAt == nil {
+		if err := c.store.RevokeHost(hostId); err != nil {
+			return err
+		}
+	}
+	if c.revokeFn != nil {
+		c.revokeFn(routeStr, hostId)
+	}
+	return c.store.DeleteHost(hostId)
+}
+
+func (c *Control) PurgeRevokedHosts() (int64, error) {
+	list, err := c.store.ListRevokedHosts()
+	if err != nil {
+		return 0, err
+	}
+	if c.revokeFn != nil {
+		for _, h := range list {
+			c.revokeFn(base64.RawURLEncoding.EncodeToString(h.RouteID), h.ID)
+		}
+	}
+	return c.store.PurgeRevokedHosts()
+}
+
 // SetRevokeFn sets the post-revoke callback (called from main.go with IPC server).
 func (c *Control) SetRevokeFn(fn func(routeId, hostId string)) {
 	c.revokeFn = fn
@@ -342,6 +376,14 @@ func (c *Control) ListInvites() ([]store.Invite, error) {
 
 func (c *Control) RevokeInvite(id string) error {
 	return c.store.RevokeInvite(id)
+}
+
+func (c *Control) DeleteInvite(id string) error {
+	return c.store.DeleteInvite(id)
+}
+
+func (c *Control) PurgeStaleInvites() (int64, error) {
+	return c.store.PurgeStaleInvites(time.Now().Unix())
 }
 
 func (c *Control) GetHostByRoute(routeId []byte) (*store.Host, error) {

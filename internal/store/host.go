@@ -173,6 +173,58 @@ func (s *Store) RevokeHost(id string) error {
 	return nil
 }
 
+func (s *Store) DeleteHost(id string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM credentials WHERE host_id=?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM renewal_replays WHERE host_id=?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM stats_daily WHERE host_id=?`, id); err != nil {
+		return err
+	}
+	res, err := tx.Exec(`DELETE FROM hosts WHERE id=?`, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrHostNotFound
+	}
+	return tx.Commit()
+}
+
+func (s *Store) PurgeRevokedHosts() (int64, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM credentials WHERE host_id IN (SELECT id FROM hosts WHERE revoked_at IS NOT NULL)`); err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec(`DELETE FROM renewal_replays WHERE host_id IN (SELECT id FROM hosts WHERE revoked_at IS NOT NULL)`); err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec(`DELETE FROM stats_daily WHERE host_id IN (SELECT id FROM hosts WHERE revoked_at IS NOT NULL)`); err != nil {
+		return 0, err
+	}
+	res, err := tx.Exec(`DELETE FROM hosts WHERE revoked_at IS NOT NULL`)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
 func (s *Store) UpdateHostHeartbeat(id string) error {
 	now := time.Now().Unix()
 	_, err := s.db.Exec(`UPDATE hosts SET last_seen_at=? WHERE id=?`, now, id)
