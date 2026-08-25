@@ -208,7 +208,13 @@ func runRelay(configPath string) {
 	revokePollWG.Add(1)
 	go func() {
 		defer revokePollWG.Done()
-		ticker := time.NewTicker(time.Second)
+		// Revocation is primarily event-driven: Control broadcasts a
+		// revoke_notify immediately on RevokeHost, and re-pushes the current
+		// revoked set to this relay on every (re)connect, so the 1s invariant
+		// holds without a per-second sweep. This poll is only a belt-and-
+		// suspenders fallback for a dropped notification, so it runs at 3s
+		// instead of 1s to avoid O(online-sessions) IPC chatter per second.
+		ticker := time.NewTicker(3 * time.Second)
 		defer ticker.Stop()
 		for {
 			select {

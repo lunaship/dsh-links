@@ -270,3 +270,37 @@ func TestSecurityAndCachingHeaders(t *testing.T) {
 		t.Fatal("static UI assets must remain cacheable")
 	}
 }
+
+func TestRevokeTargetRequiresRevokeSuffix(t *testing.T) {
+	t.Parallel()
+	valid := []struct{ path, kind, id string }{
+		{"/v1/hosts/h1/revoke", "hosts", "h1"},
+		{"/v1/invites/abc/revoke", "invites", "abc"},
+		{"/v1/hosts/h1/revoke/", "hosts", "h1"}, // trailing slash tolerated
+	}
+	for _, tc := range valid {
+		id, ok := revokeTarget(tc.path, tc.kind)
+		if !ok || id != tc.id {
+			t.Fatalf("revokeTarget(%q, %q) = (%q,%v), want (%q,true)", tc.path, tc.kind, id, ok, tc.id)
+		}
+	}
+	// These paths must NOT be treated as a revocation trigger, even though the
+	// /v1/<kind>/ handler is a catch-all: only the literal /revoke suffix counts.
+	invalid := []string{
+		"/v1/hosts/h1",
+		"/v1/hosts/h1/",
+		"/v1/hosts/h1/other",
+		"/v1/hosts//revoke",
+		"/v1/other/h1/revoke",
+		"/v1/hosts/h1/revoke/x",
+		"/hosts/h1/revoke",
+		"/v1/invites//revoke",
+	}
+	for _, p := range invalid {
+		for _, kind := range []string{"hosts", "invites"} {
+			if id, ok := revokeTarget(p, kind); ok {
+				t.Fatalf("revokeTarget(%q, %q) = (%q,true), want rejected", p, kind, id)
+			}
+		}
+	}
+}

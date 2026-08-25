@@ -597,7 +597,7 @@ func (ing *Ingress) handleRegister(ctx *connContext, raw []byte) {
 		// Expiry applies to the whole session, not only the REGISTER moment
 		// (60s grace absorbs clock skew against the frame ts window). A cut
 		// session must RENEW before the deadline to stay online.
-		if now := time.Now().Unix(); now > payload.Exp+60 {
+		if now := time.Now().Unix(); now > payload.Exp+cryptoutil.CapExpiryGrace {
 			ing.logger.Printf("agent capability expired route=%s", payload.Route[:8])
 			sendError(ctx.conn, protocol.ErrAuthFailed, "capability expired")
 			return

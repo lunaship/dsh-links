@@ -140,6 +140,15 @@ func DeriveRouteSecret(routeMasterKey, routeId []byte) ([]byte, error) {
 	return HKDFSHA256(routeMasterKey, routeId, info, 32), nil
 }
 
+// CapExpiryGrace (seconds) bounds how far past a capability's expiry both the
+// relay control loop and the renewal controller still accept a late RENEW.
+// The two MUST agree: the relay's control loop lets a live session renew up to
+// `exp + CapExpiryGrace` to absorb clock skew, so the renewal controller must
+// not reject an old capability that is still inside that same window. If they
+// drift, an agent that lets its capability lapse by a moment is refused on one
+// side while being welcomed on the other.
+const CapExpiryGrace = 60
+
 // Hash helpers
 
 func SHA256(b []byte) []byte {

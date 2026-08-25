@@ -291,12 +291,14 @@ sequenceDiagram
 | OPEN 等待 BIND | 10 秒 |
 | 每 route 活跃 stream | 8 |
 | 全局活跃 stream 默认值 | 1000 |
-| 每 IP CONNECT token bucket | 容量 20，补充 10/分钟 |
-| 每 route CONNECT token bucket | 容量 16，补充 8/分钟 |
+| 每 IP 预认证 CONNECT token bucket | 容量 32，补充 30/分钟 |
+| 每 route 已认证 CONNECT token bucket | 容量 96，补充 60/分钟 |
 | 单方向无流量空闲超时 | 5 分钟；存在 SSE 心跳时不会触发 |
 | 单次写缓冲 | 32 KiB |
 
 握手前连接数、等待 BIND 数、活跃 stream、每 route stream、每 IP 连接和所有内部 channel 都必须设置硬上限。超过上限返回统一错误并关闭连接。
+
+> 注：除帧长度、流数量与超时值为冻结合同外，**连接级 token bucket（每 IP / 每 route）是随容量实测可调的运维值，不属于冻结的线路协议**。当前数字对应 `internal/ingress` 的默认实现（“预认证”按源 IP、在 CONNECT MAC 验证前计；“已认证”按 route、仅在 MAC 验证通过后计），调整限量需同步改代码常量。
 
 ### 3.6 错误码
 

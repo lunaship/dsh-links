@@ -223,11 +223,17 @@ func (c *Control) Renew(req *RenewRequest) (string, error) {
 	// The old capability itself must verify: signature, binding to this
 	// host/route, and unexpired. Without the expiry check a holder of the
 	// host key could renew forever past every capability deadline.
+	// The expiry gate intentionally mirrors the relay control loop's grace
+	// (cryptoutil.CapExpiryGrace): an agent that lets its capability lapse by
+	// a few seconds inside that window is still allowed to renew. Otherwise the
+	// relay would keep the session alive for the grace while this controller
+	// refused the renewal, disconnecting an agent that made the deadline on one
+	// side but not the other.
 	oldPayload, err := cryptoutil.VerifyCapability(c.issuerPub, req.OldCapability)
 	if err != nil {
 		return "", errors.New("old capability invalid")
 	}
-	if oldPayload.Exp < time.Now().Unix() {
+	if oldPayload.Exp+cryptoutil.CapExpiryGrace < time.Now().Unix() {
 		return "", errors.New("old capability expired")
 	}
 	if oldPayload.Host != req.HostId || oldPayload.Route != base64.RawURLEncoding.EncodeToString(req.RouteId) {
@@ -324,4 +330,11 @@ func (c *Control) RevokeInvite(id string) error {
 
 func (c *Control) GetHostByRoute(routeId []byte) (*store.Host, error) {
 	return c.store.GetHostByRoute(routeId)
+}
+
+// RevokedHosts returns hosts that are currently revoked. A (re)connecting
+// relay uses this set to reconcile its in-memory registry with persisted
+// revocations immediately, instead of polling every online session each second.
+func (c *Control) RevokedHosts() ([]store.Host, error) {
+	return c.store.ListRevokedHosts()
 }

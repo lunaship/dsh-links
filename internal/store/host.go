@@ -128,6 +128,36 @@ func (s *Store) ListHosts() ([]Host, error) {
 	return out, rows.Err()
 }
 
+// ListRevokedHosts returns revoked hosts. Used by Control to push the current
+// revocation set to a (re)connecting relay so the relay can reconcile its
+// in-memory registry without a per-second full poll.
+func (s *Store) ListRevokedHosts() ([]Host, error) {
+	rows, err := s.db.Query(`SELECT id, user_id, route_id, host_name, host_pubkey, generation, max_streams, version, last_seen_at, revoked_at, created_at FROM hosts WHERE revoked_at IS NOT NULL ORDER BY revoked_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Host
+	for rows.Next() {
+		var h Host
+		var last sql.NullInt64
+		var revoked sql.NullInt64
+		if err := rows.Scan(&h.ID, &h.UserID, &h.RouteID, &h.HostName, &h.HostPubKey, &h.Generation, &h.MaxStreams, &h.Version, &last, &revoked, &h.CreatedAt); err != nil {
+			return nil, err
+		}
+		if last.Valid {
+			v := last.Int64
+			h.LastSeenAt = &v
+		}
+		if revoked.Valid {
+			v := revoked.Int64
+			h.RevokedAt = &v
+		}
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) RevokeHost(id string) error {
 	now := time.Now().Unix()
 	// Increment generation and set revoked

@@ -331,3 +331,62 @@ func TestIPCClientReconnectsAfterServerRestart(t *testing.T) {
 	}
 	t.Fatal("client did not reconnect after server restart")
 }
+
+// TestIPCServerPushesRevocationSetOnConnect verifies that a relay connecting
+// (or reconnecting) after a revocation is told about it immediately, so a
+// control restart or a missed broadcast converges without waiting for the
+// relay's slow best-effort poll.
+func TestIPCServerPushesRevocationSetOnConnect(t *testing.T) {
+	ctrl, st := newTestControl(t)
+	defer st.Close()
+	tempDir, err := os.MkdirTemp("", "dlr-ipc-revsync-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tempDir)
+	socket := filepath.Join(tempDir, "control.sock")
+	opts := "0123456789abcdef0123456789abcdef"
+	server := NewIPCServer(ctrl, socket, opts)
+	if err := server.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+
+	// Enroll a host, then revoke it, all before any relay is connected.
+	invite, err := ctrl.CreateInvite(time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := enrollRequest(t, invite, "rev-sync-host", priv)
+	enrolled, err := ctrl.Enroll(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	routeB64 := base64.RawURLEncoding.EncodeToString(enrolled.RouteId)
+	if err := ctrl.RevokeHost("rev-sync-host"); err != nil {
+		t.Fatal(err)
+	}
+
+	// A fresh relay connecting after the revocation must be pushed the set.
+	client := NewIPCClient(socket, opts)
+	push := make(chan string, 4)
+	client.SetRevokeFn(func(routeID, _ string) { push <- routeID })
+	if err := client.Connect(); err != nil {
+		t.Fatal(err)
+	}
+	client.StartReconnect()
+	defer client.Close()
+
+	select {
+	case got := <-push:
+		if got != routeB64 {
+			t.Fatalf("sync pushed route=%q want %q", got, routeB64)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("revocation set not pushed to freshly connected relay")
+	}
+}

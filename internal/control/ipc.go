@@ -94,7 +94,17 @@ type IPCServer struct {
 	writers            map[net.Conn]*sync.Mutex
 	preAuthConnections int
 	revokeHandlers     []func(routeId string)
-	authToken          string // empty = no auth; otherwise HMAC-SHA256 keyed
+	// authToken is the shared IPC secret. The real trust boundary is the Unix
+	// socket file permissions (0770, dedicated shared group) plus the container
+	// network isolation between the control and relay roles; the handshake below
+	// is only a shared-secret possession proof between those two trusted
+	// processes. Note it is NOT encryption and NOT a replay defense against a
+	// peer that already holds the token or a socket observer inside the allowed
+	// group — the token and its derived HMAC both transit this socket in the
+	// clear (key == data in the current scheme), so any party that can read the
+	// socket stream can impersonate the relay. Keep the socket and container
+	// boundaries as the authoritative control, not this frame.
+	authToken string // empty = no auth; otherwise HMAC-SHA256 keyed
 }
 
 func NewIPCServer(ctrl *Control, socketPath string, authToken string) *IPCServer {
@@ -212,6 +222,14 @@ func (s *IPCServer) handleConn(conn net.Conn) {
 	}
 	s.clients[conn] = struct{}{}
 	s.mu.Unlock()
+	// Reconcile persisted revocations before serving requests: a relay that
+	// (re)connects (or that missed a BroadcastRevoke while offline) drops any
+	// stale sessions immediately. This is the incremental/subscription half of
+	// revocation delivery; the relay's slow poll is now only a belt-and-suspenders
+	// fallback for a dropped push.
+	if err := s.pushCurrentRevocations(conn); err != nil {
+		return
+	}
 	for {
 		line, err := readIPCFrame(conn, reader, ipcAuthenticatedIdleTimeout)
 		if err != nil {
@@ -348,6 +366,29 @@ func (s *IPCServer) handleRevokeNotify(conn net.Conn, payload json.RawMessage) {
 	// Relay acknowledges; no action needed on control side.
 	_ = conn
 	_ = payload
+}
+
+// pushCurrentRevocations sends a revoke_notify for every currently revoked
+// host so a freshly connected (or reconnected) relay reconciles its in-memory
+// registry with persisted revocations immediately. This is what lets a control
+// restart — or a missed BroadcastRevoke while the relay was offline — converge
+// without waiting for the relay's slow best-effort poll.
+func (s *IPCServer) pushCurrentRevocations(conn net.Conn) error {
+	hosts, err := s.control.RevokedHosts()
+	if err != nil {
+		return err
+	}
+	for _, h := range hosts {
+		routeStr := base64.RawURLEncoding.EncodeToString(h.RouteID)
+		payload, _ := json.Marshal(map[string]string{"routeId": routeStr, "hostId": h.ID})
+		msg := IPCMessage{Type: "revoke_notify", Payload: payload}
+		line, _ := json.Marshal(msg)
+		line = append(line, '\n')
+		if !s.writeIPC(conn, line) {
+			return errors.New("write revocation state failed")
+		}
+	}
+	return nil
 }
 
 func jsonString(s string) string {
@@ -543,7 +584,11 @@ func (c *IPCClient) Connect() error {
 	}
 	c.conn = conn
 	c.reader = bufio.NewReaderSize(conn, maxIPCFrameBytes)
-	// Send auth frame if token is configured
+	// Send auth frame if token is configured. The proof is HMAC(key=token,
+	// data=token): possession of the shared token is what matters, and both
+	// sides already hold it, so the HMAC adds no authentication the token
+	// itself does not. It is intentionally not a challenge-response — see the
+	// IPCServer.authToken note for where the real trust boundary lives.
 	if c.authToken != "" {
 		hmacStr := hex.EncodeToString(hmacSHA256([]byte(c.authToken), []byte(c.authToken)))
 		authMsg := IPCMessage{

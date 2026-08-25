@@ -126,7 +126,7 @@ func TestRenewRejectsExpiredCapability(t *testing.T) {
 		Host: hostID, Route: base64.RawURLEncoding.EncodeToString(enrolled.RouteId),
 		HostPK:     base64.RawURLEncoding.EncodeToString(enrollReq.HostPublicKey),
 		Generation: enrolled.Generation, MaxStreams: 8,
-		Iat: now - 7200, Exp: now - 60,
+		Iat: now - 7200, Exp: now - 3600, // far beyond the 60s renewal grace
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -140,6 +140,53 @@ func TestRenewRejectsExpiredCapability(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "expired") {
 		t.Fatalf("expired capability renewed: err=%v", err)
+	}
+}
+
+func TestRenewAllowsWithinGrace(t *testing.T) {
+	ctrl, st := newTestControl(t)
+	defer st.Close()
+	invite, err := ctrl.CreateInvite(30 * time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := enrollRequest(t, invite, "host-grace", priv)
+	enrolled, err := ctrl.Enroll(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A capability that lapsed by a few seconds inside cryptoutil.CapExpiryGrace
+	// must still be renewable: the relay's control loop keeps such a session
+	// alive up to Exp+CapExpiryGrace, so the renewal controller must not refuse it.
+	now := time.Now().Unix()
+	jti, _ := cryptoutil.RandomBytes(16)
+	late, err := cryptoutil.SignCapability(ctrl.issuerPriv, cryptoutil.CapabilityPayload{
+		Iss: "dsh-links-relay", Jti: base64.RawURLEncoding.EncodeToString(jti),
+		Host: "host-grace", Route: base64.RawURLEncoding.EncodeToString(enrolled.RouteId),
+		HostPK:     base64.RawURLEncoding.EncodeToString(req.HostPublicKey),
+		Generation: enrolled.Generation, MaxStreams: 8,
+		Iat: now - 7200, Exp: now - 30, // inside the 60s grace
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonce, _ := cryptoutil.RandomBytes(16)
+	chal, _ := cryptoutil.RandomBytes(32)
+	proof := ed25519.Sign(priv, cryptoutil.BuildRenewTranscript(late, now, nonce, chal))
+	newCap, err := ctrl.Renew(&RenewRequest{
+		RouteId: enrolled.RouteId, HostId: "host-grace", HostPubKey: req.HostPublicKey,
+		Ts: now, Nonce: nonce, Challenge: chal, Proof: proof, OldCapability: late,
+	})
+	if err != nil {
+		t.Fatalf("renewal within grace refused: %v", err)
+	}
+	if newCap == "" {
+		t.Fatal("renewal returned empty capability")
 	}
 }
 

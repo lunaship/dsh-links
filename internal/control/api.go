@@ -350,18 +350,33 @@ func decodeOneJSON(r io.Reader, dst any, allowEmpty bool) error {
 	return nil
 }
 
+// revokeTarget validates that a POST path is exactly /v1/<kind>/<id>/revoke
+// and returns the id. Requiring the literal /revoke suffix keeps the catch-all
+// routes below from treating an arbitrary trailing segment as a revoke trigger.
+func revokeTarget(path, kind string) (string, bool) {
+	p := strings.TrimSuffix(path, "/")
+	parts := strings.Split(p, "/")
+	// ["", "v1", kind, id, "revoke"]
+	if len(parts) != 5 || parts[1] != "v1" || parts[2] != kind || parts[4] != "revoke" {
+		return "", false
+	}
+	if parts[3] == "" {
+		return "", false
+	}
+	return parts[3], true
+}
+
 func (s *Server) handleInviteRevoke(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	// path /v1/invites/:id/revoke
-	parts := strings.Split(r.URL.Path, "/")
-	if len(parts) < 4 {
+	id, ok := revokeTarget(r.URL.Path, "invites")
+	if !ok {
 		http.Error(w, "bad path", http.StatusBadRequest)
 		return
 	}
-	id := parts[3]
 	if err := s.control.RevokeInvite(id); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -407,13 +422,12 @@ func (s *Server) handleHostRevoke(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	parts := strings.Split(r.URL.Path, "/")
 	// /v1/hosts/:id/revoke
-	if len(parts) < 4 {
+	id, ok := revokeTarget(r.URL.Path, "hosts")
+	if !ok {
 		http.Error(w, "bad path", http.StatusBadRequest)
 		return
 	}
-	id := parts[3]
 	if err := s.control.RevokeHost(id); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
