@@ -29,9 +29,11 @@ services:
       RELAY_DATA: /data
     volumes:
       - relay-data:/data
+    # Pin host publishes. OpenShip must not rewrite these to loopback/edge:
+    # relay speaks native TLS on both ports, not HTTP behind OpenResty.
     ports:
-      - "8443:8443"
-      - "8444:8444"
+      - "0.0.0.0:8443:8443"
+      - "0.0.0.0:8444:8444"
 
 volumes:
   relay-data:

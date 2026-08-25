@@ -4,6 +4,6 @@
   "composePath": "docker-compose.openship.yml",
   "runtime": "docker",
   "productionMode": "host",
-  "workload": "web",
+  "workload": "worker",
   "port": 8443
 }
