@@ -4,7 +4,8 @@
  * 一个插件完成"手机端使用 dsh"：
  *   1. 在主 web 服务上注册 /dsh-link/* 路由（仅回环同源），给网页界面提供二维码与配对管理；
  *   2. 在 0.0.0.0:<port> 起一个带 token 校验的手机 API（只服务 App：health / pair / mobile/*）；
- *   3. 配对采用一次性 6 位配对码（默认 10 分钟有效），扫码即自动批准。
+ *   3. 配对采用一次性 6 位配对码（默认 10 分钟有效）。默认扫码即批准；
+ *      开启「配对需本机确认」后，token 先发、API 要等面板点批准才放行。
  */
 import { createServer as createHttpsServer } from "node:https"
 import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs"
@@ -35,7 +36,7 @@ export const Config = z.object({
   port: z.natural().min(1).max(65535).default(18640),
   /** 额外可访问地址（如 frp 公网地址），会一并写进二维码供手机按可达性选择 */
   extraUrls: z.array(z.string()).default([]),
-  /** 配对自动批准（个人使用默认开启） */
+  /** 配对自动批准（个人使用默认开启）。关闭后改为面板待确认，而不是直接拒绝配对。 */
   autoApprove: z.boolean().default(true),
   /** 配对码有效期（秒） */
   pairingTtlSeconds: z.natural().default(600),
@@ -142,14 +143,59 @@ function normalizeDeviceVia(device) {
   return "lan"
 }
 
+function displayRemoteAddress(addr) {
+  return String(addr ?? "").replace(/^::ffff:/i, "") || ""
+}
+
 function publicDevice(device) {
+  const pending = device.status === "pending"
   return {
     deviceId: device.deviceId,
     name: device.name,
     createdAt: device.createdAt,
     lastSeenAt: device.lastSeenAt,
     via: normalizeDeviceVia(device),
+    status: pending ? "pending" : "active",
+    pendingExpiresAt: pending ? (device.pendingExpiresAt ?? null) : null,
+    pairedFrom: pending ? displayRemoteAddress(device.pairedFrom) : "",
   }
+}
+
+function pairRequireConfirm(config, state) {
+  if (typeof state.pairRequireConfirm === "boolean") return state.pairRequireConfirm
+  return config.autoApprove === false
+}
+
+function isDevicePending(device) {
+  return device?.status === "pending"
+}
+
+function isPrivateV4Host(host) {
+  if (host.startsWith("192.168.") || host.startsWith("10.")) return true
+  const m = /^172\.(\d+)\./.exec(host)
+  if (!m) return false
+  const n = Number(m[1])
+  return n >= 16 && n <= 31
+}
+
+function listenExposure(config, infos) {
+  const listen = { address: "0.0.0.0", port: config.port }
+  const networks = (infos ?? [])
+    .filter((item) => item?.label)
+    .map((item) => ({ label: item.label, category: item.category, url: item.url }))
+  const extras = (config.extraUrls ?? []).length > 0
+  const publicNets = networks.filter((n) => n.category === "other")
+  if (publicNets.length || extras) {
+    const warning = extras
+      ? `已配置 extraUrls，18640 可能经隧道或公网地址暴露。当前监听 ${listen.address}:${listen.port}。`
+      : `检测到非私有网卡地址。当前监听 ${listen.address}:${listen.port}，请确认这些网段可信。`
+    return { listen, networks, level: "untrusted", warning }
+  }
+  const labels = networks.map((n) => n.label).filter(Boolean)
+  const hint = labels.length
+    ? `当前监听 ${listen.address}:${listen.port}，局域网可达 ${labels.join("、")}。勿把 18640 暴露到公网。`
+    : `当前监听 ${listen.address}:${listen.port}。未发现可用局域网地址。`
+  return { listen, networks, level: "lan", warning: null, hint }
 }
 
 /** extraUrls 只接受 https；http 一律升为 https。非法项丢弃。 */
@@ -171,7 +217,7 @@ function classifyUrl(url) {
   try {
     const host = new URL(url).hostname
     if (host === "127.0.0.1" || host === "localhost") return "loopback"
-    if (host.startsWith("192.168.") || host.startsWith("10.") || host.startsWith("172.16.") || host.startsWith("172.31.")) return "private"
+    if (isPrivateV4Host(host)) return "private"
     return "other"
   } catch {
     return "unknown"
@@ -242,6 +288,8 @@ function pairInfo(config, state, certFingerprint, via = "lan") {
     }
     if (relay.tlsFingerprint) info.relay.tlsFingerprint = relay.tlsFingerprint
   }
+  info.requireConfirm = pairRequireConfirm(config, state)
+  info.exposure = listenExposure(config, lan.infos)
   return info
 }
 
@@ -441,22 +489,26 @@ async function qrPng(res, config, state, certFingerprint, via = "lan") {
   }
 }
 
-async function handlePair(req, res, config, state, stateFile) {
+async function handlePair(req, res, config, state, stateFile, rt) {
   if (!requireJsonWrite(req, res)) return
   const body = await readJson(req, res)
   if (!body) return
+  sweepExpiredPending(state, stateFile, rt)
   const code = String(body.code ?? "").trim()
   const deviceName = (String(body.deviceName ?? "手机").trim().slice(0, 32) || "手机")
-  const clientKey = String(req.socket?.remoteAddress ?? req.connection?.remoteAddress ?? "unknown")
+  const via = String(body.via ?? "").trim() === "relay" ? "relay" : "lan"
+  // 局域网按对端 IP 隔离限流；经 Relay 的所有远端都会表现为本地回环地址，
+  // 无法拿到真实对端 IP，因此把 via 纳入 key，让 Relay 尝试共享一个显式桶，
+  // 并叠加 per-challenge / global 预算兜底（真 IP 隔离需 Relay 协议透传对端）。
+  const clientKey =
+    (via === "relay" ? "relay" : "lan") +
+    "::" +
+    String(req.socket?.remoteAddress ?? req.connection?.remoteAddress ?? "unknown")
   const ver = verifyPairingCode(state, code, clientKey)
   if (!ver.ok) {
     // pairingRates 仅内存；勿写入 state.json
     const throttled = /频繁|失效|稍后再试/.test(ver.error ?? "")
     json(res, throttled ? 429 : 401, { error: ver.error })
-    return
-  }
-  if (!config.autoApprove) {
-    json(res, 403, { error: "该主机未开启自动批准" })
     return
   }
   // 同名设备不允许静默替换：先吊销旧设备或改名
@@ -465,14 +517,38 @@ async function handlePair(req, res, config, state, stateFile) {
     json(res, 409, { error: "已存在同名设备，请先吊销旧设备或更换名称" })
     return
   }
-  const via = String(body.via ?? "").trim() === "relay" ? "relay" : "lan"
   const token = randomToken(24)
   const deviceId = `dev-${randomToken(8)}`
+  const requireConfirm = pairRequireConfirm(config, state)
+  const device = {
+    deviceId,
+    name: deviceName,
+    tokenHash: hmacDeviceToken(state, token),
+    createdAt: now(),
+    lastSeenAt: now(),
+    via,
+  }
+  if (requireConfirm) {
+    // token 仍发给 App（旧客户端可存），但 API 在面板批准前一律 403。
+    device.status = "pending"
+    device.pendingExpiresAt = Date.now() + config.pairingTtlSeconds * 1000
+    device.pairedFrom = displayRemoteAddress(
+      req.socket?.remoteAddress ?? req.connection?.remoteAddress ?? "",
+    )
+  }
   state.devices = state.devices ?? []
-  state.devices.push({ deviceId, name: deviceName, tokenHash: hmacDeviceToken(state, token), createdAt: now(), lastSeenAt: now(), via })
+  state.devices.push(device)
   consumePairingCode(state) // 配对码一次性：成功后立即失效
   saveState(stateFile, state)
-  json(res, 200, { ok: true, token, deviceId, name: deviceName, urls: lanUrls(config).urls })
+  json(res, 200, {
+    ok: true,
+    token,
+    deviceId,
+    name: deviceName,
+    urls: lanUrls(config).urls,
+    pending: requireConfirm,
+    pendingExpiresAt: requireConfirm ? device.pendingExpiresAt : undefined,
+  })
 }
 
 const MAX_ZSTD_OUTPUT_BYTES = 32 * 1024 * 1024
@@ -708,6 +784,16 @@ function closeRequestsForDevice(rt, deviceId, exceptReq) {
 
 function isDeviceAuthorized(state, device) {
   return Boolean(device?.deviceId && (state.devices ?? []).some((item) => item === device || item.deviceId === device.deviceId))
+}
+
+/** 设备是否对该会话存在活跃 SSE 订阅（审批只能由正在操作该会话的设备处理）。 */
+function isDeviceSubscribedToSession(rt, sessionId, deviceId) {
+  const writers = rt.sessionStreams.get(sessionId)
+  if (!writers || writers.size === 0) return false
+  for (const conn of writers) {
+    if (conn && conn.deviceId === deviceId) return true
+  }
+  return false
 }
 
 async function readAuthorizedJson(req, res, state, device, limit) {
@@ -971,6 +1057,12 @@ function mobileSessionSummary(item) {
   }
 }
 
+function dropDevice(state, rt, device, exceptReq) {
+  revokeDevice(null, device.deviceId)
+  closeSseForDevice(rt, device.deviceId)
+  closeRequestsForDevice(rt, device.deviceId, exceptReq)
+}
+
 function revokeDeviceEntry(state, stateFile, rt, { name, deviceId }, exceptReq) {
   const targetName = String(name ?? "").trim()
   const targetId = String(deviceId ?? "").trim()
@@ -978,11 +1070,47 @@ function revokeDeviceEntry(state, stateFile, rt, { name, deviceId }, exceptReq) 
   const target = (state.devices ?? []).find((d) => d.name === targetName || d.deviceId === targetId)
   if (!target) return { status: 404, body: { error: "设备不存在" } }
   state.devices = (state.devices ?? []).filter((d) => d.deviceId !== target.deviceId)
-  revokeDevice(null, target.deviceId)
-  closeSseForDevice(rt, target.deviceId)
-  closeRequestsForDevice(rt, target.deviceId, exceptReq)
+  dropDevice(state, rt, target, exceptReq)
   saveState(stateFile, state)
   return { status: 200, body: { ok: true, removed: 1, deviceId: target.deviceId } }
+}
+
+function revokeAllDevices(state, stateFile, rt) {
+  const devices = [...(state.devices ?? [])]
+  state.devices = []
+  for (const device of devices) dropDevice(state, rt, device)
+  saveState(stateFile, state)
+  return { status: 200, body: { ok: true, removed: devices.length } }
+}
+
+function sweepExpiredPending(state, stateFile, rt) {
+  const nowMs = Date.now()
+  const kept = []
+  const expired = []
+  for (const device of state.devices ?? []) {
+    if (isDevicePending(device) && nowMs >= (device.pendingExpiresAt ?? 0)) expired.push(device)
+    else kept.push(device)
+  }
+  if (!expired.length) return
+  state.devices = kept
+  for (const device of expired) dropDevice(state, rt, device)
+  saveState(stateFile, state)
+}
+
+function activatePendingDevice(state, stateFile, deviceId) {
+  const id = String(deviceId ?? "").trim()
+  if (!id) return { status: 400, body: { error: "缺少 deviceId" } }
+  const target = (state.devices ?? []).find((d) => d.deviceId === id)
+  if (!target) return { status: 404, body: { error: "设备不存在" } }
+  if (!isDevicePending(target)) return { status: 409, body: { error: "设备无需确认" } }
+  if (Date.now() >= (target.pendingExpiresAt ?? 0)) {
+    return { status: 404, body: { error: "待确认已过期，请重新配对" } }
+  }
+  delete target.status
+  delete target.pendingExpiresAt
+  delete target.pairedFrom
+  saveState(stateFile, state)
+  return { status: 200, body: { ok: true, deviceId: target.deviceId, name: target.name } }
 }
 
 async function handleMobileApi(req, res, targetPort, state, stateFile, device, pathname, rt) {
@@ -1229,6 +1357,14 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
       if (!pending) {
         return json(res, 409, { ok: false, accepted: false, error: "审批已结束或不存在" })
       }
+      // 审批绑定会话：URL sessionId 必须与审批记录一致，且只能由当前订阅该会话 SSE 的设备处理。
+      // 防止另一台只读过 history、并未在该会话上活跃连接的设备代答（放行危险工具或 DoS）。
+      if (pending.sessionId !== sessionId) {
+        return json(res, 409, { ok: false, accepted: false, error: "审批会话不匹配" })
+      }
+      if (!isDeviceSubscribedToSession(rt, pending.sessionId, device.deviceId)) {
+        return json(res, 403, { ok: false, accepted: false, error: "仅该会话的当前连接设备可处理审批" })
+      }
       pending.settle(outcome)
       return json(res, 200, { ok: true, accepted: true, handledBy: "plugin" })
     }
@@ -1345,6 +1481,9 @@ const PANEL_ONLY_PATHS = new Set([
   "/dsh-link/pair-info",
   "/dsh-link/qr.png",
   "/dsh-link/revoke",
+  "/dsh-link/revoke-all",
+  "/dsh-link/pair-approve",
+  "/dsh-link/pair-settings",
   "/dsh-link/devices",
   "/dsh-link/relay-status",
   "/dsh-link/relay-enroll",
@@ -1396,6 +1535,7 @@ export function apply(ctx, config) {
     }
   }
   saveState(stateFile, state)
+  sweepExpiredPending(state, stateFile, rt)
   if (migrated) ctx.logger.info("dsh-links: 已为旧设备补发 deviceId")
 
   const fp = () => tlsHolder.fingerprint
@@ -1435,6 +1575,7 @@ export function apply(ctx, config) {
       path: "/dsh-link/pair-info",
       handler: (req, res) => {
         if (!requireLoopbackSameOrigin(req, res)) return
+        sweepExpiredPending(state, stateFile, rt)
         json(res, 200, pairInfo(config, state, fp(), pairVia(req)))
       },
     }),
@@ -1463,9 +1604,52 @@ export function apply(ctx, config) {
     }),
     web.register({
       kind: "exact",
+      path: "/dsh-link/revoke-all",
+      handler: async (req, res) => {
+        if (!requireLoopbackSameOrigin(req, res)) return
+        if (!requireJsonWrite(req, res)) return
+        const body = await readJson(req, res)
+        if (!body) return
+        const result = revokeAllDevices(state, stateFile, rt)
+        json(res, result.status, result.body)
+      },
+    }),
+    web.register({
+      kind: "exact",
+      path: "/dsh-link/pair-approve",
+      handler: async (req, res) => {
+        if (!requireLoopbackSameOrigin(req, res)) return
+        if (!requireJsonWrite(req, res)) return
+        const body = await readJson(req, res)
+        if (!body) return
+        sweepExpiredPending(state, stateFile, rt)
+        const result = activatePendingDevice(state, stateFile, body.deviceId)
+        json(res, result.status, result.body)
+      },
+    }),
+    web.register({
+      kind: "exact",
+      path: "/dsh-link/pair-settings",
+      handler: async (req, res) => {
+        if (!requireLoopbackSameOrigin(req, res)) return
+        if (!requireJsonWrite(req, res)) return
+        const body = await readJson(req, res)
+        if (!body) return
+        if (typeof body.requireConfirm !== "boolean") {
+          return json(res, 400, { error: "缺少 requireConfirm" })
+        }
+        // 只改此后新配对的默认行为；已排队的 pending 必须逐台批准/拒绝/到期，避免误关开关放行攻击者。
+        state.pairRequireConfirm = body.requireConfirm
+        saveState(stateFile, state)
+        json(res, 200, { ok: true, requireConfirm: pairRequireConfirm(config, state) })
+      },
+    }),
+    web.register({
+      kind: "exact",
       path: "/dsh-link/devices",
       handler: (req, res) => {
         if (!requireLoopbackSameOrigin(req, res)) return
+        sweepExpiredPending(state, stateFile, rt)
         json(res, 200, {
           devices: state.devices.map(publicDevice),
         })
@@ -1601,7 +1785,7 @@ export function apply(ctx, config) {
         return json(res, 200, { ok: true })
       }
       if (pathname === "/dsh-link/pair" && req.method === "POST") {
-        return handlePair(req, res, config, state, stateFile)
+        return handlePair(req, res, config, state, stateFile, rt)
       }
       if (PANEL_ONLY_PATHS.has(pathname)) {
         return json(res, 404, { error: "not found" })
@@ -1612,6 +1796,13 @@ export function apply(ctx, config) {
       }
       if (!device) {
         return json(res, 401, { error: "缺少或无效的连接 token" })
+      }
+      sweepExpiredPending(state, stateFile, rt)
+      if (!isDeviceAuthorized(state, device)) {
+        return json(res, 401, { error: "缺少或无效的连接 token" })
+      }
+      if (isDevicePending(device)) {
+        return json(res, 403, { error: "设备待主机确认", pending: true })
       }
       trackDeviceRequest(rt, device.deviceId, req, res)
       touchDevice(state, device, stateFile)

@@ -98,9 +98,9 @@ dsh plugin --profile web add /path/to/dsh-links
 
 ## 能力摘要
 
-- 扫码 / 配对码 → 设备 token（`x-dsh-link-token`）
-- `0.0.0.0:18640` HTTPS 手机接入代理
-- `/dsh-link/mobile/*` 会话、SSE、审批、吊销
+- 扫码 / 配对码 → 设备 token（`x-dsh-link-token`）；可选本机确认后才放行
+- `0.0.0.0:18640` HTTPS 手机接入代理（面板展示监听地址与可达网段）
+- `/dsh-link/mobile/*` 会话、SSE、审批、吊销；面板可一键吊销全部设备
 - 局域网码与云端码分开：云端码只在电脑用接入码连上 Relay 之后出现
 
 详情见 [`SECURITY.md`](SECURITY.md)、[`PRIVACY.md`](PRIVACY.md) 与 [`REMOTE_ACCESS.md`](REMOTE_ACCESS.md)。

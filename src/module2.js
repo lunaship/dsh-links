@@ -268,6 +268,50 @@ const createPanelModule = (require) => {
       padding: 12px; border-radius: 12px;
       border: 1px dashed var(--dl-line); text-align: center;
     }
+    .dshlink-expose {
+      margin: 0; font-size: 12px; line-height: 1.5;
+      padding: 10px 12px; border-radius: 10px;
+      background: var(--dl-soft); border: 1px solid var(--dl-line);
+      color: var(--dl-muted);
+    }
+    .dshlink-expose.is-warn {
+      background: var(--dl-danger-soft);
+      border-color: rgba(180, 35, 24, 0.28);
+      color: var(--dl-danger);
+      font-weight: 600;
+    }
+    .dshlink-confirm {
+      display: flex; align-items: flex-start; gap: 8px;
+      margin: 0; font-size: 12px; line-height: 1.45; color: var(--dl-muted);
+    }
+    .dshlink-confirm input { margin-top: 2px; }
+    .dshlink-device.is-pending {
+      border-color: rgba(180, 110, 24, 0.28);
+      background: #fff8f0;
+    }
+    .dshlink-device-dot.is-pending {
+      background: #c47d12;
+      box-shadow: 0 0 0 3px rgba(196, 125, 18, 0.16);
+    }
+    .dshlink-device-actions { display: flex; gap: 6px; flex: none; }
+    .dshlink-approve {
+      flex: none; appearance: none; cursor: pointer;
+      border: 1px solid rgba(31, 138, 76, 0.28);
+      background: #eef8f1; color: var(--dl-ok);
+      border-radius: 8px; padding: 5px 11px;
+      font: inherit; font-size: 12px; font-weight: 600;
+    }
+    .dshlink-approve:hover { background: #e3f3e8 }
+    .dshlink-approve:focus-visible { outline: 2px solid var(--dl-ok); outline-offset: 2px }
+    .dshlink-revoke-all {
+      appearance: none; cursor: pointer; width: 100%;
+      border: 1px solid rgba(180, 35, 24, 0.22);
+      background: var(--dl-danger-soft); color: var(--dl-danger);
+      border-radius: 10px; padding: 8px 12px;
+      font: inherit; font-size: 12px; font-weight: 600;
+    }
+    .dshlink-revoke-all:hover { background: #ffe4e1 }
+    .dshlink-revoke-all:focus-visible { outline: 2px solid var(--dl-danger); outline-offset: 2px }
 
     .dshlink-field {
       width: 100%; box-sizing: border-box;
@@ -328,6 +372,39 @@ const createPanelModule = (require) => {
     return (devices ?? []).filter((d) => (d.via === 'relay' ? 'relay' : 'lan') === via)
   }
 
+  function isPendingDevice(device) {
+    return device?.status === 'pending'
+  }
+
+  function pendingLabel(device) {
+    const via = device?.via === 'relay' ? '云端' : '局域网'
+    const from = device?.pairedFrom ? ` · 来自 ${device.pairedFrom}` : ''
+    return `待确认 · ${via}${from}`
+  }
+
+  function ExposureBanner({ exposure }) {
+    if (!exposure) return null
+    const warn = exposure.level === 'untrusted' && exposure.warning
+    return jsx('p', {
+      className: 'dshlink-expose' + (warn ? ' is-warn' : ''),
+      children: warn || exposure.hint || exposure.warning,
+    })
+  }
+
+  function ConfirmToggle({ requireConfirm, onChange }) {
+    return jsxs('label', {
+      className: 'dshlink-confirm',
+      children: [
+        jsx('input', {
+          type: 'checkbox',
+          checked: Boolean(requireConfirm),
+          onChange: (event) => onChange(event.target.checked),
+        }),
+        '配对需本机确认（扫码后要在此批准。关闭只影响新配对，等待中的设备不会自动放行）',
+      ],
+    })
+  }
+
   function DeviceList({ devices, revoke, empty }) {
     return jsxs('div', {
       className: 'dshlink-devices',
@@ -350,13 +427,56 @@ const createPanelModule = (require) => {
                   jsx('button', {
                     type: 'button',
                     className: 'dshlink-revoke',
-                    onClick: () => revoke(d.name),
+                    onClick: () => revoke(d.deviceId ? { deviceId: d.deviceId } : { name: d.name }),
                     children: '吊销',
                   }),
                 ],
               }),
             )
           : jsx('div', { className: 'dshlink-empty', children: empty }),
+      ],
+    })
+  }
+
+  function PendingList({ devices, approve, revoke }) {
+    if (!devices.length) return null
+    return jsxs('div', {
+      className: 'dshlink-devices',
+      children: [
+        jsx('div', { className: 'dshlink-section-label', children: '待本机确认' }),
+        ...devices.map((d) =>
+          jsxs('div', {
+            className: 'dshlink-device is-pending',
+            key: d.deviceId || d.name,
+            children: [
+              jsx('span', { className: 'dshlink-device-dot is-pending', 'aria-hidden': true }),
+              jsxs('div', {
+                className: 'dshlink-device-copy',
+                children: [
+                  jsx('div', { className: 'dshlink-device-name', children: d.name }),
+                  jsx('div', { className: 'dshlink-device-time', children: pendingLabel(d) }),
+                ],
+              }),
+              jsxs('div', {
+                className: 'dshlink-device-actions',
+                children: [
+                  jsx('button', {
+                    type: 'button',
+                    className: 'dshlink-approve',
+                    onClick: () => approve(d.deviceId),
+                    children: '批准',
+                  }),
+                  jsx('button', {
+                    type: 'button',
+                    className: 'dshlink-revoke',
+                    onClick: () => revoke(d.deviceId ? { deviceId: d.deviceId } : { name: d.name }),
+                    children: '拒绝',
+                  }),
+                ],
+              }),
+            ],
+          }),
+        ),
       ],
     })
   }
@@ -416,7 +536,7 @@ const createPanelModule = (require) => {
           children: '请让手机与电脑连上同一可信 Wi‑Fi 后扫码。丢失手机时在此立即吊销设备。勿将 18640 裸暴露到公网。',
         }),
         jsx(DeviceList, {
-          devices: devicesVia(devices, 'lan'),
+          devices: devicesVia(devices, 'lan').filter((d) => !isPendingDevice(d)),
           revoke,
           empty: '暂无已配对的局域网设备',
         }),
@@ -606,7 +726,7 @@ const createPanelModule = (require) => {
           ],
         }),
         jsx(DeviceList, {
-          devices: devicesVia(devices, 'relay'),
+          devices: devicesVia(devices, 'relay').filter((d) => !isPendingDevice(d)),
           revoke,
           empty: '暂无已配对的云端设备',
         }),
@@ -634,16 +754,28 @@ const createPanelModule = (require) => {
     })
   }
 
-  function ConnectionBody({ info, devices, err, revoke, relay, onEnroll, onDisconnect, load }) {
+  function ConnectionBody({ info, devices, err, revoke, approve, revokeAll, setRequireConfirm, relay, onEnroll, onDisconnect, load }) {
     const [active, setActive] = React.useState('lan')
     React.useEffect(() => { load?.() }, [active, load])
     if (err) return jsx('div', { className: 'dshlink-status is-error', children: `加载失败：${err}` })
     if (!info) return jsx('div', { className: 'dshlink-status', children: '加载中…' })
+    const pending = (devices ?? []).filter(isPendingDevice)
     return jsxs('div', {
       className: 'dshlink-connection',
       children: [
         jsx(ConnectionTabs, { active, onChange: setActive }),
+        jsx(ExposureBanner, { exposure: info.exposure }),
+        jsx(ConfirmToggle, { requireConfirm: info.requireConfirm, onChange: setRequireConfirm }),
+        jsx(PendingList, { devices: pending, approve, revoke }),
         active === 'lan' ? jsx(LanBody, { info, devices, revoke }) : jsx(RemoteBody, { info, devices, revoke, relay, onEnroll, onDisconnect }),
+        devices.length
+          ? jsx('button', {
+              type: 'button',
+              className: 'dshlink-revoke-all',
+              onClick: revokeAll,
+              children: '吊销全部设备',
+            })
+          : null,
       ],
     })
   }
@@ -670,19 +802,59 @@ const createPanelModule = (require) => {
       }
     }, [])
 
+    const pendingCount = devices.filter((d) => d.status === 'pending').length
+
     React.useEffect(() => {
       if (!active) return undefined
       load()
-      const timer = setInterval(load, 30_000)
+      const timer = setInterval(load, pendingCount > 0 ? 2000 : 8000)
       return () => clearInterval(timer)
-    }, [active, load])
+    }, [active, load, pendingCount])
 
-    const revoke = async (deviceName) => {
+    const revoke = async (target) => {
+      const body = typeof target === 'string' ? { name: target } : (target ?? {})
       try {
         await fetch('/dsh-link/revoke', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ name: deviceName }),
+          body: JSON.stringify(body),
+        })
+      } finally {
+        load()
+      }
+    }
+
+    const approve = async (deviceId) => {
+      try {
+        await fetch('/dsh-link/pair-approve', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ deviceId }),
+        })
+      } finally {
+        load()
+      }
+    }
+
+    const revokeAll = async () => {
+      if (!window.confirm('吊销全部已配对设备？手机需要重新扫码。')) return
+      try {
+        await fetch('/dsh-link/revoke-all', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: '{}',
+        })
+      } finally {
+        load()
+      }
+    }
+
+    const setRequireConfirm = async (requireConfirm) => {
+      try {
+        await fetch('/dsh-link/pair-settings', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ requireConfirm }),
         })
       } finally {
         load()
@@ -704,12 +876,12 @@ const createPanelModule = (require) => {
       await load()
     }
 
-    return { info, devices, err, revoke, relay, onEnroll, onDisconnect, load }
+    return { info, devices, err, revoke, approve, revokeAll, setRequireConfirm, relay, onEnroll, onDisconnect, load }
   }
 
   function LinkPanel() {
     const [open, setOpen] = React.useState(false)
-    const { info, devices, err, revoke, relay, onEnroll, onDisconnect, load } = usePairData(open)
+    const { info, devices, err, revoke, approve, revokeAll, setRequireConfirm, relay, onEnroll, onDisconnect, load } = usePairData(open)
 
     React.useEffect(() => {
       window.__dshlinkOpenPanel = () => setOpen(true)
@@ -730,7 +902,7 @@ const createPanelModule = (require) => {
                 onClick: (e) => e.stopPropagation(),
                 children: [
                   jsx(BrandHeader, {}),
-                  jsx(ConnectionBody, { info, devices, err, revoke, relay, onEnroll, onDisconnect, load }),
+                  jsx(ConnectionBody, { info, devices, err, revoke, approve, revokeAll, setRequireConfirm, relay, onEnroll, onDisconnect, load }),
                   jsx('button', {
                     type: 'button',
                     className: 'dshlink-close',
@@ -746,7 +918,7 @@ const createPanelModule = (require) => {
   }
 
   function DshLinkSettingsSection() {
-    const { info, devices, err, revoke, relay, onEnroll, onDisconnect, load } = usePairData(true)
+    const { info, devices, err, revoke, approve, revokeAll, setRequireConfirm, relay, onEnroll, onDisconnect, load } = usePairData(true)
 
     return jsxs(React.Fragment, {
       children: [
@@ -755,7 +927,7 @@ const createPanelModule = (require) => {
           className: 'dshlink-settings dshlink-root',
           children: [
             jsx(BrandHeader, {}),
-            jsx(ConnectionBody, { info, devices, err, revoke, relay, onEnroll, onDisconnect, load }),
+            jsx(ConnectionBody, { info, devices, err, revoke, approve, revokeAll, setRequireConfirm, relay, onEnroll, onDisconnect, load }),
           ],
         }),
       ],

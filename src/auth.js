@@ -42,6 +42,15 @@ function safeEqualBuf(a, b) {
   return crypto.timingSafeEqual(a, b)
 }
 
+/** 两个 64 位 hex 摘要做恒定时间比较（长度不一致即 false）。 */
+function safeTokenHashEqual(expectedHex, computedHex) {
+  if (typeof expectedHex !== "string" || typeof computedHex !== "string") return false
+  const a = Buffer.from(expectedHex, "hex")
+  const b = Buffer.from(computedHex, "hex")
+  if (!a.length || a.length !== b.length) return false
+  return crypto.timingSafeEqual(a, b)
+}
+
 export function randomToken(bytes = 24) {
   return crypto.randomBytes(bytes).toString("hex")
 }
@@ -69,9 +78,11 @@ export function hmacDeviceToken(state, token) {
  */
 export function findDeviceByToken(state, token) {
   const devices = state.devices ?? []
-  const byHmac = devices.find((d) => d.tokenHash === hmacDeviceToken(state, token))
+  const hmac = hmacDeviceToken(state, token)
+  const byHmac = devices.find((d) => safeTokenHashEqual(d.tokenHash, hmac))
   if (byHmac) return { device: byHmac, legacy: false }
-  const byLegacy = devices.find((d) => d.tokenHash === sha256Hex(token))
+  const legacy = sha256Hex(token)
+  const byLegacy = devices.find((d) => safeTokenHashEqual(d.tokenHash, legacy))
   if (byLegacy) return { device: byLegacy, legacy: true }
   return { device: null, legacy: false }
 }

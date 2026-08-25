@@ -162,6 +162,9 @@ const base = () => `https://127.0.0.1:${proxyPort}`
 const pairInfoRoute = () => registered.find((r) => r.path === "/dsh-link/pair-info")
 const qrRoute = () => registered.find((r) => r.path === "/dsh-link/qr.png")
 const revokeRoute = () => registered.find((r) => r.path === "/dsh-link/revoke")
+const revokeAllRoute = () => registered.find((r) => r.path === "/dsh-link/revoke-all")
+const pairApproveRoute = () => registered.find((r) => r.path === "/dsh-link/pair-approve")
+const pairSettingsRoute = () => registered.find((r) => r.path === "/dsh-link/pair-settings")
 const devicesRoute = () => registered.find((r) => r.path === "/dsh-link/devices")
 
 test("18640 匿名 pair-info / qr.png 被拒", async () => {
@@ -179,7 +182,7 @@ test("health 不返回设备指纹", async () => {
 })
 
 test("主端口 Host 非回环 → 403", async () => {
-  for (const route of [pairInfoRoute(), qrRoute(), revokeRoute(), devicesRoute()]) {
+  for (const route of [pairInfoRoute(), qrRoute(), revokeRoute(), revokeAllRoute(), pairApproveRoute(), pairSettingsRoute(), devicesRoute()]) {
     const r = await callRoute(route, { headers: { host: "evil.com:3080" }, body: route === revokeRoute() ? { name: "x" } : undefined })
     assert.equal(r.status, 403, route.path)
     assert.equal(r.body?.pairingCode, undefined)
@@ -285,7 +288,13 @@ test("带 token 的 POST pair-info 不得返回配对码", async () => {
 
 test("带 token 的 GET/POST revoke、devices → 404", async () => {
   const token = globalThis.__testDevice.token
-  for (const path of ["/dsh-link/revoke", "/dsh-link/devices"]) {
+  for (const path of [
+    "/dsh-link/revoke",
+    "/dsh-link/revoke-all",
+    "/dsh-link/pair-approve",
+    "/dsh-link/pair-settings",
+    "/dsh-link/devices",
+  ]) {
     for (const method of ["GET", "POST"]) {
       const r = await proxyFetch(`${path}`, {
         method,
@@ -347,6 +356,125 @@ test("带 token 的未知路径 → 404（catch-all 已删）", async () => {
     headers: { "x-dsh-link-token": globalThis.__testDevice.token },
   })
   assert.equal(page.status, 404)
+})
+
+test("pair-info 含监听暴露信息与 requireConfirm", async () => {
+  const info = await callRoute(pairInfoRoute())
+  assert.equal(info.status, 200)
+  assert.equal(info.body.requireConfirm, false)
+  assert.equal(info.body.exposure?.listen?.address, "0.0.0.0")
+  assert.equal(info.body.exposure?.listen?.port, proxyPort)
+  assert.ok(info.body.exposure?.level === "lan" || info.body.exposure?.level === "untrusted")
+  assert.ok(Array.isArray(info.body.exposure?.networks))
+})
+
+test("开启配对确认后 token 待批准，API 403，批准后放行", async () => {
+  const settings = await callRoute(pairSettingsRoute(), { body: { requireConfirm: true } })
+  assert.equal(settings.status, 200)
+  assert.equal(settings.body.requireConfirm, true)
+
+  const info = await callRoute(pairInfoRoute())
+  assert.equal(info.body.requireConfirm, true)
+  const pair = await proxyFetch(`/dsh-link/pair`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code: info.body.pairingCode, deviceName: "测试机-待确认" }),
+  })
+  assert.equal(pair.status, 200)
+  const pending = await pair.json()
+  assert.equal(pending.pending, true)
+  assert.ok(pending.token)
+  assert.ok(pending.deviceId)
+
+  const denied = await proxyFetch(`/dsh-link/mobile/devices`, {
+    headers: tokenHeaders(pending.token),
+  })
+  assert.equal(denied.status, 403)
+  assert.equal((await denied.json()).pending, true)
+
+  const listed = await callRoute(devicesRoute())
+  const row = listed.body.devices.find((d) => d.deviceId === pending.deviceId)
+  assert.equal(row?.status, "pending")
+  assert.ok(row?.pairedFrom)
+
+  const twice = await callRoute(pairApproveRoute(), { body: { deviceId: pending.deviceId } })
+  assert.equal(twice.status, 200)
+  const again = await callRoute(pairApproveRoute(), { body: { deviceId: pending.deviceId } })
+  assert.equal(again.status, 409)
+
+  const allowed = await proxyFetch(`/dsh-link/mobile/devices`, {
+    headers: tokenHeaders(pending.token),
+  })
+  assert.equal(allowed.status, 200)
+
+  const rev = await callRoute(revokeRoute(), { body: { deviceId: pending.deviceId } })
+  assert.equal(rev.status, 200)
+  const off = await callRoute(pairSettingsRoute(), { body: { requireConfirm: false } })
+  assert.equal(off.status, 200)
+  assert.equal(off.body.requireConfirm, false)
+})
+
+test("关闭配对确认不放行已有 pending 设备", async () => {
+  await callRoute(pairSettingsRoute(), { body: { requireConfirm: true } })
+  const info = await callRoute(pairInfoRoute())
+  const pair = await proxyFetch(`/dsh-link/pair`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code: info.body.pairingCode, deviceName: "测试机-保持等待" }),
+  })
+  assert.equal(pair.status, 200)
+  const pending = await pair.json()
+  assert.equal(pending.pending, true)
+
+  const off = await callRoute(pairSettingsRoute(), { body: { requireConfirm: false } })
+  assert.equal(off.status, 200)
+  assert.equal(off.body.requireConfirm, false)
+
+  const stillDenied = await proxyFetch(`/dsh-link/mobile/devices`, {
+    headers: tokenHeaders(pending.token),
+  })
+  assert.equal(stillDenied.status, 403)
+  assert.equal((await stillDenied.json()).pending, true)
+  const listed = await callRoute(devicesRoute())
+  assert.equal(listed.body.devices.find((d) => d.deviceId === pending.deviceId)?.status, "pending")
+
+  const nextInfo = await callRoute(pairInfoRoute())
+  const nextPair = await proxyFetch(`/dsh-link/pair`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code: nextInfo.body.pairingCode, deviceName: "测试机-关闭后新配" }),
+  })
+  assert.equal(nextPair.status, 200)
+  const fresh = await nextPair.json()
+  assert.equal(fresh.pending, false)
+  const allowed = await proxyFetch(`/dsh-link/mobile/devices`, {
+    headers: tokenHeaders(fresh.token),
+  })
+  assert.equal(allowed.status, 200)
+
+  assert.equal((await callRoute(revokeRoute(), { body: { deviceId: pending.deviceId } })).status, 200)
+  assert.equal((await callRoute(revokeRoute(), { body: { deviceId: fresh.deviceId } })).status, 200)
+})
+
+test("吊销全部设备后列表为空，可重新配对", async () => {
+  const before = await callRoute(devicesRoute())
+  assert.ok((before.body.devices ?? []).length >= 1)
+  const all = await callRoute(revokeAllRoute(), { body: {} })
+  assert.equal(all.status, 200)
+  assert.ok(all.body.removed >= 1)
+  const empty = await callRoute(devicesRoute())
+  assert.equal(empty.body.devices.length, 0)
+
+  const info = await callRoute(pairInfoRoute())
+  const pair = await proxyFetch(`/dsh-link/pair`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code: info.body.pairingCode, deviceName: "测试机" }),
+  })
+  assert.equal(pair.status, 200)
+  const body = await pair.json()
+  assert.equal(body.pending, false)
+  globalThis.__testDevice = { token: body.token, deviceId: body.deviceId }
 })
 
 test("POST pair 非 JSON content-type → 415", async () => {
@@ -576,4 +704,18 @@ test("旧版裸 SHA-256 tokenHash 命中标记 legacy，迁移为 HMAC 后走新
   assert.equal(again.device?.deviceId, "dev-1")
   assert.equal(again.legacy, false)
   assert.equal(findDeviceByToken(state, "wrong-token").device, null)
+})
+
+test("token 哈希比较是定时安全且等长错误 token 不命中", async () => {
+  const { findDeviceByToken, hmacDeviceToken } = await import("../src/auth.js")
+  const token = "a".repeat(24)
+  const wrong = "b".repeat(24)
+  const state = { tokenKey: "key", devices: [] }
+  state.devices.push({ deviceId: "dev-1", tokenHash: hmacDeviceToken(state, token) })
+  // HMAC 匹配
+  const hit = findDeviceByToken(state, token)
+  assert.equal(hit.device?.deviceId, "dev-1")
+  assert.equal(hit.legacy, false)
+  // 等长但不同的 token：HMAC 与 legacy 均不得命中
+  assert.equal(findDeviceByToken(state, wrong).device, null)
 })
