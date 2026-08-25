@@ -6,7 +6,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { PassThrough } from "node:stream"
 import { loadOrCreateTls } from "../src/tls.js"
-import { b64u, generateHostKey, parseEnrollText } from "../src/relay/crypto.js"
+import { b64u, generateHostKey, parseEnrollText, resolveEnrollText, OFFICIAL_RELAY_HOST, OFFICIAL_RELAY_TLS_SHA256 } from "../src/relay/crypto.js"
 import {
   detachReader,
   enroll,
@@ -129,4 +129,13 @@ test("接入信息 URI 解析主机、邀请码和指纹", () => {
   assert.equal(publicCa.insecureTls, false)
   assert.equal(publicCa.tlsFingerprint, "")
   assert.equal(parseEnrollText("INVITECODE"), null)
+  const invite = "INVITECODEINVITECODEINVITECODE12"
+  const official = resolveEnrollText(invite)
+  assert.equal(official.address, OFFICIAL_RELAY_HOST)
+  assert.equal(official.inviteCode, invite)
+  assert.equal(official.insecureTls, true)
+  assert.equal(official.tlsFingerprint, OFFICIAL_RELAY_TLS_SHA256)
+  const fromUri = resolveEnrollText(`dsh-relay://relay.dshlinks.com/?i=${invite}&fp=${fp}`)
+  assert.equal(fromUri.inviteCode, invite)
+  assert.equal(fromUri.tlsFingerprint, fp)
 })

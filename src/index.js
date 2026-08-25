@@ -25,7 +25,7 @@ import { loadOrCreateTls } from "./tls.js"
 import { loadEventsAfter, sseMessageFrame } from "./stream-cursor.js"
 import { flushSeedQueue, respondQuestion, startMuxQuestionBridge } from "./question-bridge.js"
 import { callLocalRpc } from "./local-rpc.js"
-import { deriveAddresses, generateHostKey, hostKeyFromSeed, parseEnrollText, unb64u } from "./relay/crypto.js"
+import { deriveAddresses, generateHostKey, hostKeyFromSeed, resolveEnrollText, unb64u } from "./relay/crypto.js"
 import { enroll as enrollRelay, normalizeTlsFingerprint, RelayAgent } from "./relay/agent.js"
 
 export const name = "dsh-links"
@@ -1663,6 +1663,7 @@ export function apply(ctx, config) {
         json(res, 200, {
           status: relayAgent?.status ?? (state.relay?.routeId ? "offline" : "idle"),
           error: relayAgent?.error ?? "",
+          enrolled: Boolean(state.relay?.routeId && state.relay?.routeSecret),
           agentAddress: state.relay?.agentAddress ?? "",
           clientAddress: state.relay?.clientAddress ?? "",
           insecureTls: Boolean(state.relay?.insecureTls),
@@ -1687,9 +1688,10 @@ export function apply(ctx, config) {
         let tlsFingerprint = ""
         let fromEnroll = null
         try {
-          fromEnroll = parseEnrollText(body.enroll) || parseEnrollText(inviteCodeRaw) || parseEnrollText(addressRaw)
+          fromEnroll = resolveEnrollText(body.enroll, { address: addressRaw, insecureTls, tlsFingerprint: body.tlsFingerprint })
+            || resolveEnrollText(inviteCodeRaw, { address: addressRaw, insecureTls, tlsFingerprint: body.tlsFingerprint })
         } catch (err) {
-          return json(res, 400, { error: err?.message ?? "接入信息无效" })
+          return json(res, 400, { error: err?.message ?? "接入码无效" })
         }
         if (fromEnroll) {
           address = fromEnroll.address
@@ -1737,7 +1739,9 @@ export function apply(ctx, config) {
           startRelayAgent()
           json(res, 200, { ok: true, agentAddress: derived.agentAddress, clientAddress: derived.clientAddress })
         } catch (err) {
-          json(res, 400, { error: err?.message ?? "接入失败" })
+          const raw = String(err?.message ?? "接入失败")
+          const error = raw === "enroll failed" ? "接入未成功。请到控制台新创建一次接入码后再试。" : raw
+          json(res, 400, { error })
         }
       },
     }),

@@ -136,6 +136,82 @@ export function parseHostPort(address, defaultPort) {
 
 export const DEFAULT_AGENT_PORT = 8444
 export const DEFAULT_CLIENT_PORT = 8443
+export const OFFICIAL_RELAY_HOST = "relay.dshlinks.com"
+export const OFFICIAL_RELAY_TLS_SHA256 = "6fbe09cb8809714ec1c9eec1b982212bdc78e06870abd5ed21442bd4e6d3f9ea"
+
+export function looksLikeInviteCode(raw) {
+  return /^[A-Za-z0-9_-]{16,64}$/.test(String(raw ?? "").trim())
+}
+
+export function isOfficialRelayHost(address) {
+  const raw = String(address ?? "").trim()
+  if (!raw) return true
+  try {
+    const { host } = parseHostPort(raw, DEFAULT_AGENT_PORT)
+    return host.toLowerCase() === OFFICIAL_RELAY_HOST
+  } catch {
+    return false
+  }
+}
+
+export function officialEnroll(inviteCode) {
+  return {
+    address: OFFICIAL_RELAY_HOST,
+    inviteCode: String(inviteCode ?? "").trim(),
+    insecureTls: true,
+    tlsFingerprint: OFFICIAL_RELAY_TLS_SHA256,
+  }
+}
+
+/** Parse a control-console enroll token. Returns null when the text is a plain invite. */
+export function parseEnrollText(raw) {
+  const text = String(raw ?? "").trim()
+  if (!text) return null
+  const token = text.split(/\s+/).find((part) => part.startsWith("dsh-relay://")) ?? ""
+  if (!token) return null
+  let parsed
+  try {
+    parsed = new URL(token)
+  } catch {
+    throw new Error("接入信息无效")
+  }
+  if (parsed.protocol !== "dsh-relay:") throw new Error("接入信息无效")
+  const host = parsed.hostname
+  if (!host) throw new Error("接入信息缺少主机")
+  const invite = String(parsed.searchParams.get("i") || parsed.searchParams.get("invite") || "").trim()
+  if (!invite) throw new Error("接入信息缺少接入码")
+  const tlsFingerprint = normalizeEnrollFingerprint(parsed.searchParams.get("fp") || "")
+  const port = parsed.port
+  return {
+    address: port ? `${host}:${port}` : host,
+    inviteCode: invite,
+    insecureTls: Boolean(tlsFingerprint),
+    tlsFingerprint,
+  }
+}
+
+export function resolveEnrollText(raw, extras = {}) {
+  const parsed = parseEnrollText(raw)
+  if (parsed) {
+    if (parsed.insecureTls) return parsed
+    if (isOfficialRelayHost(parsed.address)) {
+      return { ...officialEnroll(parsed.inviteCode), address: parsed.address }
+    }
+    return parsed
+  }
+  const invite = String(raw ?? "").trim()
+  if (!looksLikeInviteCode(invite)) return null
+  const address = String(extras.address ?? "").trim()
+  if (address && !isOfficialRelayHost(address)) {
+    return {
+      address,
+      inviteCode: invite,
+      insecureTls: extras.insecureTls === true,
+      tlsFingerprint: extras.tlsFingerprint || "",
+    }
+  }
+  return officialEnroll(invite)
+}
 
 export function deriveAddresses(input) {
   const { host, port } = parseHostPort(input, DEFAULT_AGENT_PORT)
@@ -174,31 +250,4 @@ function normalizeEnrollFingerprint(value) {
   const normalized = raw.replace(/[:\s]/g, "").toLowerCase()
   if (!/^[0-9a-f]{64}$/.test(normalized)) throw new Error("自签 TLS 需要 64 位 SHA-256 指纹")
   return normalized
-}
-
-/** Parse a control-console enroll token. Returns null when the text is a plain invite. */
-export function parseEnrollText(raw) {
-  const text = String(raw ?? "").trim()
-  if (!text) return null
-  const token = text.split(/\s+/).find((part) => part.startsWith("dsh-relay://")) ?? ""
-  if (!token) return null
-  let parsed
-  try {
-    parsed = new URL(token)
-  } catch {
-    throw new Error("接入信息无效")
-  }
-  if (parsed.protocol !== "dsh-relay:") throw new Error("接入信息无效")
-  const host = parsed.hostname
-  if (!host) throw new Error("接入信息缺少主机")
-  const invite = String(parsed.searchParams.get("i") || parsed.searchParams.get("invite") || "").trim()
-  if (!invite) throw new Error("接入信息缺少接入码")
-  const tlsFingerprint = normalizeEnrollFingerprint(parsed.searchParams.get("fp") || "")
-  const port = parsed.port
-  return {
-    address: port ? `${host}:${port}` : host,
-    inviteCode: invite,
-    insecureTls: Boolean(tlsFingerprint),
-    tlsFingerprint,
-  }
 }

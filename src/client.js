@@ -63,6 +63,34 @@ const createPanelModule = (require) => {
     }
   }
 
+  const OFFICIAL_RELAY_HOST = 'relay.dshlinks.com'
+  const OFFICIAL_RELAY_TLS_SHA256 = '6fbe09cb8809714ec1c9eec1b982212bdc78e06870abd5ed21442bd4e6d3f9ea'
+
+  function looksLikeInviteCode(raw) {
+    return /^[A-Za-z0-9_-]{16,64}$/.test(String(raw ?? '').trim())
+  }
+
+  function resolvePaste(raw) {
+    const parsed = parseEnrollText(raw)
+    if (parsed) {
+      if (parsed.insecureTls) return parsed
+      return {
+        address: parsed.address,
+        inviteCode: parsed.inviteCode,
+        insecureTls: true,
+        tlsFingerprint: OFFICIAL_RELAY_TLS_SHA256,
+      }
+    }
+    const invite = String(raw ?? '').trim()
+    if (!looksLikeInviteCode(invite)) return null
+    return {
+      address: OFFICIAL_RELAY_HOST,
+      inviteCode: invite,
+      insecureTls: true,
+      tlsFingerprint: OFFICIAL_RELAY_TLS_SHA256,
+    }
+  }
+
   function urlRows(info) {
     return info?.infos
       ?? info?.urls?.map((u) => ({ url: u, label: u, category: 'other', isRecommended: false }))
@@ -581,40 +609,16 @@ const createPanelModule = (require) => {
 
   function RelayForm({ relay, onEnroll, onDisconnect }) {
     const [paste, setPaste] = React.useState('')
-    const [address, setAddress] = React.useState(displayRelayHost(relay?.agentAddress))
-    const [invite, setInvite] = React.useState('')
-    const [insecureTls, setInsecureTls] = React.useState(relay?.insecureTls === true)
-    const [tlsFingerprint, setTlsFingerprint] = React.useState(relay?.tlsPinTrusted ? (relay?.tlsFingerprint || '') : '')
     const [busy, setBusy] = React.useState(false)
     const [message, setMessage] = React.useState('')
-    React.useEffect(() => {
-      if (relay?.agentAddress) setAddress((cur) => cur || displayRelayHost(relay.agentAddress))
-      if (relay && 'insecureTls' in relay) setInsecureTls(relay.insecureTls === true)
-      if (relay?.tlsPinTrusted && relay?.tlsFingerprint) setTlsFingerprint(relay.tlsFingerprint)
-    }, [relay?.agentAddress, relay?.insecureTls, relay?.tlsFingerprint, relay?.tlsPinTrusted])
+    const [replace, setReplace] = React.useState(false)
     const online = relay?.status === 'online'
+    const enrolled = relay?.enrolled === true || online || (Boolean(relay?.agentAddress) && relay?.status === 'offline')
     const parsedEnroll = (() => {
-      try { return parseEnrollText(paste) || parseEnrollText(invite) } catch { return null }
+      try { return resolvePaste(paste) } catch { return null }
     })()
-    const effectiveAddress = parsedEnroll?.address || address
-    const effectiveInvite = parsedEnroll?.inviteCode || invite
-    const effectiveInsecure = parsedEnroll ? parsedEnroll.insecureTls : insecureTls
-    const effectiveFingerprint = parsedEnroll ? parsedEnroll.tlsFingerprint : tlsFingerprint.replace(/[:\s]/g, '')
-    const canSubmit = effectiveAddress.trim() && effectiveInvite.trim() && (!effectiveInsecure || /^[0-9a-f]{64}$/i.test(effectiveFingerprint)) && !busy
-    const applyPaste = (value) => {
-      setPaste(value)
-      setMessage('')
-      try {
-        const parsed = parseEnrollText(value)
-        if (!parsed) return
-        setAddress(displayRelayHost(parsed.address))
-        setInvite(parsed.inviteCode)
-        setInsecureTls(parsed.insecureTls)
-        setTlsFingerprint(parsed.tlsFingerprint)
-      } catch (err) {
-        setMessage(String(err?.message ?? err))
-      }
-    }
+    const canSubmit = Boolean(parsedEnroll?.inviteCode) && !busy
+    const connectedHost = displayRelayHost(relay?.agentAddress) || OFFICIAL_RELAY_HOST
     const submit = async (event) => {
       event.preventDefault()
       if (!canSubmit) return
@@ -622,21 +626,49 @@ const createPanelModule = (require) => {
       setMessage('')
       try {
         await onEnroll({
-          address: effectiveAddress,
-          inviteCode: effectiveInvite,
-          insecureTls: effectiveInsecure,
-          tlsFingerprint: effectiveFingerprint,
+          address: parsedEnroll.address,
+          inviteCode: parsedEnroll.inviteCode,
+          insecureTls: parsedEnroll.insecureTls,
+          tlsFingerprint: parsedEnroll.tlsFingerprint,
         })
-        setInvite('')
         setPaste('')
-        setAddress(displayRelayHost(effectiveAddress))
+        setReplace(false)
       } catch (err) {
         setMessage(String(err?.message ?? err))
       } finally {
         setBusy(false)
       }
     }
-    const connectedHost = displayRelayHost(relay?.agentAddress)
+    if (enrolled && !replace) {
+      return jsxs('div', {
+        className: 'dshlink-relay-form',
+        children: [
+          jsx('p', {
+            className: 'dshlink-relay-status' + (relay?.status === 'error' ? ' is-error' : online ? ' is-ok' : ''),
+            children: online
+              ? `已接入 ${connectedHost}`
+              : (relay?.error || `正在连接 ${connectedHost}`),
+          }),
+          jsxs('div', {
+            className: 'dshlink-relay-actions',
+            children: [
+              jsx('button', {
+                type: 'button',
+                className: 'dshlink-secondary',
+                onClick: onDisconnect,
+                children: '断开',
+              }),
+              jsx('button', {
+                type: 'button',
+                className: 'dshlink-secondary',
+                onClick: () => { setReplace(true); setMessage('') },
+                children: '更换接入码',
+              }),
+            ],
+          }),
+        ],
+      })
+    }
     return jsxs('form', {
       className: 'dshlink-relay-form',
       onSubmit: submit,
@@ -644,90 +676,15 @@ const createPanelModule = (require) => {
         jsxs('div', {
           className: 'dshlink-relay-row',
           children: [
-            jsx('label', { htmlFor: 'dsh-relay-paste', children: '接入信息' }),
-            jsx('textarea', {
+            jsx('label', { htmlFor: 'dsh-relay-paste', children: '接入码' }),
+            jsx('input', {
               id: 'dsh-relay-paste',
               className: 'dshlink-field',
-              rows: 3,
               value: paste,
-              placeholder: '从 Relay 控制台复制整段粘贴。公网证书不用填指纹。',
-              onChange: (event) => applyPaste(event.target.value),
+              placeholder: '从控制台复制接入码，粘贴即可',
+              onChange: (event) => { setPaste(event.target.value); setMessage('') },
               autoComplete: 'off',
               spellCheck: false,
-            }),
-          ],
-        }),
-        parsedEnroll
-          ? jsx('p', {
-              className: 'dshlink-relay-summary',
-              children: parsedEnroll.insecureTls
-                ? `将接入 ${displayRelayHost(parsedEnroll.address)}，自签指纹已随接入信息带上。`
-                : `将接入 ${displayRelayHost(parsedEnroll.address)}，使用系统信任的 TLS。`,
-            })
-          : null,
-        jsxs('details', {
-          className: 'dshlink-relay-advanced',
-          children: [
-            jsx('summary', { children: '手动填写（旧方式）' }),
-            jsxs('div', {
-              className: 'dshlink-relay-advanced-body',
-              children: [
-                jsxs('div', {
-                  className: 'dshlink-relay-row',
-                  children: [
-                    jsx('label', { htmlFor: 'dsh-relay-addr', children: 'Relay 主机' }),
-                    jsx('input', {
-                      id: 'dsh-relay-addr',
-                      className: 'dshlink-field',
-                      value: address,
-                      placeholder: '例如 relay.dshlinks.com',
-                      onChange: (event) => setAddress(event.target.value),
-                      autoComplete: 'off',
-                      spellCheck: false,
-                    }),
-                  ],
-                }),
-                jsxs('div', {
-                  className: 'dshlink-relay-row',
-                  children: [
-                    jsx('label', { htmlFor: 'dsh-relay-invite', children: '接入码' }),
-                    jsx('input', {
-                      id: 'dsh-relay-invite',
-                      className: 'dshlink-field',
-                      value: invite,
-                      placeholder: '一次性接入码',
-                      onChange: (event) => setInvite(event.target.value),
-                      autoComplete: 'off',
-                    }),
-                  ],
-                }),
-                jsxs('label', {
-                  className: 'dshlink-relay-check',
-                  children: [
-                    jsx('input', {
-                      type: 'checkbox',
-                      checked: insecureTls,
-                      onChange: (event) => setInsecureTls(event.target.checked),
-                    }),
-                    '允许自签 TLS（自托管试验）',
-                  ],
-                }),
-                insecureTls ? jsxs('div', {
-                  className: 'dshlink-relay-row',
-                  children: [
-                    jsx('label', { htmlFor: 'dsh-relay-fingerprint', children: 'TLS SHA-256 指纹' }),
-                    jsx('input', {
-                      id: 'dsh-relay-fingerprint',
-                      className: 'dshlink-field',
-                      value: tlsFingerprint,
-                      placeholder: '64 位指纹，接入信息里已包含时可留空',
-                      onChange: (event) => setTlsFingerprint(event.target.value),
-                      autoComplete: 'off',
-                      spellCheck: false,
-                    }),
-                  ],
-                }) : null,
-              ],
             }),
           ],
         }),
@@ -740,17 +697,17 @@ const createPanelModule = (require) => {
               disabled: !canSubmit,
               children: busy ? '接入中…' : '接入',
             }),
-            online ? jsx('button', {
+            enrolled ? jsx('button', {
               type: 'button',
               className: 'dshlink-secondary',
-              onClick: onDisconnect,
-              children: '断开',
+              onClick: () => setReplace(false),
+              children: '取消',
             }) : null,
           ],
         }),
         jsx('p', {
-          className: 'dshlink-relay-status' + (relay?.status === 'error' || message ? ' is-error' : online ? ' is-ok' : ''),
-          children: message || (online ? (connectedHost ? `已接入 ${connectedHost}` : '已接入') : (relay?.error || '未接入')),
+          className: 'dshlink-relay-status' + (message ? ' is-error' : ''),
+          children: message || '只填这一格。主机和证书由插件处理。',
         }),
       ],
     })
@@ -764,7 +721,7 @@ const createPanelModule = (require) => {
       children: [
         jsx('p', {
           className: 'dshlink-remote-intro',
-          children: '从 Relay 控制台复制接入信息，粘贴后点接入。成功后才会出现给手机扫的云端码。',
+          children: '控制台创建接入码，贴到下面这一格。成功后用手机扫云端码。',
         }),
         jsxs('section', {
           className: 'dshlink-step',
@@ -773,7 +730,7 @@ const createPanelModule = (require) => {
             jsxs('div', {
               className: 'dshlink-step-body',
               children: [
-                jsx('div', { className: 'dshlink-step-title', children: '粘贴接入信息' }),
+                jsx('div', { className: 'dshlink-step-title', children: '填入接入码' }),
                 jsx(RelayForm, { relay, onEnroll, onDisconnect }),
               ],
             }),
