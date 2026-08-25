@@ -87,6 +87,30 @@ export function findDeviceByToken(state, token) {
   return { device: null, legacy: false }
 }
 
+function headerValues(raw) {
+  if (typeof raw === "string") return [raw]
+  if (Array.isArray(raw)) return raw.filter((v) => typeof v === "string")
+  return []
+}
+
+/**
+ * 从请求头取出设备 token。兼容：
+ * - `x-dsh-link-token` 字符串 / 数组 / 重复头逗号拼接
+ * - `Authorization: Bearer <token>`（部分系统会丢掉自定义头）
+ */
+export function readDeviceToken(headers) {
+  if (!headers || typeof headers !== "object") return null
+  for (const v of headerValues(headers["x-dsh-link-token"])) {
+    const token = v.split(",")[0].trim()
+    if (token) return token
+  }
+  for (const v of headerValues(headers.authorization)) {
+    const m = /^Bearer\s+(\S+)/i.exec(v.trim())
+    if (m?.[1]) return m[1]
+  }
+  return null
+}
+
 /** 内存认证存储（吊销时关闭流等由调用方处理；票据/Web session 已移除）。 */
 export function newAuthStore() {
   return {}

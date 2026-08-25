@@ -706,6 +706,17 @@ test("旧版裸 SHA-256 tokenHash 命中标记 legacy，迁移为 HMAC 后走新
   assert.equal(findDeviceByToken(state, "wrong-token").device, null)
 })
 
+test("readDeviceToken 接受自定义头、重复头与 Bearer", async () => {
+  const { readDeviceToken } = await import("../src/auth.js")
+  assert.equal(readDeviceToken({ "x-dsh-link-token": "abc" }), "abc")
+  assert.equal(readDeviceToken({ "x-dsh-link-token": ["abc"] }), "abc")
+  assert.equal(readDeviceToken({ "x-dsh-link-token": "abc, abc" }), "abc")
+  assert.equal(readDeviceToken({ authorization: "Bearer tok-1" }), "tok-1")
+  assert.equal(readDeviceToken({ "x-dsh-link-token": "  ", authorization: "Bearer tok-2" }), "tok-2")
+  assert.equal(readDeviceToken({}), null)
+  assert.equal(readDeviceToken({ "x-dsh-link-token": ["", "  "] }), null)
+})
+
 test("token 哈希比较是定时安全且等长错误 token 不命中", async () => {
   const { findDeviceByToken, hmacDeviceToken } = await import("../src/auth.js")
   const token = "a".repeat(24)

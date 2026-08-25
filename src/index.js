@@ -18,8 +18,8 @@ import z from "@deepseek-ai/schemastery"
 import QRCode from "qrcode"
 import { clampHistoryMaxMessages, projectHistoryPage } from "./history.js"
 import {
-  consumePairingCode, ensurePairingCode, findDeviceByToken, hmacDeviceToken, hydratePairing,
-  persistablePairing, randomToken, revokeDevice, verifyPairingCode,
+  consumePairingCode, ensurePairingCode, ensureTokenKey, findDeviceByToken, hmacDeviceToken, hydratePairing,
+  persistablePairing, randomToken, readDeviceToken, revokeDevice, verifyPairingCode,
 } from "./auth.js"
 import { loadOrCreateTls } from "./tls.js"
 import { loadEventsAfter, sseMessageFrame } from "./stream-cursor.js"
@@ -49,8 +49,6 @@ export const Config = z.object({
   /** 重连补发最大历史条数（session.history maxMessages，按消息边界计数） */
   reconnectHistoryLimit: z.natural().default(50),
 })
-
-const HEADER_NAME = "x-dsh-link-token"
 
 /** App 实际会写的 settings.update 键路径（反查 AppSettingsStore / SettingsActivity）。未知 ns/键一律拒绝。 */
 const SETTINGS_WRITE_ALLOWLIST = {
@@ -458,7 +456,7 @@ async function readJson(req, res, limit) {
 }
 
 function authorize(req, state, stateFile) {
-  const token = typeof req.headers[HEADER_NAME] === "string" ? req.headers[HEADER_NAME] : null
+  const token = readDeviceToken(req.headers)
   if (!token) return null
   const { device, legacy } = findDeviceByToken(state, token)
   if (!device) return null
@@ -1520,6 +1518,7 @@ export function apply(ctx, config) {
   if (!state.deviceId) state.deviceId = `dsh-${randomBytes(8).toString("hex")}`
   if (!state.devices) state.devices = []
   if (!state.pairing) state.pairing = {}
+  ensureTokenKey(state)
   const tlsHolder = { fingerprint: "" }
   // 旧版设备（无 deviceId）一次性迁移：自动补发，手机无需重新配对（token 不变）
   let migrated = false
