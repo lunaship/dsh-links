@@ -34,7 +34,7 @@ go run ./cmd/dsh-links-relay control --config .local/config.toml
 go run ./cmd/dsh-links-relay relay   --config .local/config.toml
 ```
 
-`init` 会打印一次性管理密码。浏览器打开 `http://127.0.0.1:8080/`，用 `admin` 和该密码登录。先起 control，再起 relay。控制台创建邀请后复制「接入信息」整段贴进插件；自签证书的 TLS 指纹含在其中，公网证书不用填。
+`init` 会打印一次性管理密码。浏览器打开 `http://127.0.0.1:8080/`，用 `admin` 和该密码登录。先起 control，再起 relay。控制台创建接入码，贴进插件「远端」即可。
 
 VPS 推荐使用加固双容器部署，见 `deploy/docker/README.md`；systemd 分用户方案保留在 `deploy/`。容量数字尚未实测，不要把旧目标当成保证。
 

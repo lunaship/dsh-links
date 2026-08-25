@@ -334,6 +334,9 @@ func applyEnrollMeta(server *control.Server, cfg *config.Config) {
 			host = cryptoutil.PublicHostFromCert(pem)
 		}
 	}
+	if host == "" {
+		host = strings.TrimSpace(os.Getenv("RELAY_HOST"))
+	}
 	_, agentPort, err := net.SplitHostPort(cfg.AgentListen)
 	if err != nil || strings.TrimSpace(agentPort) == "" {
 		agentPort = cryptoutil.DefaultAgentPort

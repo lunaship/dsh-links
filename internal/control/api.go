@@ -493,6 +493,7 @@ func (s *Server) handleUI(w http.ResponseWriter, r *http.Request) {
 	// The UI loads only same-origin script/style and renders via textContent,
 	// so CSP can stay strict without unsafe-inline.
 	w.Header().Set("Content-Security-Policy", "default-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
+	w.Header().Set("Cache-Control", "no-store")
 	assets := map[string]string{
 		"/tokens.css": "text/css; charset=utf-8",
 		"/app.css":    "text/css; charset=utf-8",

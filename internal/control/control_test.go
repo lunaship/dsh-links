@@ -1,6 +1,7 @@
 package control
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
@@ -81,6 +82,44 @@ func TestFailedHostInsertRollsBackInviteConsumption(t *testing.T) {
 	_, replacementPriv, _ := ed25519.GenerateKey(rand.Reader)
 	if _, err := ctrl.Enroll(enrollRequest(t, secondInvite, "replacement-host", replacementPriv)); err != nil {
 		t.Fatalf("invite was consumed by rolled back host insert: %v", err)
+	}
+}
+
+func TestEnrollSameHostAndKeyRebinds(t *testing.T) {
+	ctrl, st := newTestControl(t)
+	defer st.Close()
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstInvite, err := ctrl.CreateInvite(time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := ctrl.Enroll(enrollRequest(t, firstInvite, "same-host", priv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondInvite, err := ctrl.CreateInvite(time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := ctrl.Enroll(enrollRequest(t, secondInvite, "same-host", priv))
+	if err != nil {
+		t.Fatalf("same host+key re-enroll: %v", err)
+	}
+	if second.Generation != first.Generation+1 {
+		t.Fatalf("generation=%d want %d", second.Generation, first.Generation+1)
+	}
+	if bytes.Equal(first.RouteId, second.RouteId) {
+		t.Fatal("rebind reused route id")
+	}
+	host, err := st.GetHostByID("same-host")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if host.Generation != int64(second.Generation) {
+		t.Fatalf("stored generation=%d want %d", host.Generation, second.Generation)
 	}
 }
 

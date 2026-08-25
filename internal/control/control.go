@@ -1,8 +1,10 @@
 package control
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -136,6 +138,22 @@ func (c *Control) Enroll(req *EnrollRequest) (*EnrollResult, error) {
 	if !ed25519.Verify(pub, transcript, req.Proof) {
 		return nil, errors.New("enroll proof invalid")
 	}
+	gen := uint64(1)
+	if existing, err := c.store.GetHostByID(req.HostId); err == nil {
+		if !bytes.Equal(existing.HostPubKey, req.HostPublicKey) {
+			return nil, errors.New("host id already registered")
+		}
+		gen = uint64(existing.Generation) + 1
+	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	if byPub, err := c.store.GetHostByPubKey(req.HostPublicKey); err == nil {
+		if byPub.ID != req.HostId {
+			return nil, errors.New("host key already registered")
+		}
+	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
 	// Generate routeId
 	routeId, err := cryptoutil.RandomBytes(16)
 	if err != nil {
@@ -146,8 +164,6 @@ func (c *Control) Enroll(req *EnrollRequest) (*EnrollResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Generation 1
-	gen := uint64(1)
 	// Sign capability
 	jti, err := cryptoutil.RandomBytes(16)
 	if err != nil {

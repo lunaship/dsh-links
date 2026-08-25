@@ -376,9 +376,9 @@ byId('btnInvite').addEventListener('click', async () => {
       byId('enrollURI').textContent = latestEnrollURI;
       byId('enrollBlock').hidden = !latestEnrollURI;
       byId('inviteResult').hidden = false;
-      (latestEnrollURI ? byId('btnCopyEnroll') : byId('btnCopyInvite')).focus();
+      byId('btnCopyInvite').focus();
       await Promise.all([loadInvites(), loadOverview()]);
-      announce(latestEnrollURI ? '接入信息已创建。请立即复制到插件。' : '邀请码已创建。请立即复制。');
+      announce('接入码已创建。请立即复制到插件。');
     });
   } catch (error) {
     byId('inviteMessage').textContent = `邀请码未创建：${error.message}`;
@@ -409,10 +409,10 @@ byId('btnCopyInvite').addEventListener('click', async () => {
   try {
     await copyText(latestInviteCode);
     setButtonState(button, 'success', '已复制');
-    announce('邀请码已复制。');
-    window.setTimeout(() => setButtonState(button, '', '复制邀请码'), 2500);
+    announce('接入码已复制。');
+    window.setTimeout(() => setButtonState(button, '', '复制接入码'), 2500);
   } catch (_) {
-    byId('inviteMessage').textContent = '无法写入剪贴板。请手动选择并复制邀请码。';
+    byId('inviteMessage').textContent = '无法写入剪贴板。请手动选择并复制接入码。';
   }
 });
 
@@ -422,7 +422,7 @@ byId('btnCopyEnroll').addEventListener('click', async () => {
     await copyText(latestEnrollURI);
     setButtonState(button, 'success', '已复制');
     announce('接入信息已复制。');
-    window.setTimeout(() => setButtonState(button, '', '复制接入信息'), 2500);
+    window.setTimeout(() => setButtonState(button, '', '复制'), 2500);
   } catch (_) {
     byId('inviteMessage').textContent = '无法写入剪贴板。请手动选择并复制接入信息。';
   }

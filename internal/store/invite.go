@@ -1,9 +1,11 @@
 package store
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"time"
 
@@ -77,9 +79,32 @@ func (s *Store) EnrollHost(code string, host *Host, capabilityHash []byte, issue
 
 	host.UserID = userID
 	host.CreatedAt = now
-	if _, err := tx.Exec(`INSERT INTO hosts(id, user_id, route_id, host_name, host_pubkey, generation, max_streams, version, created_at) VALUES(?,?,?,?,?,?,?,?,?)`,
-		host.ID, host.UserID, host.RouteID, host.HostName, host.HostPubKey, host.Generation, host.MaxStreams, host.Version, host.CreatedAt); err != nil {
-		return fmt.Errorf("create host: %w", err)
+	var existingPub []byte
+	err = tx.QueryRow(`SELECT host_pubkey FROM hosts WHERE id=?`, host.ID).Scan(&existingPub)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		var otherID string
+		err = tx.QueryRow(`SELECT id FROM hosts WHERE host_pubkey=?`, host.HostPubKey).Scan(&otherID)
+		if err == nil {
+			return errStr("host key already registered")
+		}
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if _, err := tx.Exec(`INSERT INTO hosts(id, user_id, route_id, host_name, host_pubkey, generation, max_streams, version, created_at) VALUES(?,?,?,?,?,?,?,?,?)`,
+			host.ID, host.UserID, host.RouteID, host.HostName, host.HostPubKey, host.Generation, host.MaxStreams, host.Version, host.CreatedAt); err != nil {
+			return fmt.Errorf("create host: %w", err)
+		}
+	case err != nil:
+		return err
+	default:
+		if !bytes.Equal(existingPub, host.HostPubKey) {
+			return errStr("host id already registered")
+		}
+		if _, err := tx.Exec(`UPDATE hosts SET user_id=?, route_id=?, host_name=?, generation=?, max_streams=?, version=?, revoked_at=NULL WHERE id=?`,
+			host.UserID, host.RouteID, host.HostName, host.Generation, host.MaxStreams, host.Version, host.ID); err != nil {
+			return fmt.Errorf("rebind host: %w", err)
+		}
 	}
 	credentialIDBytes, err := cryptoutil.RandomBytes(16)
 	if err != nil {

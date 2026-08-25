@@ -39,8 +39,8 @@ func TestHandlerServesWebAssets(t *testing.T) {
 			if !strings.Contains(recorder.Body.String(), test.marker) {
 				t.Fatalf("response for %s does not contain %q", test.path, test.marker)
 			}
-			if test.path == "/" && !strings.Contains(recorder.Body.String(), "接入信息") {
-				t.Fatal("control UI is missing the enroll copy surface")
+			if test.path == "/" && !strings.Contains(recorder.Body.String(), "接入码") {
+				t.Fatal("control UI is missing the invite copy surface")
 			}
 		})
 	}
@@ -269,8 +269,8 @@ func TestSecurityAndCachingHeaders(t *testing.T) {
 	if !strings.Contains(csp, "default-src 'self'") || !strings.Contains(csp, "frame-ancestors 'none'") {
 		t.Fatalf("UI CSP=%q, want strict self-only policy", csp)
 	}
-	if got := uiRecorder.Header().Get("Cache-Control"); got == "no-store" {
-		t.Fatal("static UI assets must remain cacheable")
+	if got := uiRecorder.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("UI Cache-Control=%q, want no-store", got)
 	}
 }
 
