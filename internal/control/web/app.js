@@ -7,12 +7,12 @@ const ENDPOINTS = {
 };
 
 const REFRESH_MS = 5000;
-const ARM_MS = 5000;
 let refreshTimer = null;
 let latestInviteCode = '';
 let latestTlsFingerprint = '';
 let latestEnrollURI = '';
-const armTimers = new WeakMap();
+let lastHostsJSON = '';
+let lastInvitesJSON = '';
 
 const byId = id => document.getElementById(id);
 
@@ -219,50 +219,16 @@ function createStatus(label, tone = '') {
   return badge;
 }
 
-function resetArmedButton(button) {
-  const timer = armTimers.get(button);
-  if (timer) window.clearTimeout(timer);
-  armTimers.delete(button);
-  button.dataset.state = '';
-  button.textContent = button.dataset.idleLabel || '吊销';
-  button.setAttribute('aria-label', button.dataset.ariaLabel || button.textContent);
-}
-
-function armDestructive(button, ariaLabel, action, labels = {}) {
-  const idleLabel = labels.idle || '吊销';
-  const confirmLabel = labels.confirm || '确认吊销';
-  const loadingLabel = labels.loading || '处理中';
-  button.dataset.ariaLabel = ariaLabel;
-  button.dataset.idleLabel = idleLabel;
-  if (button.dataset.state !== 'confirm') {
-    button.dataset.state = 'confirm';
-    button.textContent = confirmLabel;
-    button.setAttribute('aria-label', `${ariaLabel}。再次点击确认。`);
-    announce(`${ariaLabel}：请在 5 秒内再次点击确认。`);
-    armTimers.set(button, window.setTimeout(() => resetArmedButton(button), ARM_MS));
-    return;
-  }
-
-  const timer = armTimers.get(button);
-  if (timer) window.clearTimeout(timer);
-  armTimers.delete(button);
-  button.dataset.state = '';
-  button.textContent = idleLabel;
-  withLoading(button, loadingLabel, action).catch(error => {
-    resetArmedButton(button);
-    announce(`操作失败：${error.message}`);
-  });
-}
-
 function createDangerButton(label, ariaLabel, action) {
   const button = createElement('button', 'button button--danger', label);
   button.type = 'button';
   button.setAttribute('aria-label', ariaLabel);
-  button.addEventListener('click', () => armDestructive(button, ariaLabel, action, {
-    idle: label,
-    confirm: `确认${label}`,
-    loading: `${label}中`
-  }));
+  button.addEventListener('click', () => {
+    if (!window.confirm(`${ariaLabel}？`)) return;
+    withLoading(button, `${label}中`, action).catch(error => {
+      announce(`操作失败：${error.message}`);
+    });
+  });
   return button;
 }
 
@@ -323,9 +289,12 @@ function renderHosts(list) {
 }
 
 async function loadHosts() {
-  setPanelMessage('hostsMessage', '');
   try {
-    renderHosts(await request(ENDPOINTS.hosts));
+    const list = await request(ENDPOINTS.hosts);
+    const next = JSON.stringify(list);
+    if (next === lastHostsJSON) return;
+    lastHostsJSON = next;
+    renderHosts(list);
   } catch (error) {
     setPanelMessage('hostsMessage', `Host 列表未刷新：${error.message}`);
   }
@@ -386,9 +355,12 @@ function renderInvites(list) {
 }
 
 async function loadInvites() {
-  setPanelMessage('invitesMessage', '');
   try {
-    renderInvites(await request(ENDPOINTS.invites));
+    const list = await request(ENDPOINTS.invites);
+    const next = JSON.stringify(list);
+    if (next === lastInvitesJSON) return;
+    lastInvitesJSON = next;
+    renderInvites(list);
   } catch (error) {
     setPanelMessage('invitesMessage', `邀请记录未刷新：${error.message}`);
   }
@@ -416,22 +388,40 @@ byId('btnInvite').addEventListener('click', async () => {
   }
 });
 
-byId('btnPurgeHosts').addEventListener('click', () => {
+byId('btnPurgeHosts').addEventListener('click', async () => {
+  if (!window.confirm('删除全部已吊销的 Host 记录？还在用的电脑不会动。')) return;
   const button = byId('btnPurgeHosts');
-  armDestructive(button, '清理已吊销 Host', async () => {
-    const result = await request(`${ENDPOINTS.hosts}/purge`, { method: 'POST', body: '{}' });
-    await Promise.all([loadHosts(), loadOverview()]);
-    announce(`已删除 ${result.deleted ?? 0} 条已吊销 Host。`);
-  }, { idle: '清理已吊销', confirm: '确认清理', loading: '清理中' });
+  try {
+    await withLoading(button, '清理中', async () => {
+      const result = await request(`${ENDPOINTS.hosts}/purge`, { method: 'POST', body: '{}' });
+      lastHostsJSON = '';
+      await Promise.all([loadHosts(), loadOverview()]);
+      const n = Number(result.deleted) || 0;
+      const message = n ? `已删除 ${n} 条已吊销 Host。` : '没有已吊销的 Host。要去掉还在用的电脑，点该行「删除」。';
+      setPanelMessage('hostsMessage', message);
+      announce(message);
+    });
+  } catch (error) {
+    setPanelMessage('hostsMessage', `清理失败：${error.message}`);
+  }
 });
 
-byId('btnPurgeInvites').addEventListener('click', () => {
+byId('btnPurgeInvites').addEventListener('click', async () => {
+  if (!window.confirm('删除已用、过期和已吊销的邀请？未过期的有效邀请会保留。')) return;
   const button = byId('btnPurgeInvites');
-  armDestructive(button, '清理失效邀请', async () => {
-    const result = await request(`${ENDPOINTS.invites}/purge`, { method: 'POST', body: '{}' });
-    await Promise.all([loadInvites(), loadOverview()]);
-    announce(`已删除 ${result.deleted ?? 0} 条失效邀请。`);
-  }, { idle: '清理失效', confirm: '确认清理', loading: '清理中' });
+  try {
+    await withLoading(button, '清理中', async () => {
+      const result = await request(`${ENDPOINTS.invites}/purge`, { method: 'POST', body: '{}' });
+      lastInvitesJSON = '';
+      await Promise.all([loadInvites(), loadOverview()]);
+      const n = Number(result.deleted) || 0;
+      const message = n ? `已删除 ${n} 条失效邀请。` : '没有失效邀请。有效的请用该行「删除」。';
+      setPanelMessage('invitesMessage', message);
+      announce(message);
+    });
+  } catch (error) {
+    setPanelMessage('invitesMessage', `清理失败：${error.message}`);
+  }
 });
 
 async function copyText(value) {
