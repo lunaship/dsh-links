@@ -91,12 +91,6 @@ const createPanelModule = (require) => {
     }
   }
 
-  function urlRows(info) {
-    return info?.infos
-      ?? info?.urls?.map((u) => ({ url: u, label: u, category: 'other', isRecommended: false }))
-      ?? []
-  }
-
   const STYLE = `
     .dshlink-root {
       --dl-ink: var(--dsw-alias-label-primary, #12141a);
@@ -145,7 +139,7 @@ const createPanelModule = (require) => {
     }
 
     .dshlink-brand {
-      display: flex; flex-direction: column; gap: 6px;
+      display: flex; flex-direction: column; gap: 4px;
     }
     .dshlink-brand-kicker {
       font-size: 11px; font-weight: 600; letter-spacing: 0.14em;
@@ -154,10 +148,6 @@ const createPanelModule = (require) => {
     .dshlink-brand-title {
       font-size: 20px; font-weight: 650; letter-spacing: -0.02em;
       line-height: 1.25; margin: 0;
-    }
-    .dshlink-brand-lede {
-      margin: 0; font-size: 13px; line-height: 1.5; color: var(--dl-muted);
-      max-width: 36em;
     }
     .dshlink-tabs {
       display: flex; gap: 4px; padding: 4px; border-radius: 11px;
@@ -205,7 +195,7 @@ const createPanelModule = (require) => {
       border-radius: 6px;
     }
     .dshlink-pair-meta {
-      display: flex; flex-direction: column; gap: 8px; min-width: 0;
+      display: flex; flex-direction: column; gap: 6px; min-width: 0;
       padding-left: 8px;
     }
     .dshlink-pair-label {
@@ -218,73 +208,8 @@ const createPanelModule = (require) => {
       line-height: 1.1; color: var(--dl-ink);
       margin: 0;
     }
-    .dshlink-hint {
-      margin: 0; font-size: 12px; line-height: 1.45; color: var(--dl-muted);
-    }
-
-    .dshlink-tunnel-note {
-      margin: 0; font-size: 12px; line-height: 1.5; color: var(--dl-muted);
-      padding: 10px 12px; border-radius: 10px;
-      background: var(--dl-soft); border: 1px dashed var(--dl-line);
-    }
-    .dshlink-roadmap {
-      display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px;
-      align-items: start; padding: 13px 14px; border-radius: 12px;
-      background: linear-gradient(135deg, rgba(112, 78, 196, 0.09), transparent 72%), var(--dl-paper);
-      border: 1px solid rgba(112, 78, 196, 0.18);
-    }
-    .dshlink-roadmap-mark {
-      display: grid; place-items: center; width: 28px; height: 28px; border-radius: 9px;
-      color: #7050c4; background: rgba(112, 78, 196, 0.11); font-size: 14px; font-weight: 700;
-    }
-    .dshlink-roadmap-copy { min-width: 0; display: flex; flex-direction: column; gap: 3px }
-    .dshlink-roadmap-title { font-size: 13px; font-weight: 650; color: var(--dl-ink) }
-    .dshlink-roadmap-text { margin: 0; font-size: 12px; line-height: 1.5; color: var(--dl-muted) }
-    .dshlink-roadmap-status {
-      align-self: start; margin-left: 8px; font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
-      color: #7050c4; background: rgba(112, 78, 196, 0.1); border-radius: 999px; padding: 3px 7px;
-    }
 
     .dshlink-remote { display: flex; flex-direction: column; gap: 12px }
-    .dshlink-remote-intro {
-      margin: 0; font-size: 12px; line-height: 1.5; color: var(--dl-muted);
-    }
-    .dshlink-step {
-      display: flex; gap: 12px; align-items: flex-start;
-      padding: 14px; border-radius: 12px; border: 1px solid var(--dl-line); background: var(--dl-paper);
-    }
-    .dshlink-step.is-pending { opacity: 0.78; }
-    .dshlink-step-num {
-      display: grid; place-items: center; flex: none; width: 22px; height: 22px; margin-top: 1px;
-      border-radius: 999px; font-size: 11px; font-weight: 700; color: #fff; background: var(--dl-accent);
-    }
-    .dshlink-step.is-pending .dshlink-step-num { background: var(--dl-muted); color: var(--dl-paper); }
-    .dshlink-step-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
-    .dshlink-step-title { font-size: 13px; font-weight: 650; color: var(--dl-ink) }
-    .dshlink-qr-pending {
-      display: grid; place-items: center; min-height: 168px; border-radius: 12px;
-      border: 1px dashed var(--dl-line); background: var(--dl-soft);
-      color: var(--dl-muted); font-size: 12px; line-height: 1.55; text-align: center; padding: 18px 16px;
-    }
-
-    .dshlink-urls {
-      display: flex; flex-direction: column; gap: 6px;
-      padding: 12px; border-radius: 12px;
-      background: var(--dl-soft); border: 1px solid var(--dl-line);
-    }
-    .dshlink-url-row {
-      display: flex; align-items: flex-start; gap: 8px;
-      font-size: 12px; line-height: 1.45; word-break: break-all;
-      color: var(--dl-muted);
-    }
-    .dshlink-url-row.is-rec { color: var(--dl-ink); font-weight: 500 }
-    .dshlink-pill {
-      flex: none; margin-top: 1px;
-      font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
-      color: var(--dl-ok);
-      background: rgba(31, 138, 76, 0.1);
-      border-radius: 999px; padding: 2px 7px;
-    }
 
     .dshlink-devices { display: flex; flex-direction: column; gap: 8px }
     .dshlink-section-label {
@@ -328,20 +253,16 @@ const createPanelModule = (require) => {
     .dshlink-expose {
       margin: 0; font-size: 12px; line-height: 1.5;
       padding: 10px 12px; border-radius: 10px;
-      background: var(--dl-soft); border: 1px solid var(--dl-line);
-      color: var(--dl-muted);
-    }
-    .dshlink-expose.is-warn {
       background: var(--dl-danger-soft);
-      border-color: rgba(180, 35, 24, 0.28);
+      border: 1px solid rgba(180, 35, 24, 0.28);
       color: var(--dl-danger);
       font-weight: 600;
     }
     .dshlink-confirm {
-      display: flex; align-items: flex-start; gap: 8px;
+      display: flex; align-items: center; gap: 8px;
       margin: 0; font-size: 12px; line-height: 1.45; color: var(--dl-muted);
     }
-    .dshlink-confirm input { margin-top: 2px; }
+    .dshlink-confirm input { margin: 0; }
     .dshlink-device.is-pending {
       border-color: rgba(180, 110, 24, 0.28);
       background: #fff8f0;
@@ -361,13 +282,11 @@ const createPanelModule = (require) => {
     .dshlink-approve:hover { background: #e3f3e8 }
     .dshlink-approve:focus-visible { outline: 2px solid var(--dl-ok); outline-offset: 2px }
     .dshlink-revoke-all {
-      appearance: none; cursor: pointer; width: 100%;
-      border: 1px solid rgba(180, 35, 24, 0.22);
-      background: var(--dl-danger-soft); color: var(--dl-danger);
-      border-radius: 10px; padding: 8px 12px;
-      font: inherit; font-size: 12px; font-weight: 600;
+      appearance: none; cursor: pointer; align-self: flex-start;
+      border: 0; background: transparent; color: var(--dl-danger);
+      padding: 0; font: inherit; font-size: 12px; font-weight: 600;
     }
-    .dshlink-revoke-all:hover { background: #ffe4e1 }
+    .dshlink-revoke-all:hover { opacity: 0.72 }
     .dshlink-revoke-all:focus-visible { outline: 2px solid var(--dl-danger); outline-offset: 2px }
 
     .dshlink-field {
@@ -381,16 +300,12 @@ const createPanelModule = (require) => {
     .dshlink-relay-row { display: flex; flex-direction: column; gap: 4px }
     .dshlink-relay-row label { font-size: 12px; font-weight: 600; color: var(--dl-muted) }
     .dshlink-relay-actions { display: flex; gap: 8px; flex-wrap: wrap }
-    .dshlink-relay-check { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--dl-muted) }
-    .dshlink-relay-status { font-size: 12px; color: var(--dl-muted) }
+    .dshlink-relay-status { font-size: 12px; color: var(--dl-muted); margin: 0 }
     .dshlink-relay-status.is-ok { color: var(--dl-ok) }
     .dshlink-relay-status.is-error { color: var(--dl-danger) }
-    .dshlink-relay-summary { font-size: 12px; color: var(--dl-ok) }
-    .dshlink-relay-advanced { margin: 0 }
-    .dshlink-relay-advanced > summary {
-      cursor: pointer; font-size: 12px; font-weight: 600; color: var(--dl-muted);
+    .dshlink-relay-online {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
     }
-    .dshlink-relay-advanced-body { display: flex; flex-direction: column; gap: 10px; margin-top: 8px }
     .dshlink-primary {
       appearance: none; cursor: pointer; border: 0; border-radius: 10px;
       padding: 8px 14px; background: var(--dl-ink); color: #f7f8fa;
@@ -421,12 +336,8 @@ const createPanelModule = (require) => {
     return jsxs('div', {
       className: 'dshlink-brand',
       children: [
-        jsx('div', { className: 'dshlink-brand-kicker', children: 'DSH Links · 局域网 Beta' }),
+        jsx('div', { className: 'dshlink-brand-kicker', children: 'DSH Links' }),
         jsx('div', { className: 'dshlink-brand-title', children: '手机连接' }),
-        jsx('p', {
-          className: 'dshlink-brand-lede',
-          children: '局域网和云端是两张码、两个设备。云端码只在电脑用接入码连上 Relay 之后才会出现。',
-        }),
       ],
     })
   }
@@ -446,12 +357,8 @@ const createPanelModule = (require) => {
   }
 
   function ExposureBanner({ exposure }) {
-    if (!exposure) return null
-    const warn = exposure.level === 'untrusted' && exposure.warning
-    return jsx('p', {
-      className: 'dshlink-expose' + (warn ? ' is-warn' : ''),
-      children: warn || exposure.hint || exposure.warning,
-    })
+    if (exposure?.level !== 'untrusted' || !exposure.warning) return null
+    return jsx('p', { className: 'dshlink-expose', children: exposure.warning })
   }
 
   function ConfirmToggle({ requireConfirm, onChange }) {
@@ -463,40 +370,39 @@ const createPanelModule = (require) => {
           checked: Boolean(requireConfirm),
           onChange: (event) => onChange(event.target.checked),
         }),
-        '配对需本机确认（扫码后要在此批准。关闭只影响新配对，等待中的设备不会自动放行）',
+        '配对需本机确认',
       ],
     })
   }
 
-  function DeviceList({ devices, revoke, empty }) {
+  function DeviceList({ devices, revoke }) {
+    if (!devices.length) return null
     return jsxs('div', {
       className: 'dshlink-devices',
       children: [
         jsx('div', { className: 'dshlink-section-label', children: '已配对设备' }),
-        devices.length
-          ? devices.map((d) =>
+        ...devices.map((d) =>
+          jsxs('div', {
+            className: 'dshlink-device',
+            key: d.deviceId || d.name,
+            children: [
+              jsx('span', { className: 'dshlink-device-dot', 'aria-hidden': true }),
               jsxs('div', {
-                className: 'dshlink-device',
-                key: d.deviceId || d.name,
+                className: 'dshlink-device-copy',
                 children: [
-                  jsx('span', { className: 'dshlink-device-dot', 'aria-hidden': true }),
-                  jsxs('div', {
-                    className: 'dshlink-device-copy',
-                    children: [
-                      jsx('div', { className: 'dshlink-device-name', children: d.name }),
-                      jsx('div', { className: 'dshlink-device-time', children: deviceSeenLabel(d.lastSeenAt) }),
-                    ],
-                  }),
-                  jsx('button', {
-                    type: 'button',
-                    className: 'dshlink-revoke',
-                    onClick: () => revoke(d.deviceId ? { deviceId: d.deviceId } : { name: d.name }),
-                    children: '吊销',
-                  }),
+                  jsx('div', { className: 'dshlink-device-name', children: d.name }),
+                  jsx('div', { className: 'dshlink-device-time', children: deviceSeenLabel(d.lastSeenAt) }),
                 ],
               }),
-            )
-          : jsx('div', { className: 'dshlink-empty', children: empty }),
+              jsx('button', {
+                type: 'button',
+                className: 'dshlink-revoke',
+                onClick: () => revoke(d.deviceId ? { deviceId: d.deviceId } : { name: d.name }),
+                children: '吊销',
+              }),
+            ],
+          }),
+        ),
       ],
     })
   }
@@ -544,64 +450,38 @@ const createPanelModule = (require) => {
     })
   }
 
+  function PairCard({ via, code, label }) {
+    return jsxs('div', {
+      className: 'dshlink-pair',
+      children: [
+        jsx('div', {
+          className: 'dshlink-qr-plate',
+          children: jsx('img', {
+            className: 'dshlink-qr',
+            key: code || '',
+            src: `/dsh-link/qr.png?via=${via}`,
+            alt: label,
+          }),
+        }),
+        jsxs('div', {
+          className: 'dshlink-pair-meta',
+          children: [
+            jsx('div', { className: 'dshlink-pair-label', children: label }),
+            jsx('p', { className: 'dshlink-code', children: code || '—' }),
+          ],
+        }),
+      ],
+    })
+  }
+
   function LanBody({ info, devices, revoke }) {
-    const rows = urlRows(info)
     return jsxs('div', {
       className: 'dshlink-lan',
       children: [
-        jsxs('div', {
-          className: 'dshlink-pair',
-          children: [
-            jsx('div', {
-              className: 'dshlink-qr-plate',
-              children: jsx('img', {
-                className: 'dshlink-qr',
-                // URL 不带配对码（避免进访问日志）；配对码轮换时靠 key 重挂载强制重新取图
-                key: info.pairingCode || '',
-                src: '/dsh-link/qr.png?via=lan',
-                alt: '局域网配对二维码',
-              }),
-            }),
-            jsxs('div', {
-              className: 'dshlink-pair-meta',
-              children: [
-                jsx('div', { className: 'dshlink-pair-label', children: '一次性配对码' }),
-                jsx('p', { className: 'dshlink-code', children: info.pairingCode }),
-                jsx('p', {
-                  className: 'dshlink-hint',
-                  children: '只授权局域网。扫完后配对码会作废，云端请再打开「远端连接」扫第二张码。',
-                }),
-              ],
-            }),
-          ],
-        }),
-        rows.length
-          ? jsxs('div', {
-              className: 'dshlink-urls',
-              children: [
-                jsx('div', { className: 'dshlink-section-label', children: '可访问地址' }),
-                ...rows.map((item, i) => {
-                  const rec = item.isRecommended || i === 0
-                  return jsxs('div', {
-                    key: item.url,
-                    className: 'dshlink-url-row' + (rec ? ' is-rec' : ''),
-                    children: [
-                      rec ? jsx('span', { className: 'dshlink-pill', children: '推荐' }) : null,
-                      jsx('span', { children: item.url }),
-                    ],
-                  })
-                }),
-              ],
-            })
-          : null,
-        jsx('p', {
-          className: 'dshlink-tunnel-note',
-          children: '请让手机与电脑连上同一可信 Wi‑Fi 后扫码。丢失手机时在此立即吊销设备。勿将 18640 裸暴露到公网。',
-        }),
+        jsx(PairCard, { via: 'lan', code: info.pairingCode, label: '配对码' }),
         jsx(DeviceList, {
           devices: devicesVia(devices, 'lan').filter((d) => !isPendingDevice(d)),
           revoke,
-          empty: '暂无已配对的局域网设备',
         }),
       ],
     })
@@ -643,26 +523,31 @@ const createPanelModule = (require) => {
       return jsxs('div', {
         className: 'dshlink-relay-form',
         children: [
-          jsx('p', {
-            className: 'dshlink-relay-status' + (relay?.status === 'error' ? ' is-error' : online ? ' is-ok' : ''),
-            children: online
-              ? `已接入 ${connectedHost}`
-              : (relay?.error || `正在连接 ${connectedHost}`),
-          }),
           jsxs('div', {
-            className: 'dshlink-relay-actions',
+            className: 'dshlink-relay-online',
             children: [
-              jsx('button', {
-                type: 'button',
-                className: 'dshlink-secondary',
-                onClick: onDisconnect,
-                children: '断开',
+              jsx('p', {
+                className: 'dshlink-relay-status' + (relay?.status === 'error' ? ' is-error' : online ? ' is-ok' : ''),
+                children: online
+                  ? connectedHost
+                  : (relay?.error || `正在连接 ${connectedHost}`),
               }),
-              jsx('button', {
-                type: 'button',
-                className: 'dshlink-secondary',
-                onClick: () => { setReplace(true); setMessage('') },
-                children: '更换接入码',
+              jsxs('div', {
+                className: 'dshlink-relay-actions',
+                children: [
+                  jsx('button', {
+                    type: 'button',
+                    className: 'dshlink-secondary',
+                    onClick: onDisconnect,
+                    children: '断开',
+                  }),
+                  jsx('button', {
+                    type: 'button',
+                    className: 'dshlink-secondary',
+                    onClick: () => { setReplace(true); setMessage('') },
+                    children: '更换',
+                  }),
+                ],
               }),
             ],
           }),
@@ -681,7 +566,7 @@ const createPanelModule = (require) => {
               id: 'dsh-relay-paste',
               className: 'dshlink-field',
               value: paste,
-              placeholder: '从控制台复制接入码，粘贴即可',
+              placeholder: '粘贴接入码',
               onChange: (event) => { setPaste(event.target.value); setMessage('') },
               autoComplete: 'off',
               spellCheck: false,
@@ -705,10 +590,7 @@ const createPanelModule = (require) => {
             }) : null,
           ],
         }),
-        jsx('p', {
-          className: 'dshlink-relay-status' + (message ? ' is-error' : ''),
-          children: message || '只填这一格。主机和证书由插件处理。',
-        }),
+        message ? jsx('p', { className: 'dshlink-relay-status is-error', children: message }) : null,
       ],
     })
   }
@@ -719,70 +601,13 @@ const createPanelModule = (require) => {
     return jsxs('div', {
       className: 'dshlink-remote',
       children: [
-        jsx('p', {
-          className: 'dshlink-remote-intro',
-          children: '控制台创建接入码，贴到下面这一格。成功后用手机扫云端码。',
-        }),
-        jsxs('section', {
-          className: 'dshlink-step',
-          children: [
-            jsx('span', { className: 'dshlink-step-num', 'aria-hidden': true, children: '1' }),
-            jsxs('div', {
-              className: 'dshlink-step-body',
-              children: [
-                jsx('div', { className: 'dshlink-step-title', children: '填入接入码' }),
-                jsx(RelayForm, { relay, onEnroll, onDisconnect }),
-              ],
-            }),
-          ],
-        }),
-        jsxs('section', {
-          className: 'dshlink-step' + (online ? '' : ' is-pending'),
-          children: [
-            jsx('span', { className: 'dshlink-step-num', 'aria-hidden': true, children: '2' }),
-            jsxs('div', {
-              className: 'dshlink-step-body',
-              children: [
-                jsx('div', { className: 'dshlink-step-title', children: '用手机扫云端码' }),
-                online
-                  ? jsxs('div', {
-                      className: 'dshlink-pair',
-                      children: [
-                        jsx('div', {
-                          className: 'dshlink-qr-plate',
-                          children: jsx('img', {
-                            className: 'dshlink-qr',
-                            // 同局域网码：URL 不带配对码，轮换时靠 key 重挂载重新取图
-                            key: pairingCode || '',
-                            src: '/dsh-link/qr.png?via=relay',
-                            alt: '云端配对二维码',
-                          }),
-                        }),
-                        jsxs('div', {
-                          className: 'dshlink-pair-meta',
-                          children: [
-                            jsx('div', { className: 'dshlink-pair-label', children: '云端配对码' }),
-                            jsx('p', { className: 'dshlink-code', children: pairingCode || '本页加载完成后显示' }),
-                            jsx('p', {
-                              className: 'dshlink-hint',
-                              children: '与局域网不是同一张码。扫这张会在手机上多一条「云端」设备，只走 Relay。',
-                            }),
-                          ],
-                        }),
-                      ],
-                    })
-                  : jsx('div', {
-                      className: 'dshlink-qr-pending',
-                      children: '接入成功后才会显示二维码。没有维护者发放的接入码无法接入远端。',
-                    }),
-              ],
-            }),
-          ],
-        }),
+        jsx(RelayForm, { relay, onEnroll, onDisconnect }),
+        online
+          ? jsx(PairCard, { via: 'relay', code: pairingCode, label: '云端配对码' })
+          : null,
         jsx(DeviceList, {
           devices: devicesVia(devices, 'relay').filter((d) => !isPendingDevice(d)),
           revoke,
-          empty: '暂无已配对的云端设备',
         }),
       ],
     })
@@ -822,12 +647,12 @@ const createPanelModule = (require) => {
         jsx(ConfirmToggle, { requireConfirm: info.requireConfirm, onChange: setRequireConfirm }),
         jsx(PendingList, { devices: pending, approve, revoke }),
         active === 'lan' ? jsx(LanBody, { info, devices, revoke }) : jsx(RemoteBody, { info, devices, revoke, relay, onEnroll, onDisconnect }),
-        devices.length
+        devices.length > 1
           ? jsx('button', {
               type: 'button',
               className: 'dshlink-revoke-all',
               onClick: revokeAll,
-              children: '吊销全部设备',
+              children: '吊销全部',
             })
           : null,
       ],
