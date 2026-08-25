@@ -25,7 +25,7 @@ import { loadOrCreateTls } from "./tls.js"
 import { loadEventsAfter, sseMessageFrame } from "./stream-cursor.js"
 import { flushSeedQueue, respondQuestion, startMuxQuestionBridge } from "./question-bridge.js"
 import { callLocalRpc } from "./local-rpc.js"
-import { deriveAddresses, generateHostKey, hostKeyFromSeed, unb64u } from "./relay/crypto.js"
+import { deriveAddresses, generateHostKey, hostKeyFromSeed, parseEnrollText, unb64u } from "./relay/crypto.js"
 import { enroll as enrollRelay, normalizeTlsFingerprint, RelayAgent } from "./relay/agent.js"
 
 export const name = "dsh-links"
@@ -1679,11 +1679,24 @@ export function apply(ctx, config) {
         if (!requireJsonWrite(req, res)) return
         const body = await readJson(req, res)
         if (!body) return
-        const inviteCode = String(body.inviteCode ?? "").trim()
-        const address = String(body.address ?? "").trim()
-        const insecureTls = body.insecureTls === true
+        const inviteCodeRaw = String(body.inviteCode ?? "").trim()
+        const addressRaw = String(body.address ?? "").trim()
+        let inviteCode = inviteCodeRaw
+        let address = addressRaw
+        let insecureTls = body.insecureTls === true
         let tlsFingerprint = ""
-        if (insecureTls) {
+        let fromEnroll = null
+        try {
+          fromEnroll = parseEnrollText(body.enroll) || parseEnrollText(inviteCodeRaw) || parseEnrollText(addressRaw)
+        } catch (err) {
+          return json(res, 400, { error: err?.message ?? "接入信息无效" })
+        }
+        if (fromEnroll) {
+          address = fromEnroll.address
+          inviteCode = fromEnroll.inviteCode
+          insecureTls = fromEnroll.insecureTls
+          tlsFingerprint = fromEnroll.tlsFingerprint
+        } else if (insecureTls) {
           try {
             tlsFingerprint = normalizeTlsFingerprint(body.tlsFingerprint)
           } catch (err) {

@@ -166,3 +166,39 @@ export function displayRelayHost(address) {
 export function certFingerprintSha256(raw) {
   return sha256(raw).toString("hex")
 }
+
+function normalizeEnrollFingerprint(value) {
+  const raw = String(value ?? "").trim()
+  if (!raw) return ""
+  if (!/^[0-9a-f:\s]+$/i.test(raw)) throw new Error("自签 TLS 需要 64 位 SHA-256 指纹")
+  const normalized = raw.replace(/[:\s]/g, "").toLowerCase()
+  if (!/^[0-9a-f]{64}$/.test(normalized)) throw new Error("自签 TLS 需要 64 位 SHA-256 指纹")
+  return normalized
+}
+
+/** Parse a control-console enroll token. Returns null when the text is a plain invite. */
+export function parseEnrollText(raw) {
+  const text = String(raw ?? "").trim()
+  if (!text) return null
+  const token = text.split(/\s+/).find((part) => part.startsWith("dsh-relay://")) ?? ""
+  if (!token) return null
+  let parsed
+  try {
+    parsed = new URL(token)
+  } catch {
+    throw new Error("接入信息无效")
+  }
+  if (parsed.protocol !== "dsh-relay:") throw new Error("接入信息无效")
+  const host = parsed.hostname
+  if (!host) throw new Error("接入信息缺少主机")
+  const invite = String(parsed.searchParams.get("i") || parsed.searchParams.get("invite") || "").trim()
+  if (!invite) throw new Error("接入信息缺少接入码")
+  const tlsFingerprint = normalizeEnrollFingerprint(parsed.searchParams.get("fp") || "")
+  const port = parsed.port
+  return {
+    address: port ? `${host}:${port}` : host,
+    inviteCode: invite,
+    insecureTls: Boolean(tlsFingerprint),
+    tlsFingerprint,
+  }
+}

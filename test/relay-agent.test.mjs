@@ -6,7 +6,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { PassThrough } from "node:stream"
 import { loadOrCreateTls } from "../src/tls.js"
-import { b64u, generateHostKey } from "../src/relay/crypto.js"
+import { b64u, generateHostKey, parseEnrollText } from "../src/relay/crypto.js"
 import {
   detachReader,
   enroll,
@@ -116,4 +116,17 @@ test("OPEN 并发有硬上限、拒绝重复 stream，stop 关闭全部桥接", 
   assert.equal(agent.streams.size, 0)
   assert.ok(sockets.every((socket) => socket.destroyed))
   for (const resolve of resolvers) resolve()
+})
+
+test("接入信息 URI 解析主机、邀请码和指纹", () => {
+  const fp = "ab".repeat(32)
+  const parsed = parseEnrollText(`dsh-relay://relay.dshlinks.com/?i=INVITECODE&fp=${fp}`)
+  assert.equal(parsed.address, "relay.dshlinks.com")
+  assert.equal(parsed.inviteCode, "INVITECODE")
+  assert.equal(parsed.insecureTls, true)
+  assert.equal(parsed.tlsFingerprint, fp)
+  const publicCa = parseEnrollText("dsh-relay://relay.dshlinks.com/?i=INVITECODE")
+  assert.equal(publicCa.insecureTls, false)
+  assert.equal(publicCa.tlsFingerprint, "")
+  assert.equal(parseEnrollText("INVITECODE"), null)
 })
