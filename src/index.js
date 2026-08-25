@@ -1548,8 +1548,15 @@ export function apply(ctx, config) {
     stopRelayAgent()
     if (!state.relay?.routeSecret || !state.relay?.agentAddress) return
     if (state.relay.insecureTls && !state.relay.tlsPinTrusted) {
-      ctx.logger.warn("dsh-links relay: 旧版自签 TLS 配置未经过指纹确认，请重新接入")
-      return
+      const fp = String(state.relay.tlsFingerprint ?? "").replace(/[:\s]/g, "").toLowerCase()
+      if (/^[0-9a-f]{64}$/.test(fp)) {
+        state.relay.tlsFingerprint = fp
+        state.relay.tlsPinTrusted = true
+        saveState(stateFile, state)
+      } else {
+        ctx.logger.warn("dsh-links relay: 旧版自签 TLS 配置未经过指纹确认，请重新接入")
+        return
+      }
     }
     relayAgent = new RelayAgent({
       address: state.relay.agentAddress,
