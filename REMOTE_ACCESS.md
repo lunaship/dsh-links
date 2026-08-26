@@ -10,9 +10,9 @@
 
 **接入码不会出现在本仓库、GitHub Release 或 npm 包里。** 只有维护者可以发放。局域网配对不需要接入码。
 
-## Tailscale 私网
+## Tailscale 私网（实验性个人路径）
 
-这是优先推荐的个人自用路径：电脑和手机加入同一个 tailnet，不开放路由器端口。
+这是由用户自管的个人实验路径：电脑和手机加入同一个 tailnet，不开放路由器端口。
 
 1. 在电脑和 Android 手机上安装 Tailscale，并登录同一个 tailnet。
 2. 让 dsh 与插件运行，电脑执行 `tailscale ip -4`，得到 `100.x.y.z` 地址。

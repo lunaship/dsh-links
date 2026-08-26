@@ -16,9 +16,12 @@ GitHub `lunaship/dsh-links` = **仅插件源码与文档**。Android App 保持�
 
 首次启用需要在 npm 完成一次性配置：
 
-1. 包 `dsh-links` 目前尚未存在于 npm。先由包所有者在本机手动发布首个版本，例如 beta 使用 `npm publish --access public --tag beta`。
+1. 在发布环境先用 `npm view dsh-links versions --json` 和
+   `npm view dsh-links dist-tags --json` 核对 registry 当前状态。不要根据
+   本地仓库推断包是否已存在；若包尚不存在，必须由包所有者明确执行首个
+   `npm publish --access public --tag beta`。
 2. 在 npmjs.com 的 `dsh-links` → **Settings** → **Trusted Publisher** 添加 GitHub Actions：Owner `lunaship`、Repository `dsh-links`、Workflow filename `publish-npm.yml`，并允许 `npm publish`。
-3. 之后创建 tag `v<package.json 的 version>` 并发布 GitHub Release。例如版本为 `0.1.0-beta.1` 时，tag 必须是 `v0.1.0-beta.1`；工作流会运行锁定依赖安装、测试、版本校验，随后发布。
+3. 创建与 `package.json` 版本完全一致的 tag `v<package.json 的 version>` 并发布 GitHub Release。工作流会运行锁定依赖安装、测试、版本校验，随后发布。
 
 预发布版本会按预发布标识发布到对应 npm dist-tag（例如 `0.1.0-beta.1` → `beta`）；非预发布版本发布到 `latest`。如 npm 侧尚未建立可信发布关系，工作流会失败，不会退回到长期 token。
 

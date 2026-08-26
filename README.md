@@ -72,7 +72,9 @@ Android App 当前最低支持 Android 8.0（API 26）。源码不在本仓库�
 
 This release is an **Android Beta**. The supported public path remains a trusted LAN.
 
-- **Supported:** Android phone and DSH `0.1.0-rc.8` on the same trusted LAN.
+- **Supported:** Android phone and DSH on the same trusted LAN. The current
+  source baseline and verified combination are maintained in
+  [`dsh-links/docs/COMPATIBILITY.md`](https://github.com/lunaship/dsh-links/blob/main/docs/COMPATIBILITY.md).
 - **Private testing:** DSH Links Relay. End-to-end remote pairing has been exercised, but it is still invite-only. Invite codes are issued only by the maintainer. This repository, GitHub Releases, and the npm package do not contain invite codes, Relay host credentials, or `state.json`.
 - **Experimental, at your own risk:** a Tailscale or Cloudflare Tunnel path you operate yourself. It is not a supported Beta path and is not covered by the security or compatibility promise.
 - **Not supported:** exposing port `18640` directly to the public Internet or using frp. Public self-serve Relay enrollment is not available.
@@ -82,7 +84,7 @@ The Android APK is distributed only as an official signed release. Verify the ve
 ## 安装
 
 ```bash
-dsh plugin --profile web add dsh-links@0.1.0-beta.8
+dsh plugin --profile web add dsh-links@<published-version>
 dsh web
 ```
 
@@ -94,7 +96,8 @@ dsh plugin --profile web add /path/to/dsh-links
 
 然后重启 `dsh web`，设置 →「手机连接」扫码或手动配对。扫码中的地址或手动填写的地址可以指向家中电脑或远程服务器上运行的 DSH；当前公开 Beta 正式支持同一可信局域网。跨网络可自管 Tailscale / Cloudflare Tunnel，或在持有维护者接入码的情况下使用内测 Relay。
 
-已验证：DSH `0.1.0-rc.8` + 本插件 `0.1.0-beta.8` + Android App `0.5.0-beta.13`。
+当前源码基线、发布状态和已验证组合统一见
+[`dsh-links/docs/COMPATIBILITY.md`](https://github.com/lunaship/dsh-links/blob/main/docs/COMPATIBILITY.md)，本 README 不重复维护版本事实。
 
 ## 能力摘要
 
