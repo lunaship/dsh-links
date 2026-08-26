@@ -8,7 +8,7 @@
 <p align="center"><strong>Beta</strong> · <strong>Android only</strong> · <strong>Trusted LAN</strong> · <strong>Relay 内测（需接入码）</strong> · <strong>Unofficial</strong></p>
 
 <p align="center">
-  <img src="docs/images/dsh-links-system-illustration.png" width="900" alt="电脑端 DSH 通过配对链路连接到 Android App 的示意图。">
+  <img src="docs/images/dsh-workbench-latest.png" width="900" alt="当前 DSH Web 工作台，展示会话、思考事件、消息和模型选择。">
 </p>
 
 <p align="center"><sub>电脑继续运行 DSH、工具和工作区；手机负责查看会话、发送消息、接收实时事件和处理审批。</sub></p>
@@ -41,26 +41,16 @@ Android App 当前最低支持 Android 8.0（API 26）。源码不在本仓库�
 
 局域网不需要接入码。远端 Relay 目前不是公开自助能力：只有拿到维护者发放的接入码，才能在「远端连接」里把电脑接入 Relay，并再扫第二张云端码。
 
-## 配对体验
+## 最新界面截图
+
+*以下 UI 截图均于 2026-08-26 从当前本地运行版本重新截取；二维码、配对码、主机名、内网地址和设备标识均已脱敏。Android 截图来自当前 `0.5.0-beta.13` 构建。*
+
+### 电脑端手机连接与 Android 设备
 
 <table>
   <tr>
-    <td width="66%" valign="top"><img src="docs/images/phone-connection-sanitized.png" alt="DSH Links 电脑端的手机连接面板，展示二维码、一次性配对码、TLS 指纹、可访问地址和已配对设备。"><br><sub><b>电脑端配对面板</b>：生成一次性配对信息，确认可访问地址，并管理已配对设备。</sub></td>
-    <td width="34%" valign="top"><img src="docs/images/android-device-list-sanitized.png" alt="DSH Links Android App 的我的设备页面，展示在线设备、局域网连接状态和添加设备入口。"><br><sub><b>Android 设备入口</b>：查看连接状态，扫码或手动添加设备。</sub></td>
-  </tr>
-</table>
-
-*电脑端截图中的二维码、配对码、证书指纹、地址和设备信息均已脱敏，不含 Relay 接入码。*
-
-## Android App 界面
-
-### 从配对到工作区
-
-<table>
-  <tr>
-    <td width="33%" valign="top"><img src="docs/images/android-splash.jpg" alt="DSH Links Android App 启动页。"><br><sub><b>启动</b>：进入 DSH Links。</sub></td>
-    <td width="33%" valign="top"><img src="docs/images/android-navigation-drawer.jpg" alt="DSH Links Android App 的工作区导航抽屉。"><br><sub><b>工作区导航</b>：新建会话、切换工作区与进入设置。</sub></td>
-    <td width="33%" valign="top"><img src="docs/images/android-settings-light.jpg" alt="DSH Links Android App 的浅色设置页面，展示通用设置、语言、外观和繁忙时发送行为。"><br><sub><b>设置</b>：调整语言、外观与会话默认行为。</sub></td>
+    <td width="60%" valign="top"><img src="docs/images/phone-connection-latest-sanitized.png" alt="当前 DSH Links 电脑端手机连接设置，展示局域网配对入口和已配对设备。"><br><sub><b>电脑端手机连接</b>：从当前 DSH Web 设置发起局域网配对。</sub></td>
+    <td width="40%" valign="top"><img src="docs/images/android-devices-latest-sanitized.png" alt="当前 DSH Links Android App 设备列表，展示局域网和云端设备入口。"><br><sub><b>Android 设备</b>：查看多个已配对设备及其连接状态。</sub></td>
   </tr>
 </table>
 
@@ -68,21 +58,14 @@ Android App 当前最低支持 Android 8.0（API 26）。源码不在本仓库�
 
 <table>
   <tr>
-    <td width="50%" valign="top"><img src="docs/images/android-workspace-light.jpg" alt="Android App 的浅色原生会话工作台，含对话、轨迹、历史和消息输入区。"><br><sub><b>浅色模式</b>：继续对话、浏览轨迹和历史。</sub></td>
-    <td width="50%" valign="top"><img src="docs/images/android-workspace-dark.jpg" alt="Android App 的深色原生会话工作台，含对话、轨迹、历史和消息输入区。"><br><sub><b>深色模式</b>：同一工作台支持系统外观切换。</sub></td>
+    <td width="50%" valign="top"><img src="docs/images/android-workspace-latest.png" alt="当前 Android App 原生会话工作台，展示对话、思考事件、模型选择和消息输入。"><br><sub><b>原生工作台</b>：在手机上继续会话、查看思考事件并发送消息。</sub></td>
+    <td width="50%" valign="top"><img src="docs/images/android-navigation-latest.png" alt="当前 Android App 工作区导航抽屉，展示工作区、会话和设置入口。"><br><sub><b>工作区导航</b>：切换设备、工作区、会话与设置。</sub></td>
   </tr>
 </table>
 
-### 设置
+### Android App 设置
 
-<table>
-  <tr>
-    <td width="50%" valign="top"><img src="docs/images/android-settings-light.jpg" alt="Android App 的浅色设置页面，展示通用设置、语言、外观和繁忙时发送行为。"><br><sub><b>浅色设置</b>：调整语言、外观与会话默认行为。</sub></td>
-    <td width="50%" valign="top"><img src="docs/images/android-settings-dark.jpg" alt="Android App 的深色设置页面，展示通用设置、语言、外观和繁忙时发送行为。"><br><sub><b>深色设置</b>：设置随界面主题完整适配。</sub></td>
-  </tr>
-</table>
-
-*以上均为 Android App 实机截图；设备名和内网地址已脱敏。*
+<img src="docs/images/android-settings-latest.png" width="60%" alt="当前 Android App 设置页，展示通用设置、模型、会话、插件和外观选项。">
 
 ## Beta support boundary
 
