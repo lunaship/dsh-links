@@ -1,6 +1,7 @@
-# OpenShip-only runtime. The default Dockerfile stays scratch + split UIDs.
-# OpenShip cannot apply Compose secrets/read_only/user, so this image inits
-# into a shared volume and runs as root. Not the product default.
+# OpenShip-only personal lab runtime. The default Dockerfile stays scratch + split UIDs.
+# OpenShip cannot apply Compose secrets/read_only/user. Control still inits as root,
+# but Relay only mounts the published share (issuer.pub, TLS, IPC) — never Control data.
+# Not for internet-facing production; use docker-compose.yml.
 FROM golang:1.25-bookworm AS build
 WORKDIR /src
 COPY go.mod go.sum ./

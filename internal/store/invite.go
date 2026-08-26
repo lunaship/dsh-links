@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/dsh-links/dsh-links-relay/internal/cryptoutil"
@@ -47,14 +48,49 @@ func (s *Store) ValidateInvite(code string) error {
 	return nil
 }
 
-// EnrollHost atomically consumes an invite and creates the host and its first
-// credential. Any validation or database failure leaves the invite reusable.
-func (s *Store) EnrollHost(code string, host *Host, capabilityHash []byte, issuedAt, expiresAt int64) error {
+// EnrollMaterial is produced after generation is assigned inside EnrollHost.
+type EnrollMaterial struct {
+	CapabilityHash []byte
+	IssuedAt       int64
+	ExpiresAt      int64
+}
+
+const enrollCASAttempts = 8
+
+var errGenerationConflict = errStr("enroll generation conflict")
+
+func isRetryableEnroll(err error) bool {
+	if errors.Is(err, errGenerationConflict) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "database is locked") || strings.Contains(msg, "sqlite_busy")
+}
+
+// EnrollHost atomically consumes an invite, assigns the next generation inside
+// the transaction, and creates the host credential. replacedRouteID is the
+// prior route for a rebind (nil on first enroll). Any validation or database
+// failure leaves the invite reusable.
+func (s *Store) EnrollHost(code string, host *Host, materialize func(generation int64) (*EnrollMaterial, error)) (replacedRouteID []byte, err error) {
+	var last error
+	for attempt := 0; attempt < enrollCASAttempts; attempt++ {
+		replacedRouteID, last = s.enrollHostOnce(code, host, materialize)
+		if last == nil {
+			return replacedRouteID, nil
+		}
+		if !isRetryableEnroll(last) {
+			return nil, last
+		}
+	}
+	return nil, last
+}
+
+func (s *Store) enrollHostOnce(code string, host *Host, materialize func(generation int64) (*EnrollMaterial, error)) ([]byte, error) {
 	h := sha256.Sum256([]byte(code))
 	now := time.Now().Unix()
 	tx, err := s.db.Begin()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer tx.Rollback()
 
@@ -65,67 +101,91 @@ func (s *Store) EnrollHost(code string, host *Host, capabilityHash []byte, issue
 	err = tx.QueryRow(`SELECT id, user_id, expires_at, consumed_at, revoked_at FROM invites WHERE code_hash=?`, h[:]).
 		Scan(&inviteID, &userID, &inviteExpires, &consumed, &revoked)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if consumed.Valid {
-		return ErrInviteConsumed
+		return nil, ErrInviteConsumed
 	}
 	if revoked.Valid {
-		return ErrInviteRevoked
+		return nil, ErrInviteRevoked
 	}
 	if inviteExpires <= now {
-		return ErrInviteExpired
+		return nil, ErrInviteExpired
 	}
 
 	host.UserID = userID
 	host.CreatedAt = now
-	var existingPub []byte
-	err = tx.QueryRow(`SELECT host_pubkey FROM hosts WHERE id=?`, host.ID).Scan(&existingPub)
+	var replacedRouteID []byte
+	var existingPub, existingRoute []byte
+	var existingGen int64
+	err = tx.QueryRow(`SELECT host_pubkey, route_id, generation FROM hosts WHERE id=?`, host.ID).
+		Scan(&existingPub, &existingRoute, &existingGen)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		var otherID string
 		err = tx.QueryRow(`SELECT id FROM hosts WHERE host_pubkey=?`, host.HostPubKey).Scan(&otherID)
 		if err == nil {
-			return errStr("host key already registered")
+			return nil, errStr("host key already registered")
 		}
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return err
+			return nil, err
 		}
+		host.Generation = 1
 		if _, err := tx.Exec(`INSERT INTO hosts(id, user_id, route_id, host_name, host_pubkey, generation, max_streams, version, created_at) VALUES(?,?,?,?,?,?,?,?,?)`,
 			host.ID, host.UserID, host.RouteID, host.HostName, host.HostPubKey, host.Generation, host.MaxStreams, host.Version, host.CreatedAt); err != nil {
-			return fmt.Errorf("create host: %w", err)
+			return nil, fmt.Errorf("create host: %w", err)
 		}
 	case err != nil:
-		return err
+		return nil, err
 	default:
 		if !bytes.Equal(existingPub, host.HostPubKey) {
-			return errStr("host id already registered")
+			return nil, errStr("host id already registered")
 		}
-		if _, err := tx.Exec(`UPDATE hosts SET user_id=?, route_id=?, host_name=?, generation=?, max_streams=?, version=?, revoked_at=NULL WHERE id=?`,
-			host.UserID, host.RouteID, host.HostName, host.Generation, host.MaxStreams, host.Version, host.ID); err != nil {
-			return fmt.Errorf("rebind host: %w", err)
+		host.Generation = existingGen + 1
+		res, err := tx.Exec(`UPDATE hosts SET user_id=?, route_id=?, host_name=?, generation=?, max_streams=?, version=?, revoked_at=NULL WHERE id=? AND generation=?`,
+			host.UserID, host.RouteID, host.HostName, host.Generation, host.MaxStreams, host.Version, host.ID, existingGen)
+		if err != nil {
+			return nil, fmt.Errorf("rebind host: %w", err)
 		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return nil, err
+		}
+		if n != 1 {
+			return nil, errGenerationConflict
+		}
+		replacedRouteID = append([]byte(nil), existingRoute...)
+	}
+	material, err := materialize(host.Generation)
+	if err != nil {
+		return nil, err
+	}
+	if material == nil || len(material.CapabilityHash) == 0 {
+		return nil, errStr("missing enroll material")
 	}
 	credentialIDBytes, err := cryptoutil.RandomBytes(16)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	credentialID := base64.RawURLEncoding.EncodeToString(credentialIDBytes)
 	if _, err := tx.Exec(`INSERT INTO credentials(id, host_id, capability_hash, generation, issued_at, expires_at) VALUES(?,?,?,?,?,?)`,
-		credentialID, host.ID, capabilityHash, host.Generation, issuedAt, expiresAt); err != nil {
-		return fmt.Errorf("create credential: %w", err)
+		credentialID, host.ID, material.CapabilityHash, host.Generation, material.IssuedAt, material.ExpiresAt); err != nil {
+		return nil, fmt.Errorf("create credential: %w", err)
 	}
 	res, err := tx.Exec(`UPDATE invites SET consumed_at=? WHERE id=? AND consumed_at IS NULL AND revoked_at IS NULL`, now, inviteID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if n, err := res.RowsAffected(); err != nil || n != 1 {
 		if err != nil {
-			return err
+			return nil, err
 		}
-		return ErrInviteConsumed
+		return nil, ErrInviteConsumed
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return replacedRouteID, nil
 }
 
 // CreateInvite creates a one-time invite, returns code and record.

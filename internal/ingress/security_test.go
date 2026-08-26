@@ -388,6 +388,87 @@ func TestCrossHostBind(t *testing.T) {
 	}
 }
 
+func TestStaleBindRejectedAfterReenroll(t *testing.T) {
+	ing, ctrl, cleanup := setupIngress(t)
+	defer cleanup()
+	_, agentAddr := getAddrs(ing)
+	ctrl.SetRevokeFn(func(string, string) {})
+
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstInvite, _ := ctrl.CreateInvite(30 * time.Minute)
+	agent := testkit.NewSimAgent(agentAddr, "host-stale-bind", priv, "127.0.0.1:9")
+	if err := agent.Enroll(firstInvite); err != nil {
+		t.Fatal(err)
+	}
+	oldRoute, oldSecret := agent.RouteId, agent.RouteSecret
+	oldGen := agent.Generation
+	sender := &captureOpenSender{opens: make(chan protocol.OpenFrame, 1)}
+	routeRaw, _ := base64.RawURLEncoding.DecodeString(oldRoute)
+	if _, err := ing.registry.Register(&registry.AgentSession{
+		RouteIdRaw: routeRaw, RouteIdStr: oldRoute, HostID: agent.HostId,
+		Generation: oldGen, MaxStreams: 8, Sender: sender, ConnectedAt: time.Now(), LastPing: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	secondInvite, _ := ctrl.CreateInvite(30 * time.Minute)
+	if err := agent.Enroll(secondInvite); err != nil {
+		t.Fatal(err)
+	}
+	if agent.RouteId == oldRoute {
+		t.Fatal("re-enroll reused route")
+	}
+	pending, err := ing.registry.CreatePending(oldRoute, "127.0.0.1")
+	if err != nil {
+		t.Fatalf("create stale pending: %v", err)
+	}
+	select {
+	case <-sender.opens:
+	case <-time.After(2 * time.Second):
+		t.Fatal("old session did not receive OPEN")
+	}
+
+	bindConn, err := net.Dial("tcp", agentAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bindConn.Close()
+	bindReader := protocol.NewFrameReader(bindConn)
+	bindHelloRaw, err := bindReader.ReadFrame(protocol.MaxHello)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bindHello protocol.HelloFrame
+	_ = json.Unmarshal(bindHelloRaw, &bindHello)
+	bindChallenge, _ := base64.RawURLEncoding.DecodeString(bindHello.Challenge)
+	oldRouteRaw, _ := base64.RawURLEncoding.DecodeString(oldRoute)
+	oldSecretRaw, _ := base64.RawURLEncoding.DecodeString(oldSecret)
+	streamRaw, _ := base64.RawURLEncoding.DecodeString(pending.StreamStr)
+	bindNonce, _ := cryptoutil.GenerateNonce()
+	bindTs := time.Now().Unix()
+	bindMAC := cryptoutil.ComputeMAC(oldSecretRaw, cryptoutil.BuildMACTranscript("BIND", oldRouteRaw, streamRaw, &oldGen, bindTs, bindNonce, bindChallenge))
+	bind := protocol.BindFrame{
+		Type: protocol.TypeBind, Route: oldRoute, Stream: pending.StreamStr, Generation: oldGen, Ts: bindTs,
+		Nonce: base64.RawURLEncoding.EncodeToString(bindNonce), Mac: base64.RawURLEncoding.EncodeToString(bindMAC),
+	}
+	bindLine, _ := json.Marshal(bind)
+	bindLine = append(bindLine, '\n')
+	if _, err := bindConn.Write(bindLine); err != nil {
+		t.Fatal(err)
+	}
+	bindResponseRaw, err := bindReader.ReadFrame(2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bindError protocol.ErrorFrame
+	if err := json.Unmarshal(bindResponseRaw, &bindError); err != nil || bindError.Type != protocol.TypeError || bindError.Code != protocol.ErrAuthFailed {
+		t.Fatalf("stale bind response=%s, want AUTH_FAILED", string(bindResponseRaw))
+	}
+}
+
 func TestOldGenerationNotDeleted(t *testing.T) {
 	// Test that Unregister with old generation doesn't delete new generation
 	ing, ctrl, cleanup := setupIngress(t)

@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -120,6 +121,115 @@ func TestEnrollSameHostAndKeyRebinds(t *testing.T) {
 	}
 	if host.Generation != int64(second.Generation) {
 		t.Fatalf("stored generation=%d want %d", host.Generation, second.Generation)
+	}
+}
+
+func TestReenrollRevokesPriorRouteImmediately(t *testing.T) {
+	ctrl, st := newTestControl(t)
+	defer st.Close()
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstInvite, err := ctrl.CreateInvite(time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := ctrl.Enroll(enrollRequest(t, firstInvite, "same-host-revoke", priv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var revokedRoute string
+	ctrl.SetRevokeFn(func(routeId, id string) {
+		revokedRoute = routeId
+		if id != "same-host-revoke" {
+			t.Fatalf("revoke host=%q", id)
+		}
+	})
+	secondInvite, err := ctrl.CreateInvite(time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := ctrl.Enroll(enrollRequest(t, secondInvite, "same-host-revoke", priv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantOld := base64.RawURLEncoding.EncodeToString(first.RouteId)
+	if revokedRoute != wantOld {
+		t.Fatalf("revoked route=%q want %q", revokedRoute, wantOld)
+	}
+	if _, err := st.GetHostByRoute(first.RouteId); err == nil {
+		t.Fatal("old route still persisted")
+	}
+	if host, err := st.GetHostByRoute(second.RouteId); err != nil || host.Generation != int64(second.Generation) {
+		t.Fatalf("new route missing: host=%v err=%v", host, err)
+	}
+}
+
+func TestConcurrentReenrollDistinctGenerations(t *testing.T) {
+	ctrl, st := newTestControl(t)
+	defer st.Close()
+	st.DB().SetMaxOpenConns(8)
+	if _, err := st.DB().Exec(`PRAGMA busy_timeout=5000`); err != nil {
+		t.Fatal(err)
+	}
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bootstrap, err := ctrl.CreateInvite(time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ctrl.Enroll(enrollRequest(t, bootstrap, "race-host", priv)); err != nil {
+		t.Fatal(err)
+	}
+	invites := make([]string, 8)
+	for i := range invites {
+		code, err := ctrl.CreateInvite(time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		invites[i] = code
+	}
+	results := make([]*EnrollResult, len(invites))
+	errs := make([]error, len(invites))
+	var wg sync.WaitGroup
+	for i, invite := range invites {
+		wg.Add(1)
+		go func(i int, invite string) {
+			defer wg.Done()
+			results[i], errs[i] = ctrl.Enroll(enrollRequest(t, invite, "race-host", priv))
+		}(i, invite)
+	}
+	wg.Wait()
+	seenGen := map[uint64]struct{}{}
+	seenRoute := map[string]struct{}{}
+	ok := 0
+	for i, err := range errs {
+		if err != nil {
+			continue
+		}
+		ok++
+		if _, dup := seenGen[results[i].Generation]; dup {
+			t.Fatalf("duplicate generation %d", results[i].Generation)
+		}
+		seenGen[results[i].Generation] = struct{}{}
+		route := base64.RawURLEncoding.EncodeToString(results[i].RouteId)
+		if _, dup := seenRoute[route]; dup {
+			t.Fatalf("duplicate route %s", route)
+		}
+		seenRoute[route] = struct{}{}
+	}
+	if ok < 2 {
+		t.Fatalf("concurrent enrolls succeeded=%d, want at least 2 (errs=%v)", ok, errs)
+	}
+	host, err := st.GetHostByID("race-host")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := seenGen[uint64(host.Generation)]; !exists {
+		t.Fatalf("stored generation %d was not returned by a winner", host.Generation)
 	}
 }
 

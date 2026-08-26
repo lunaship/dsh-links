@@ -69,7 +69,8 @@ CGO_ENABLED=0 go test ./internal/ingress -run TestSequential -v
 
 - `deploy/config.toml.example` — 配置模板
 - `deploy/systemd/` — `dsh-links-relay-control.service`, `dsh-links-relay-relay.service`
-- `docker-compose.yml` + `deploy/docker/` — 推荐的加固双容器部署
+- `docker-compose.yml` + `deploy/docker/` — 推荐的公网加固双容器部署
+- `docker-compose.openship.yml` — 仅个人 OpenShip 实验；Control 与 Relay 分卷，Relay 读不到签发密钥。公网生产禁止用它
 - 先用 `dsh-links-relay init` 生成密钥与配置；容量需实测后才能写进承诺
 
 ## 兼容

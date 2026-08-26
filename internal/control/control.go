@@ -138,12 +138,10 @@ func (c *Control) Enroll(req *EnrollRequest) (*EnrollResult, error) {
 	if !ed25519.Verify(pub, transcript, req.Proof) {
 		return nil, errors.New("enroll proof invalid")
 	}
-	gen := uint64(1)
 	if existing, err := c.store.GetHostByID(req.HostId); err == nil {
 		if !bytes.Equal(existing.HostPubKey, req.HostPublicKey) {
 			return nil, errors.New("host id already registered")
 		}
-		gen = uint64(existing.Generation) + 1
 	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
@@ -164,40 +162,47 @@ func (c *Control) Enroll(req *EnrollRequest) (*EnrollResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Sign capability
-	jti, err := cryptoutil.RandomBytes(16)
-	if err != nil {
-		return nil, err
-	}
-	payload := cryptoutil.CapabilityPayload{
-		Iss:        "dsh-links-relay",
-		Jti:        base64.RawURLEncoding.EncodeToString(jti),
-		Host:       req.HostId,
-		Route:      base64.RawURLEncoding.EncodeToString(routeId),
-		HostPK:     base64.RawURLEncoding.EncodeToString(req.HostPublicKey),
-		Generation: gen,
-		MaxStreams: c.defaultMaxStreams,
-		Iat:        time.Now().Unix(),
-		Exp:        time.Now().Add(30 * 24 * time.Hour).Unix(),
-	}
-	capStr, err := cryptoutil.SignCapability(c.issuerPriv, payload)
-	if err != nil {
-		return nil, err
-	}
-	hash := sha256.Sum256([]byte(capStr))
 	host := &store.Host{
 		ID: req.HostId, RouteID: routeId, HostName: req.HostId,
-		HostPubKey: req.HostPublicKey, Generation: int64(gen),
+		HostPubKey: req.HostPublicKey,
 		MaxStreams: c.defaultMaxStreams, Version: "v0.1.0",
 	}
-	if err := c.store.EnrollHost(req.InviteCode, host, hash[:], payload.Iat, payload.Exp); err != nil {
+	var capStr string
+	replacedRouteID, err := c.store.EnrollHost(req.InviteCode, host, func(generation int64) (*store.EnrollMaterial, error) {
+		jti, err := cryptoutil.RandomBytes(16)
+		if err != nil {
+			return nil, err
+		}
+		payload := cryptoutil.CapabilityPayload{
+			Iss:        "dsh-links-relay",
+			Jti:        base64.RawURLEncoding.EncodeToString(jti),
+			Host:       req.HostId,
+			Route:      base64.RawURLEncoding.EncodeToString(routeId),
+			HostPK:     base64.RawURLEncoding.EncodeToString(req.HostPublicKey),
+			Generation: uint64(generation),
+			MaxStreams: c.defaultMaxStreams,
+			Iat:        time.Now().Unix(),
+			Exp:        time.Now().Add(30 * 24 * time.Hour).Unix(),
+		}
+		signed, err := cryptoutil.SignCapability(c.issuerPriv, payload)
+		if err != nil {
+			return nil, err
+		}
+		capStr = signed
+		hash := sha256.Sum256([]byte(signed))
+		return &store.EnrollMaterial{CapabilityHash: hash[:], IssuedAt: payload.Iat, ExpiresAt: payload.Exp}, nil
+	})
+	if err != nil {
 		return nil, fmt.Errorf("enroll transaction: %w", err)
+	}
+	if len(replacedRouteID) > 0 && c.revokeFn != nil {
+		c.revokeFn(base64.RawURLEncoding.EncodeToString(replacedRouteID), req.HostId)
 	}
 	return &EnrollResult{
 		RouteId:     routeId,
 		RouteSecret: secret,
 		Capability:  capStr,
-		Generation:  gen,
+		Generation:  uint64(host.Generation),
 	}, nil
 }
 

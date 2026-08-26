@@ -3,6 +3,7 @@
 ## 1. 部署
 
 公网服务器优先使用 `deploy/docker/README.md` 的 Rootless 双容器方案。
+`docker-compose.openship.yml` 只用于个人 OpenShip 实验，Control 与 Relay 必须分卷；公网生产不要用它。
 以下 systemd 步骤作为高级手动部署方式保留。
 
 ### 1.1 单机要求

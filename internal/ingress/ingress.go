@@ -844,6 +844,11 @@ func (ing *Ingress) handleBind(ctx *connContext, raw []byte) {
 		sendError(ctx.conn, protocol.ErrAuthFailed, "auth failed")
 		return
 	}
+	_, persistedGen, _, _, revoked, err := ing.control.LookupHostByRoute(routeIdRaw)
+	if err != nil || revoked || persistedGen != bind.Generation {
+		sendError(ctx.conn, protocol.ErrAuthFailed, "auth failed")
+		return
+	}
 
 	// Check pending (without removing yet? CompleteBind removes). We need to get pending before removing to signal.
 	// Retrieve pending via registry internal? Use CompleteBind which deletes but returns pending with BridgeCh.

@@ -1,4 +1,6 @@
-# Personal OpenShip deploy only. Product default is docker-compose.yml.
+# Personal OpenShip lab only. Do not use this file for internet-facing production.
+# Production must use docker-compose.yml: split UIDs, secrets, configs, and volumes.
+# Relay never mounts Control's database or signing keys.
 services:
   control:
     build:
@@ -10,8 +12,10 @@ services:
     environment:
       RELAY_HOST: ${RELAY_HOST:-relay.dshlinks.com}
       RELAY_DATA: /data
+      RELAY_SHARE: /relay
     volumes:
-      - relay-data:/data
+      - control-data:/data
+      - relay-share:/relay
     ports:
       - "127.0.0.1:8080:8080"
 
@@ -26,9 +30,9 @@ services:
       - control
     environment:
       RELAY_HOST: ${RELAY_HOST:-relay.dshlinks.com}
-      RELAY_DATA: /data
+      RELAY_SHARE: /relay
     volumes:
-      - relay-data:/data
+      - relay-share:/relay
     # Pin host publishes. OpenShip must not rewrite these to loopback/edge:
     # relay speaks native TLS on both ports, not HTTP behind OpenResty.
     ports:
@@ -36,4 +40,5 @@ services:
       - "0.0.0.0:8444:8444"
 
 volumes:
-  relay-data:
+  control-data:
+  relay-share:
