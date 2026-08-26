@@ -6,6 +6,8 @@ import {
   unb64u,
   enrollTranscript,
   registerTranscript,
+  renewTranscript,
+  capabilityExpiry,
   bindMac,
   signEd25519,
   certFingerprintSha256,
@@ -19,6 +21,22 @@ const MAX_OPEN = 2048
 const PLUGIN_HOST = "127.0.0.1"
 const CONNECT_TIMEOUT_MS = 8000
 export const MAX_ACTIVE_STREAMS = 8
+export const CAPABILITY_RENEW_WINDOW_SECONDS = 7 * 24 * 60 * 60
+export const REGISTERED_HEARTBEAT_MIN_SECONDS = 1
+export const REGISTERED_HEARTBEAT_MAX_SECONDS = 300
+export const MAX_CONTROL_WRITE_QUEUE = 8
+export const MAX_CONTROL_WRITE_BYTES = 16 * 1024
+export const CONTROL_WRITE_DEADLINE_MS = 8_000
+export const CONTROL_WRITE_HIGH_WATER_BYTES = 32 * 1024
+
+export function normalizeHeartbeatSeconds(value) {
+  const seconds = Number(value)
+  if (!Number.isSafeInteger(seconds) || seconds <= 0) return 20
+  return Math.min(
+    Math.max(seconds, REGISTERED_HEARTBEAT_MIN_SECONDS),
+    REGISTERED_HEARTBEAT_MAX_SECONDS,
+  )
+}
 
 const readers = new WeakMap()
 
@@ -109,11 +127,23 @@ export function readFrame(socket, maxBytes, timeoutMs) {
   })
 }
 
-function writeFrame(socket, obj) {
+function writeFrame(socket, obj, deadlineMs = CONTROL_WRITE_DEADLINE_MS) {
   return new Promise((resolve, reject) => {
     const line = Buffer.from(`${JSON.stringify(obj)}\n`, "utf8")
-    socket.write(line, (err) => (err ? reject(err) : resolve()))
+    const timer = setTimeout(() => {
+      socket.destroy()
+      reject(new Error("control write timeout"))
+    }, deadlineMs)
+    socket.write(line, (err) => {
+      clearTimeout(timer)
+      if (err) reject(err)
+      else resolve()
+    })
   })
+}
+
+function controlWritableLength(socket) {
+  return Number(socket?.writableLength) || 0
 }
 
 export function normalizeTlsFingerprint(value) {
@@ -226,11 +256,12 @@ export async function enroll({ address, inviteCode, hostId, keys, insecureTls = 
 }
 
 export class RelayAgent {
-  constructor({ address, credentials, pluginPort, logger, insecureTls = false, tlsFingerprint = "" }) {
+  constructor({ address, credentials, pluginPort, logger, onCapabilityRenewed, insecureTls = false, tlsFingerprint = "" }) {
     this.address = address
     this.credentials = credentials
     this.pluginPort = pluginPort
     this.logger = logger
+    this.onCapabilityRenewed = onCapabilityRenewed
     this.insecureTls = insecureTls
     this.tlsFingerprint = tlsFingerprint
     this.stopped = false
@@ -276,6 +307,12 @@ export class RelayAgent {
     this.controlAbort = abort
     let socket = null
     let ping = null
+    let renewInFlight = false
+    let writeChain = Promise.resolve()
+    let queuedFrames = 0
+    let queuedBytes = 0
+    let pingQueued = false
+    let expectedPongs = 0
     try {
       socket = await connectTls(this.address, {
         insecureTls: this.insecureTls,
@@ -299,15 +336,92 @@ export class RelayAgent {
       const registered = await readFrame(socket, MAX_REGISTERED, 8000)
       if (registered?.type === "ERROR") throw new Error(registered.message || registered.code || "register failed")
       if (registered?.type !== "REGISTERED") throw new Error("expected REGISTERED")
+      const heartbeatMs = normalizeHeartbeatSeconds(registered.heartbeat) * 1000
       this.status = "online"
       this.error = ""
       this.logger?.info?.("dsh-links relay: Agent 已注册")
-      ping = setInterval(() => {
-        writeFrame(socket, { type: "PING" }).catch(() => {})
-      }, 20_000)
+      const failWrite = (reason) => {
+        socket.destroy()
+        return Promise.reject(new Error(reason))
+      }
+      const enqueue = (frame, { coalescePing = false } = {}) => {
+        if (coalescePing && pingQueued) return writeChain
+        const lineBytes = Buffer.byteLength(`${JSON.stringify(frame)}\n`, "utf8")
+        if (queuedFrames >= MAX_CONTROL_WRITE_QUEUE || queuedBytes + lineBytes > MAX_CONTROL_WRITE_BYTES) {
+          return failWrite("control write queue overflow")
+        }
+        if (controlWritableLength(socket) > CONTROL_WRITE_HIGH_WATER_BYTES) {
+          return failWrite("control write backpressure")
+        }
+        if (coalescePing) pingQueued = true
+        queuedFrames++
+        queuedBytes += lineBytes
+        writeChain = writeChain
+          .then(() => {
+            if (socket.destroyed) throw new Error("connection closed")
+            if (controlWritableLength(socket) > CONTROL_WRITE_HIGH_WATER_BYTES) {
+              throw new Error("control write backpressure")
+            }
+            return writeFrame(socket, frame)
+          })
+          .then(() => {
+            if (frame.type === "PING") expectedPongs++
+          })
+          .finally(() => {
+            queuedFrames = Math.max(0, queuedFrames - 1)
+            queuedBytes = Math.max(0, queuedBytes - lineBytes)
+            if (coalescePing) pingQueued = false
+          })
+        return writeChain.catch((err) => {
+          socket.destroy()
+          throw err
+        })
+      }
+      const maybeRenew = () => {
+        if (renewInFlight) return
+        let exp
+        try { exp = capabilityExpiry(this.credentials.capability) } catch (err) {
+          this.logger?.warn?.(`dsh-links relay: capability 续期跳过 ${err?.message ?? err}`)
+          return
+        }
+        if (exp - Math.floor(Date.now() / 1000) > CAPABILITY_RENEW_WINDOW_SECONDS) return
+        const nonce = randomBytes(16)
+        const ts = Math.floor(Date.now() / 1000)
+        const proof = signEd25519(
+          this.credentials.keys.seed,
+          this.credentials.keys.publicKey,
+          renewTranscript(this.credentials.capability, ts, nonce, challenge),
+        )
+        renewInFlight = true
+        enqueue({ type: "RENEW", ts, nonce: b64u(nonce), proof: b64u(proof) }).catch(() => {
+          renewInFlight = false
+        })
+      }
+      const tick = () => {
+        enqueue({ type: "PING" }, { coalescePing: true }).catch(() => {})
+        maybeRenew()
+      }
+      ping = setInterval(tick, heartbeatMs)
+      // Do not wait for the first heartbeat when the persisted capability is already inside the window.
+      maybeRenew()
       while (!this.stopped) {
         const frame = await readFrame(socket, MAX_OPEN, 65_000)
-        if (frame?.type === "PONG") continue
+        if (frame?.type === "PONG") {
+          if (expectedPongs < 1) throw new Error("unexpected PONG")
+          expectedPongs--
+          continue
+        }
+        if (frame?.type === "RENEWED") {
+          if (typeof frame.capability !== "string" || frame.capability.length > 4096) {
+            throw new Error("续期 capability 无效")
+          }
+          capabilityExpiry(frame.capability)
+          await this.onCapabilityRenewed?.(frame.capability)
+          this.credentials.capability = frame.capability
+          renewInFlight = false
+          this.logger?.info?.("dsh-links relay: Agent capability 已续期")
+          continue
+        }
         if (frame?.type === "ERROR") throw new Error(frame.message || frame.code || "relay error")
         if (frame?.type === "OPEN") {
           this.acceptOpen(frame)

@@ -6,11 +6,13 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { PassThrough } from "node:stream"
 import { loadOrCreateTls } from "../src/tls.js"
-import { b64u, generateHostKey, parseEnrollText, resolveEnrollText, OFFICIAL_RELAY_HOST, OFFICIAL_RELAY_TLS_SHA256 } from "../src/relay/crypto.js"
+import { b64u, capabilityExpiry, generateHostKey, parseEnrollText, renewTranscript, resolveEnrollText, OFFICIAL_RELAY_HOST, OFFICIAL_RELAY_TLS_SHA256 } from "../src/relay/crypto.js"
 import {
   detachReader,
   enroll,
   MAX_ACTIVE_STREAMS,
+  MAX_CONTROL_WRITE_QUEUE,
+  normalizeHeartbeatSeconds,
   normalizeTlsFingerprint,
   readFrame,
   RelayAgent,
@@ -66,6 +68,65 @@ test("自签 Relay 指纹不匹配时在发送协议帧前失败", async (t) => 
   assert.equal(protocolBytes, 0)
 })
 
+test("REGISTERED heartbeat 被限制在安全范围内", () => {
+  assert.equal(normalizeHeartbeatSeconds(0), 20)
+  assert.equal(normalizeHeartbeatSeconds("bad"), 20)
+  assert.equal(normalizeHeartbeatSeconds(1), 1)
+  assert.equal(normalizeHeartbeatSeconds(Number.MAX_SAFE_INTEGER), 300)
+})
+
+test("capability 在 7 天窗口内按 REGISTERED heartbeat 续期并回调持久化", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "dsh-relay-renew-"))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const material = await loadOrCreateTls(dir)
+  const oldCapability = `h.${b64u(Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600 })))}.s`
+  const newCapability = `h.${b64u(Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 30 * 86400 })))}.s`
+  const challenge = Buffer.alloc(32, 7)
+  const keys = generateHostKey()
+  let frames = ""
+  let sawRenew = false
+  let resolveRenew
+  const renewed = new Promise((resolve) => { resolveRenew = resolve })
+  const server = createTlsServer({ key: material.key, cert: material.cert }, (socket) => {
+    socket.write(`${JSON.stringify({ type: "HELLO", challenge: b64u(challenge) })}\n`)
+    socket.on("data", (chunk) => {
+      frames += chunk.toString("utf8")
+      for (;;) {
+        const nl = frames.indexOf("\n")
+        if (nl < 0) break
+        const frame = JSON.parse(frames.slice(0, nl))
+        frames = frames.slice(nl + 1)
+        if (frame.type === "REGISTER") {
+          socket.write(`${JSON.stringify({ type: "REGISTERED", generation: 1, heartbeat: 1 })}\n`)
+        } else if (frame.type === "RENEW") {
+          sawRenew = true
+          socket.write(`${JSON.stringify({ type: "RENEWED", capability: newCapability })}\n`)
+        } else if (frame.type === "PING") {
+          socket.write('{"type":"PONG"}\n')
+        }
+      }
+    })
+  })
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve))
+  t.after(() => server.close())
+  const agent = new RelayAgent({
+    address: `127.0.0.1:${server.address().port}`,
+    credentials: { keys, capability: oldCapability, generation: 1 },
+    pluginPort: 1,
+    insecureTls: true,
+    tlsFingerprint: material.fingerprint,
+    onCapabilityRenewed: (capability) => resolveRenew(capability),
+  })
+  const loop = agent.registerLoop().catch(() => {})
+  assert.equal(await renewed, newCapability)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(sawRenew, true)
+  assert.equal(capabilityExpiry(agent.credentials.capability), capabilityExpiry(newCapability))
+  agent.stop()
+  await loop
+  assert.deepEqual(renewTranscript(oldCapability, 1, Buffer.alloc(16), challenge).subarray(0, 12), Buffer.from("DLR/1\0RENEW\0"))
+})
+
 test("控制连接在 HELLO 前失败也会被清理", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "dsh-relay-register-"))
   t.after(() => rmSync(dir, { recursive: true, force: true }))
@@ -93,6 +154,32 @@ test("控制连接在 HELLO 前失败也会被清理", async (t) => {
   await Promise.race([peerClosed, new Promise((resolve) => setTimeout(resolve, 500))])
   assert.equal(agent.control, null)
   assert.equal(didPeerClose, true)
+})
+
+test("未请求的 PONG 会断开，写队列有硬上限", async (t) => {
+  assert.equal(MAX_CONTROL_WRITE_QUEUE, 8)
+  const dir = mkdtempSync(join(tmpdir(), "dsh-relay-pong-"))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const material = await loadOrCreateTls(dir)
+  const server = createTlsServer({ key: material.key, cert: material.cert }, (socket) => {
+    socket.write(`${JSON.stringify({ type: "HELLO", challenge: b64u(Buffer.alloc(32, 3)) })}\n`)
+    socket.on("data", (chunk) => {
+      if (chunk.toString("utf8").includes('"REGISTER"')) {
+        socket.write(`${JSON.stringify({ type: "REGISTERED", generation: 1, heartbeat: 20 })}\n`)
+        socket.write('{"type":"PONG"}\n')
+      }
+    })
+  })
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve))
+  t.after(() => server.close())
+  const agent = new RelayAgent({
+    address: `127.0.0.1:${server.address().port}`,
+    credentials: { keys: generateHostKey(), capability: "x", generation: 1 },
+    pluginPort: 1,
+    insecureTls: true,
+    tlsFingerprint: material.fingerprint,
+  })
+  await assert.rejects(agent.registerLoop(), /unexpected PONG/)
 })
 
 test("OPEN 并发有硬上限、拒绝重复 stream，stop 关闭全部桥接", async () => {

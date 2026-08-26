@@ -487,6 +487,29 @@ async function qrPng(res, config, state, certFingerprint, via = "lan") {
   }
 }
 
+const PAIR_REQUEST_CACHE_MAX = 256
+const PAIR_REQUEST_CACHE_TTL_MS = 15 * 60 * 1000
+
+function rememberPairRequest(rt, requestId, fingerprint, body) {
+  if (!requestId) return
+  const cache = rt.pairingRequests
+  cache.set(requestId, { fingerprint, body, expiresAt: Date.now() + PAIR_REQUEST_CACHE_TTL_MS })
+  while (cache.size > PAIR_REQUEST_CACHE_MAX) cache.delete(cache.keys().next().value)
+}
+
+function cachedPairRequest(rt, requestId, fingerprint) {
+  if (!requestId) return null
+  const cache = rt.pairingRequests
+  const hit = cache.get(requestId)
+  if (!hit) return null
+  if (Date.now() >= hit.expiresAt) {
+    cache.delete(requestId)
+    return null
+  }
+  if (hit.fingerprint !== fingerprint) return { conflict: true }
+  return hit.body
+}
+
 async function handlePair(req, res, config, state, stateFile, rt) {
   if (!requireJsonWrite(req, res)) return
   const body = await readJson(req, res)
@@ -495,6 +518,20 @@ async function handlePair(req, res, config, state, stateFile, rt) {
   const code = String(body.code ?? "").trim()
   const deviceName = (String(body.deviceName ?? "手机").trim().slice(0, 32) || "手机")
   const via = String(body.via ?? "").trim() === "relay" ? "relay" : "lan"
+  const suppliedRequestId = String(body.requestId ?? "").trim()
+  if (suppliedRequestId && !/^[A-Za-z0-9._:-]{8,128}$/.test(suppliedRequestId)) {
+    return json(res, 400, { error: "requestId 无效" })
+  }
+  // App reuses this identifier when LAN fails after the request may have
+  // reached the host. The fingerprint intentionally excludes `via`: the
+  // same logical pair may retry through Relay. Legacy clients without the
+  // field deliberately do not enter the replay cache, preserving one-time
+  // pairing semantics for older clients.
+  const requestFingerprint = `${code}\n${deviceName}`
+  const requestId = suppliedRequestId
+  const cached = cachedPairRequest(rt, requestId, requestFingerprint)
+  if (cached?.conflict) return json(res, 409, { error: "requestId 已用于另一配对请求" })
+  if (cached) return json(res, 200, cached)
   // 局域网按对端 IP 隔离限流；经 Relay 的所有远端都会表现为本地回环地址，
   // 无法拿到真实对端 IP，因此把 via 纳入 key，让 Relay 尝试共享一个显式桶，
   // 并叠加 per-challenge / global 预算兜底（真 IP 隔离需 Relay 协议透传对端）。
@@ -538,7 +575,7 @@ async function handlePair(req, res, config, state, stateFile, rt) {
   state.devices.push(device)
   consumePairingCode(state) // 配对码一次性：成功后立即失效
   saveState(stateFile, state)
-  json(res, 200, {
+  const result = {
     ok: true,
     token,
     deviceId,
@@ -546,7 +583,9 @@ async function handlePair(req, res, config, state, stateFile, rt) {
     urls: lanUrls(config).urls,
     pending: requireConfirm,
     pendingExpiresAt: requireConfirm ? device.pendingExpiresAt : undefined,
-  })
+  }
+  rememberPairRequest(rt, requestId, requestFingerprint, result)
+  json(res, 200, result)
 }
 
 const MAX_ZSTD_OUTPUT_BYTES = 32 * 1024 * 1024
@@ -723,6 +762,7 @@ function createRuntime() {
     pendingApprovals: new Map(),
     reasoningCache: new Map(),
     deviceRequests: new Map(),
+    pairingRequests: new Map(),
   }
 }
 
@@ -1565,6 +1605,17 @@ export function apply(ctx, config) {
         routeSecret: state.relay.routeSecret,
         capability: state.relay.capability,
         generation: state.relay.generation || 1,
+      },
+      onCapabilityRenewed: (capability) => {
+        if (!state.relay) throw new Error("Relay 配置已不存在")
+        const previous = state.relay.capability
+        state.relay.capability = capability
+        try {
+          saveState(stateFile, state)
+        } catch (err) {
+          state.relay.capability = previous
+          throw err
+        }
       },
       pluginPort: config.port,
       logger: ctx.logger,

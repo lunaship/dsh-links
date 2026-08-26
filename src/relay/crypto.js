@@ -91,6 +91,34 @@ export function registerTranscript(capability, ts, nonce, challenge) {
   ])
 }
 
+export function renewTranscript(capability, ts, nonce, challenge) {
+  return Buffer.concat([
+    Buffer.from("DLR/1"),
+    Buffer.from([0]),
+    Buffer.from("RENEW"),
+    Buffer.from([0]),
+    sha256(Buffer.from(String(capability), "utf8")),
+    be64(ts),
+    Buffer.from(nonce),
+    Buffer.from(challenge),
+  ])
+}
+
+/** Return the signed capability expiry, rejecting malformed JWS payloads. */
+export function capabilityExpiry(capability) {
+  const parts = String(capability ?? "").split(".")
+  if (parts.length !== 3 || !parts[1]) throw new Error("capability 无效")
+  let payload
+  try {
+    payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"))
+  } catch {
+    throw new Error("capability 无效")
+  }
+  const exp = Number(payload?.exp)
+  if (!Number.isSafeInteger(exp) || exp <= 0) throw new Error("capability exp 无效")
+  return exp
+}
+
 export function macTranscript(op, routeId, streamId, generation, ts, nonce, challenge) {
   const parts = [
     Buffer.from("DLR/1"),

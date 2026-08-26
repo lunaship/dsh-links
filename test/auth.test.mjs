@@ -219,7 +219,7 @@ test("无配对码时配对失败", async () => {
   assert.equal(r.status, 401)
 })
 
-test("配对成功返回 deviceId + token，配对码一次性，重放失败", async () => {
+test("配对成功返回 deviceId + token，重复 requestId 只复用原设备", async () => {
   const info = await callRoute(pairInfoRoute())
   assert.equal(info.status, 200)
   const code = info.body.pairingCode
@@ -228,7 +228,7 @@ test("配对成功返回 deviceId + token，配对码一次性，重放失败", 
   const r = await proxyFetch(`/dsh-link/pair`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ code, deviceName: "测试机" }),
+    body: JSON.stringify({ code, deviceName: "测试机", requestId: "pair-test-replay-1" }),
   })
   assert.equal(r.status, 200)
   const body = await r.json()
@@ -236,10 +236,35 @@ test("配对成功返回 deviceId + token，配对码一次性，重放失败", 
   assert.ok(body.deviceId && body.deviceId.startsWith("dev-"))
   globalThis.__testDevice = { token: body.token, deviceId: body.deviceId }
 
+  const replaySame = await proxyFetch(`/dsh-link/pair`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code, deviceName: "测试机", via: "relay", requestId: "pair-test-replay-1" }),
+  })
+  assert.equal(replaySame.status, 200)
+  assert.deepEqual(await replaySame.json(), body)
+
   const replay = await proxyFetch(`/dsh-link/pair`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ code, deviceName: "测试机2" }),
+  })
+  assert.equal(replay.status, 401)
+})
+
+test("没有 requestId 的旧客户端重放仍被一次性配对码拒绝", async () => {
+  const info = await callRoute(pairInfoRoute())
+  const body = { code: info.body.pairingCode, deviceName: "旧客户端" }
+  const first = await proxyFetch(`/dsh-link/pair`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  assert.equal(first.status, 200)
+  const replay = await proxyFetch(`/dsh-link/pair`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
   })
   assert.equal(replay.status, 401)
 })
