@@ -2,10 +2,10 @@
  * dsh-links 认证核心（纯逻辑，可 node --test 单测）
  * ============================================================
  * 凭据分层：
- *   配对码（一次性，内存明文 + 落盘 salt/hash）→ deviceId + deviceToken（App Keystore）
+ *   配对码（一次性，仅本进程内存）→ deviceId + deviceToken（App Keystore）
  *
  * 安全约定：
- *   - 配对码明文不落盘
+ *   - 配对码明文与 salt/hash 都不落盘（6 位码哈希可离线穷举）
  *   - 失败限流按客户端 IP 隔离，避免单 IP 全局锁死配对
  *   - 同一配对码跨 IP 总失败次数封顶后作废（防分布式猜测）
  *   - 全局预算 + 短冷却，降低爆破速率
@@ -170,33 +170,19 @@ export function getLivePairingCode(state) {
   return liveCodes.get(state) ?? null
 }
 
-/** 启动时把旧版明文 pairing.code 迁到内存 + hash。 */
+/**
+ * 启动时丢掉任何落盘配对材料。
+ * 6 位码的 salt/hash 可离线穷举；明文 code 更是直接凭证。配对码只活在本进程内存。
+ */
 export function hydratePairing(state) {
-  const p = state.pairing ?? {}
-  // 丢弃旧版全局 pairingRate（已改为 per-client pairingRates）
   if (state.pairingRate) delete state.pairingRate
-  if (p.code) {
-    const code = String(p.code)
-    liveCodes.set(state, code)
-    const salt = crypto.randomBytes(16).toString("hex")
-    state.pairing = {
-      salt,
-      codeHash: hashPairing(salt, code).toString("hex"),
-      expiresAt: p.expiresAt,
-      consumed: Boolean(p.consumed),
-    }
-  }
+  liveCodes.delete(state)
+  state.pairing = {}
 }
 
-/** 落盘用的 pairing 投影：不含明文 code。 */
-export function persistablePairing(pairing) {
-  if (!pairing?.codeHash) return {}
-  return {
-    salt: pairing.salt,
-    codeHash: pairing.codeHash,
-    expiresAt: pairing.expiresAt,
-    consumed: Boolean(pairing.consumed),
-  }
+/** 配对码不落盘：盐/哈希/明文都不写入 state.json。 */
+export function persistablePairing(_pairing) {
+  return {}
 }
 
 /** 生成一次性配对码（旧码立即失效）。不重置限流计数。 */
@@ -233,23 +219,17 @@ export function verifyPairingCode(state, code, clientKey = "unknown") {
   if (Date.now() < (global.cooldownUntil ?? 0)) return { ok: false, error: "尝试过于频繁，请稍后再试" }
   const p = state.pairing ?? {}
   const live = getLivePairingCode(state)
-  if (!p.codeHash && !live) return { ok: false, error: "尚未生成配对码" }
   if (p.consumed) return { ok: false, error: "配对码已使用" }
+  // 只认本进程内存中的码。落盘 salt/hash 即使仍在旧 state.json 里也不得用来验证。
+  if (!live || !p.codeHash) return { ok: false, error: "尚未生成配对码" }
   if (Date.now() > (p.expiresAt ?? 0)) return { ok: false, error: "配对码已过期" }
   const rate = pairingRateFor(state, clientKey)
   if (Date.now() < (rate.cooldownUntil ?? 0)) return { ok: false, error: "尝试过于频繁，请稍后再试" }
 
   const offered = String(code ?? "")
-  let match = false
-  if (p.salt && p.codeHash) {
-    const expected = Buffer.from(String(p.codeHash), "hex")
-    const actual = hashPairing(p.salt, offered)
-    match = safeEqualBuf(expected, actual)
-  } else if (live) {
-    const a = Buffer.from(live.padStart(6, "0"))
-    const b = Buffer.from(offered.padStart(6, "0"))
-    match = a.length === b.length && safeEqualBuf(a, b)
-  }
+  const expected = Buffer.from(String(p.codeHash), "hex")
+  const actual = p.salt ? hashPairing(p.salt, offered) : Buffer.alloc(0)
+  const match = safeEqualBuf(expected, actual)
   if (!match) {
     rate.failCount = (rate.failCount ?? 0) + 1
     if (rate.failCount >= PAIR_FAIL_LIMIT) {

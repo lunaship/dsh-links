@@ -8,7 +8,7 @@ If you use an intranet-tunnelling product yourself, treat it as an **experimenta
 
 ## Threat model (short)
 
-- Pairing yields a long-lived device token (`x-dsh-link-token`). Anyone with an **active** token can call the mobile API on that host. Optional host confirmation keeps a newly paired token inert until you approve it on the「手机连接」panel.
+- Pairing yields a long-lived device token (`x-dsh-link-token`). Anyone with an **active** token can call the mobile API on that host. Optional host confirmation keeps a newly paired token inert until you approve it on the「手机连接」panel. Active pairing codes live only in process memory; `state.json` must not contain a recoverable pairing code.
 - Port `18640` is an HTTPS reverse proxy with self-signed TLS. On LAN, the app **must pin the certificate fingerprint from the QR / pair-info payload before sending the pairing code**. A first connection that submits the code over an unpinned TLS session can be MITM'd on the same LAN.
 - Private-network requests fail closed if the certificate fingerprint is missing or does not match. After a successful pair, the app should persist that pin (Keystore / prefs) for later requests.
 - The loopback/same-origin fence on the desktop panel does not stop another process running as the same user from calling `127.0.0.1`. If the host is compromised, this plugin cannot save you; run dsh as a least-privilege user and keep `18640` off untrusted networks.

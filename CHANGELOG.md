@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## dsh-links 0.1.0-beta.9 — 2026-08-26
+
+- 安全：配对码只留在进程内存，`state.json` 不再写入 salt/hash。旧版落盘哈希可离线穷举 6 位码；升级后重启即作废当前二维码，已配对设备不受影响。
+- 安全：18640 HTTPS 明确最低 TLS 1.2；手机端 prompt 图片只接受 png/jpeg/webp/gif。
+- Android 客户端 `0.5.0-beta.14`：Markdown 图片拒绝十进制/十六进制/短格式 IP；Relay HTTP/1.1 客户端拒绝请求行与头里的 CR/LF。
+
 ## dsh-links 0.1.0-beta.8 — 2026-08-26
 
 - 官方 Relay 只需接入码即可接入：主机与 TLS 指纹预填，不再要求手抄指纹或粘贴 enroll URI；已接入主机重连会复用已存的 TLS pin。

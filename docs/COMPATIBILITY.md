@@ -14,15 +14,15 @@ published.
 | Component | Source baseline | Published / released status | Verified compatibility status |
 |---|---|---|---|
 | DSH | `0.1.0-rc.8` | Upstream dependency; release status is not managed by this project | Used by the verified LAN combination below |
-| Plugin `dsh-links` | package `0.1.0-beta.8`; source tag `v0.1.0-beta.8`; current `main` contains unpublished changes | npm registry status is not asserted here; verify it with `npm view` in the release environment | LAN combination below is the current documented verification |
-| Android `dsh-links-app` | `versionName 0.5.0-beta.13`; source tag `v0.5.0-beta.11`; current `main` contains unpublished changes | APK release status is not asserted here; install only an official signed release whose version and SHA-256 are published with it | LAN combination below is the current documented verification |
+| Plugin `dsh-links` | package `0.1.0-beta.9`; source tag `v0.1.0-beta.9` | npm registry status is not asserted here; verify it with `npm view` in the release environment | LAN combination below is the current documented verification |
+| Android `dsh-links-app` | `versionName 0.5.0-beta.14`; source tag `v0.5.0-beta.14` | APK release status is not asserted here; install only an official signed release whose version and SHA-256 are published with it | LAN combination below is the current documented verification |
 | Relay `dsh-links-relay` | Current `main` contains unpublished changes; no release tag | No public release or deployment status is asserted here | DLR/1 implementation is private, invite-only test scope only |
 
 ## Verified combination and scope
 
 | DSH | Plugin | Android App | Relay | Verified path |
 |---|---|---|---|---|
-| `0.1.0-rc.8` | `0.1.0-beta.8` | `0.5.0-beta.13` | not required | Trusted LAN; the documented Beta combination |
+| `0.1.0-rc.8` | `0.1.0-beta.9` | `0.5.0-beta.14` | not required | Trusted LAN; the documented Beta combination |
 
 The row above is a LAN compatibility statement. It is not a claim that the
 same source snapshots have passed a public production deployment, a public

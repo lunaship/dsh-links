@@ -413,6 +413,8 @@ class HttpBodyError extends Error {
 }
 
 const PROMPT_BODY_LIMIT = 16 * 1024 * 1024
+const PROMPT_IMAGE_DATA_LIMIT = 4 * 1024 * 1024
+const PROMPT_IMAGE_MEDIA_TYPES = new Set(["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"])
 
 function readBody(req, limit = 64 * 1024) {
   return new Promise((resolve, reject) => {
@@ -1486,9 +1488,15 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
       const images = Array.isArray(body.images) ? body.images : []
       const content = []
       for (const img of images.slice(0, 4)) {
-        const mediaType = String(img.mediaType ?? "").trim()
+        const mediaType = String(img.mediaType ?? "").trim().toLowerCase()
         const data = String(img.data ?? "").trim()
         if (!mediaType || !data) continue
+        if (!PROMPT_IMAGE_MEDIA_TYPES.has(mediaType)) {
+          return json(res, 400, { error: "图片类型不允许" })
+        }
+        if (data.length > PROMPT_IMAGE_DATA_LIMIT) {
+          return json(res, 413, { error: "图片过大" })
+        }
         content.push({ type: "image", mediaType, data })
       }
       if (!text && content.length === 0) return json(res, 400, { error: "消息内容不能为空" })
@@ -1929,7 +1937,7 @@ export function apply(ctx, config) {
   let muxBridge = null
   const ready = loadOrCreateTls(ensureStateDir(config)).then((tls) => {
     tlsHolder.fingerprint = tls.fingerprint
-    proxy = createHttpsServer({ key: tls.key, cert: tls.cert }, requestHandler)
+    proxy = createHttpsServer({ key: tls.key, cert: tls.cert, minVersion: "TLSv1.2" }, requestHandler)
     proxy.on("error", (err) => {
       ctx.logger.warn(`dsh-links: proxy error: ${err?.message ?? err}`)
     })

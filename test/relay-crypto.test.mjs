@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { readFile } from "node:fs/promises"
 import test from "node:test"
 import {
   b64u,
@@ -12,43 +13,7 @@ import {
   displayRelayHost,
 } from "../src/relay/crypto.js"
 
-const vectors = {
-  enroll: {
-    challenge: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
-    hostId: "host-7f4e-vectors",
-    hostPublicKey: "nYVamYbiyDILpl3yUC1oQE8OZinJavHOcSsjsNjPK1Q",
-    hostSeed: "BKXnLn4kw9Yr1rJI_MQtoFVQUZrN09Bk41NMCmNPDpk",
-    inviteCode: "test-invite-code-for-vectors",
-    nonce: "qrvM3e7_ABEiM0RVZneImQ",
-    proof: "PWge4Q96yApZ4RN0W1UBPg682JOZLms8YVTJhFBZa4_YYgN5jK-zJlXwMNVR_hryJk9sfko59uTikl9fwSOICA",
-    ts: "1787300000",
-  },
-  register: {
-    capability: "eyJhbGciOiJFZERTQSIsInR5cCI6IkRMUi1DQVAiLCJ2IjoxfQ.eyJpc3MiOiJkc2gtbGlua3MtcmVsYXkiLCJqdGkiOiJBUUlEQkFVR0J3Z0pDZ3NNRFE0UEVBIiwiaG9zdCI6Imhvc3QtN2Y0ZS12ZWN0b3JzIiwicm91dGUiOiJBUUlEQkFVR0J3Z0pDZ3NNRFE0UEVBIiwiaG9zdF9wayI6Im5ZVmFtWWJpeURJTHBsM3lVQzFvUUU4T1ppbkphdkhPY1NzanNOalBLMVEiLCJnZW5lcmF0aW9uIjoxLCJtYXhfc3RyZWFtcyI6OCwiaWF0IjoxNzg3MzAwMDAwLCJleHAiOjE3ODk4OTIwMDB9.x3x5XHsSbognh14Ok0q9jRn394xjTyKfaRmOHxDfWCgfDMVNwLw4S1rtC-cFldbtTp56AouasXoBvurm1gYHCw",
-    nonce: "qrvM3e7_ABEiM0RVZneImQ",
-    proof: "F6fhfdwwGZzKoteTJXPI9RmEO4sgVyCCHknxwwsKyfLFjLViXg1ujuM7zJ2yVJuUe8EB8IgTrACGM2BV4K6fAg",
-    ts: "1787300000",
-  },
-  hmac: {
-    routeSecret: "Qez-v5W9wsdVyezjjIIEvTD6BHLNoT4HEmMICmEhX8A",
-    connect: {
-      challenge: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
-      mac: "3KPdYjS0C94YeavYpkmCspJ1SYRA-1q27H2Ie4448CY",
-      nonce: "qrvM3e7_ABEiM0RVZneImQ",
-      routeId: "AQIDBAUGBwgJCgsMDQ4PEA",
-      ts: "1787300000",
-    },
-    bind: {
-      challenge: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
-      generation: "1",
-      mac: "q5-KIZ0HPHmgL2NZZWpit4pQgf2hYwcrrNyudONezPU",
-      nonce: "qrvM3e7_ABEiM0RVZneImQ",
-      routeId: "AQIDBAUGBwgJCgsMDQ4PEA",
-      streamId: "EA8ODQwLCgkIBwYFBAMCAQ",
-      ts: "1787300000",
-    },
-  },
-}
+const vectors = JSON.parse(await readFile(new URL("../testdata/dlr1-vectors.json", import.meta.url), "utf8"))
 
 test("ENROLL proof matches DLR/1 vectors", () => {
   const e = vectors.enroll
@@ -66,7 +31,7 @@ test("REGISTER proof matches DLR/1 vectors", () => {
 })
 
 test("CONNECT/BIND MAC matches DLR/1 vectors", () => {
-  const secret = unb64u(vectors.hmac.routeSecret)
+  const secret = unb64u(vectors.hkdf.routeSecret)
   const c = vectors.hmac.connect
   assert.equal(b64u(connectMac(secret, unb64u(c.routeId), Number(c.ts), unb64u(c.nonce), unb64u(c.challenge))), c.mac)
   const b = vectors.hmac.bind

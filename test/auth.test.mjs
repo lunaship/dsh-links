@@ -331,6 +331,20 @@ test("带 token 的 GET/POST revoke、devices → 404", async () => {
   }
 })
 
+test("prompt 拒绝非图片 mediaType", async () => {
+  const token = globalThis.__testDevice.token
+  const r = await proxyFetch(`/dsh-link/mobile/sessions/sess-1/prompt`, {
+    method: "POST",
+    headers: tokenHeaders(token),
+    body: JSON.stringify({
+      text: "hi",
+      images: [{ mediaType: "image/svg+xml", data: "PHN2Zy8+" }],
+    }),
+  })
+  assert.equal(r.status, 400)
+  assert.match((await r.json()).error, /图片类型不允许/)
+})
+
 test("mobile GET /devices 列出已配对设备", async () => {
   const token = globalThis.__testDevice.token
   const r = await proxyFetch(`/dsh-link/mobile/devices`, {
@@ -605,7 +619,30 @@ test("state.json 权限与不含明文 code", () => {
   assert.equal(tlsStat.mode & 0o777, 0o600)
   const parsed = JSON.parse(readFileSync(file, "utf8"))
   assert.equal(parsed.pairing?.code, undefined)
+  assert.equal(parsed.pairing?.codeHash, undefined)
+  assert.equal(parsed.pairing?.salt, undefined)
   assert.ok(!JSON.stringify(parsed).includes('"code":'))
+})
+
+test("落盘 pairing hash 不能在无内存码时通过校验", async () => {
+  const { hydratePairing, newPairingCode, persistablePairing, verifyPairingCode } = await import("../src/auth.js")
+  const state = {}
+  const code = newPairingCode(state, 600)
+  assert.equal(verifyPairingCode(state, code).ok, true)
+  assert.deepEqual(persistablePairing(state.pairing), {})
+
+  const stolen = {
+    pairing: {
+      salt: state.pairing.salt,
+      codeHash: state.pairing.codeHash,
+      expiresAt: state.pairing.expiresAt,
+      consumed: false,
+    },
+  }
+  hydratePairing(stolen)
+  const fromDisk = verifyPairingCode(stolen, code)
+  assert.equal(fromDisk.ok, false)
+  assert.match(fromDisk.error, /尚未生成配对码/)
 })
 
 test("吊销设备后 token 立即失效", async () => {
