@@ -1,12 +1,17 @@
 # dsh-links
 
-DSH Links 是 [DeepSeek Harness](https://github.com/deepseek-ai) 的 Android 配套方案：让运行在电脑、家中主机或远程服务器上的 DSH，在手机上拥有一个经过配对的原生入口。
+<p align="center">
+  <strong>把 DeepSeek Harness 带到手机上</strong><br>
+  让运行在电脑、家中主机或远程服务器上的 DSH，拥有一个经过配对的原生 Android 入口。
+</p>
 
-**Beta** · **Android only** · **Trusted LAN** · **Relay 内测（需接入码）** · **Unofficial**
+<p align="center"><strong>Beta</strong> · <strong>Android only</strong> · <strong>Trusted LAN</strong> · <strong>Relay 内测（需接入码）</strong> · <strong>Unofficial</strong></p>
 
-![DSH Links 的电脑端「手机连接」面板：二维码、配对码、TLS 指纹、可访问地址与已配对设备。动态数据已脱敏。](docs/images/phone-connection-sanitized.png)
+<p align="center">
+  <img src="docs/images/dsh-links-system-illustration.png" width="900" alt="电脑端 DSH 通过配对链路连接到 Android App 的示意图。">
+</p>
 
-*电脑端「手机连接」局域网标签页。截图中的二维码、配对码、证书指纹、地址和设备信息均已脱敏，不含接入码。*
+<p align="center"><sub>电脑继续运行 DSH、工具和工作区；手机负责查看会话、发送消息、接收实时事件和处理审批。</sub></p>
 
 ## 这是什么
 
@@ -36,15 +41,26 @@ Android App 当前最低支持 Android 8.0（API 26）。源码不在本仓库�
 
 局域网不需要接入码。远端 Relay 目前不是公开自助能力：只有拿到维护者发放的接入码，才能在「远端连接」里把电脑接入 Relay，并再扫第二张云端码。
 
-## 界面预览
+## 配对体验
+
+<table>
+  <tr>
+    <td width="66%" valign="top"><img src="docs/images/phone-connection-sanitized.png" alt="DSH Links 电脑端的手机连接面板，展示二维码、一次性配对码、TLS 指纹、可访问地址和已配对设备。"><br><sub><b>电脑端配对面板</b>：生成一次性配对信息，确认可访问地址，并管理已配对设备。</sub></td>
+    <td width="34%" valign="top"><img src="docs/images/android-device-list-sanitized.png" alt="DSH Links Android App 的我的设备页面，展示在线设备、局域网连接状态和添加设备入口。"><br><sub><b>Android 设备入口</b>：查看连接状态，扫码或手动添加设备。</sub></td>
+  </tr>
+</table>
+
+*电脑端截图中的二维码、配对码、证书指纹、地址和设备信息均已脱敏，不含 Relay 接入码。*
+
+## Android App 界面
 
 ### 从配对到工作区
 
 <table>
   <tr>
     <td width="33%" valign="top"><img src="docs/images/android-splash.jpg" alt="DSH Links Android App 启动页。"><br><sub><b>启动</b>：进入 DSH Links。</sub></td>
-    <td width="33%" valign="top"><img src="docs/images/android-device-list-sanitized.png" alt="Android App 的我的设备页面，展示在线设备、局域网连接状态和添加设备入口。"><br><sub><b>设备管理</b>：查看在线状态，扫码或手动添加设备。</sub></td>
-    <td width="33%" valign="top"><img src="docs/images/android-navigation-drawer.jpg" alt="DSH Links Android App 的工作区导航抽屉。"><br><sub><b>工作区</b>：新建会话、切换工作区与进入设置。</sub></td>
+    <td width="33%" valign="top"><img src="docs/images/android-navigation-drawer.jpg" alt="DSH Links Android App 的工作区导航抽屉。"><br><sub><b>工作区导航</b>：新建会话、切换工作区与进入设置。</sub></td>
+    <td width="33%" valign="top"><img src="docs/images/android-settings-light.jpg" alt="DSH Links Android App 的浅色设置页面，展示通用设置、语言、外观和繁忙时发送行为。"><br><sub><b>设置</b>：调整语言、外观与会话默认行为。</sub></td>
   </tr>
 </table>
 
@@ -115,8 +131,6 @@ dsh plugin --profile web add /path/to/dsh-links
 - [Tailscale / Cloudflare Tunnel / DSH Links Relay 说明](REMOTE_ACCESS.md)
 - 不要把 `18640` 直接做路由器端口转发。
 - **DSH Links Relay 正在内测。** 电脑和手机都主动连接 Relay；Relay 只实时转发已配对设备的请求与响应，不持久化会话内容、文件、工作区或设备内容。没有维护者发放的接入码无法接入；请不要在 issue、截图或 PR 里张贴接入码。云端二维码本身内含 Relay 路由凭据（`routeSecret`），与接入码同等敏感：请勿截图、录屏或投屏分享；怀疑泄露时立即在电脑面板点「断开」作废该凭据（重新接入需要新的接入码）。
-
-![电脑与手机经配对握手相连的示意。](docs/images/dsh-links-system-illustration.png)
 
 ## 开发
 
