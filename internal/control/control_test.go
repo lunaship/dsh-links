@@ -221,8 +221,8 @@ func TestConcurrentReenrollDistinctGenerations(t *testing.T) {
 		}
 		seenRoute[route] = struct{}{}
 	}
-	if ok < 2 {
-		t.Fatalf("concurrent enrolls succeeded=%d, want at least 2 (errs=%v)", ok, errs)
+	if ok != len(invites) {
+		t.Fatalf("concurrent enrolls succeeded=%d, want %d (errs=%v)", ok, len(invites), errs)
 	}
 	host, err := st.GetHostByID("race-host")
 	if err != nil {

@@ -2,6 +2,9 @@
 
 本指南让你在当前 Beta 期间，用自己管理的网络路径从远端访问 `dsh-links`。这不是已发布的原生云端连接，也不改变插件的配对、设备 Token 与吊销机制。
 
+边界：公开支持仅为可信局域网；Relay 仅限维护者发放接入码的私测；
+Tailscale 与 Cloudflare Tunnel 均为用户自管的实验路径，不属于 Beta 支持承诺。
+
 不要直接把 `18640` 做路由器端口转发或映射到公网。
 
 | 方式 | 适合什么 | 公网入口 | 当前 App 连接地址 |
@@ -9,7 +12,7 @@
 | Tailscale | 个人设备、自己的手机 | 无 | `https://100.x.y.z:18640` |
 | Cloudflare Tunnel | 自己的域名、需要跨网络直连 App | 有，受你的域名和 Tunnel 管理 | `https://dsh.example.com` |
 
-## 方式一：Tailscale（推荐）
+## 方式一：Tailscale（实验性个人路径）
 
 这条路径是私网覆盖网络，不需要开放路由器端口。
 
@@ -68,14 +71,16 @@ Cloudflare 边缘向手机提供受系统 CA 信任的证书；插件仍然用�
 
 当前 Android App 不会执行 Cloudflare Access 的浏览器登录，也不能附带 `Cf-Access-Jwt-Assertion`。因此，若在 Tunnel ingress 中启用 `originRequest.access.required: true`，App 的配对和运行请求都会被拒绝。
 
-不要把 Access 配置误认为已经可用。原生 Relay 会把远端身份认证、访问控制与设备 Token 协调为一个完整流程；在它完成前，Cloudflare Tunnel 只适合你明确接受其公网边界的个人实验部署。
+不要把 Access 配置误认为已经可用。Cloudflare Tunnel 与 Relay 私测是两条
+独立路径；Cloudflare Tunnel 只适合你明确接受其公网边界的个人实验部署。
 
-## 计划中的原生 Relay
+## DSH Links Relay（维护者私测）
 
 ```
 手机 App  ⇄  你的 VPS Relay  ⇄  电脑 local-relay  ⇄  127.0.0.1:18640
 ```
 
-`local-relay` 从电脑主动连向你的 Relay，Relay 无法主动打开电脑端口。手机通过 Relay 请求指定的已配对主机；Relay 只承载经过远端认证和设备 Token 校验的会话。设备吊销会同时切断后续远端请求。
+`local-relay` 从电脑主动连向 Relay，Relay 无法主动打开电脑端口。手机通过 Relay 请求指定的已配对主机；Relay 只承载经过远端认证和设备 Token 校验的会话。设备吊销会同时切断后续远端请求。
 
-这套协议、Relay 实现、安装包与端到端验收尚未发布；当前不要把它当作可下载或可配置的功能。
+原生 Relay 实现位于本仓库，但当前仅限维护者发放接入码的私测，不是公开自助服务，也不是本指南中两条实验性自管路径的默认替代。公开支持仍是可信局域网；三仓版本基线、发布状态和已验证组合见
+[`dsh-links/docs/COMPATIBILITY.md`](https://github.com/lunaship/dsh-links/blob/main/docs/COMPATIBILITY.md)。

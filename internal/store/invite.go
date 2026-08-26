@@ -72,6 +72,14 @@ func isRetryableEnroll(err error) bool {
 // prior route for a rebind (nil on first enroll). Any validation or database
 // failure leaves the invite reusable.
 func (s *Store) EnrollHost(code string, host *Host, materialize func(generation int64) (*EnrollMaterial, error)) (replacedRouteID []byte, err error) {
+	// A deferred SQLite transaction reads the invite/host rows before it
+	// writes them. With multiple database/sql connections, concurrent
+	// enrollments can therefore hold shared locks and deadlock when they all
+	// attempt the read-to-write promotion. Enrollment is infrequent and must
+	// assign a unique generation, so serialize this transaction in-process.
+	s.enrollMu.Lock()
+	defer s.enrollMu.Unlock()
+
 	var last error
 	for attempt := 0; attempt < enrollCASAttempts; attempt++ {
 		replacedRouteID, last = s.enrollHostOnce(code, host, materialize)

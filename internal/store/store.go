@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -12,6 +13,15 @@ import (
 
 type Store struct {
 	db *sql.DB
+
+	// SQLite transactions used by enrollment start deferred. Concurrent
+	// enrollments can all acquire a read lock and then deadlock while trying
+	// to promote it to a write lock; SQLite reports that state as a
+	// non-retryable "database is deadlocked" error. Enrollment is a rare
+	// control-plane operation, so serialize that write transaction at the
+	// store boundary while leaving ordinary reads and other operations
+	// concurrent.
+	enrollMu sync.Mutex
 }
 
 func Open(path string) (*Store, error) {

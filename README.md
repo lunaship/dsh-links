@@ -2,10 +2,8 @@
 
 DLR/1 自研 Relay — 电脑 `Agent` 与手机 `App` 均主动出站连接 Relay，Relay 仅在外层 TLS 内转发 DLR 控制帧与 App↔插件的内层 TLS 密文。
 
-> 与同级项目
-> - [`../dsh-links`](../dsh-links) 插件 `v0.2.0` — 局域网 `18640` + Relay Agent
-> - [`../dsh-links-app`](../dsh-links-app) `v0.6.0` — 多 Endpoint Host + Relay Dialer
-> - `dsh-links-relay` `v0.1.0` — DLR/1、数据面、管控面（本仓库）
+> 三仓版本基线、发布状态和已验证组合统一见
+> [`dsh-links/docs/COMPATIBILITY.md`](https://github.com/lunaship/dsh-links/blob/main/docs/COMPATIBILITY.md)。
 
 ## 架构
 
@@ -24,7 +22,8 @@ App (8443 TLS) → Relay 数据面 ← Agent (8444 TLS) → 127.0.0.1:18640 (插
 
 ## 快速开始（本机自托管）
 
-当前形态是单机主自托管：一个人部署一台 Relay，用控制台生成邀请码，把自家电脑接进去。管理口只绑回环。
+当前 Relay 代码用于维护者发放接入码的私测。公开支持路径仍是可信局域网；
+一个人自托管一台 Relay 只属于私测范围，管理口只绑回环。
 
 ```bash
 CGO_ENABLED=0 go test ./... -count=1
@@ -73,15 +72,11 @@ CGO_ENABLED=0 go test ./internal/ingress -run TestSequential -v
 - `docker-compose.openship.yml` — 仅个人 OpenShip 实验；Control 与 Relay 分卷，Relay 读不到签发密钥。公网生产禁止用它
 - 先用 `dsh-links-relay init` 生成密钥与配置；容量需实测后才能写进承诺
 
-## 兼容
+## 兼容性
 
-| 插件 | App | Relay | 结果 |
-|---|---|---|---|
-| v1 QR | 新 App | 无 | LAN 正常 |
-| 新插件 Relay关 | 新 App | 无 | LAN 正常 |
-| 新插件 | 旧 App | 有 | 旧 App 忽略 v2 |
-| 新插件 | 新 App | 离线 | AUTO 回退 LAN |
-| 新插件 | 新 App | 在线 | LAN 优先、Relay 兜底 |
+三仓唯一兼容矩阵、source baseline、发布状态和已验证范围见
+[`dsh-links/docs/COMPATIBILITY.md`](https://github.com/lunaship/dsh-links/blob/main/docs/COMPATIBILITY.md)。
+本仓库不再维护另一份版本表；Relay 的私测不等于公开生产支持。
 
 ## License
 
