@@ -93,17 +93,33 @@ const createPanelModule = (require) => {
 
   const STYLE = `
     .dshlink-root {
-      --dl-ink: var(--dsw-alias-label-primary, #12141a);
-      --dl-muted: var(--dsw-alias-label-secondary, #5c6570);
-      --dl-faint: var(--dsw-alias-label-tertiary, #8b939c);
-      --dl-line: var(--dsw-alias-border-l2, rgba(18, 20, 26, 0.1));
-      --dl-soft: var(--dsw-alias-bg-layer-1, #f3f5f7);
+      /* Hallmark · component: settings panel · genre: modern-minimal
+       * states: default · hover · focus-visible · active · disabled · busy
+       * radii: 8 / 12 / 18 · spacing: 4pt scale */
+      --dl-ink: var(--dsw-alias-label-primary, #16181d);
+      --dl-muted: var(--dsw-alias-label-secondary, #5d6470);
+      --dl-faint: var(--dsw-alias-label-tertiary, #9098a3);
+      --dl-line: var(--dsw-alias-border-l2, rgba(22, 24, 29, 0.09));
+      --dl-line-strong: rgba(22, 24, 29, 0.16);
+      --dl-soft: var(--dsw-alias-bg-layer-1, #f4f5f7);
+      --dl-softer: rgba(22, 24, 29, 0.035);
       --dl-paper: var(--dsw-alias-bg-layer-2, #ffffff);
-      --dl-accent: #0a9eaa;
-      --dl-accent-soft: rgba(13, 235, 243, 0.14);
-      --dl-danger: #b42318;
-      --dl-danger-soft: #fff1f0;
-      --dl-ok: #1f8a4c;
+      --dl-accent: #0f8f9c;
+      --dl-accent-deep: #0b6f7a;
+      --dl-accent-soft: rgba(15, 143, 156, 0.1);
+      --dl-accent-ring: rgba(15, 143, 156, 0.32);
+      --dl-danger: #b3261e;
+      --dl-danger-soft: #fdf1f0;
+      --dl-danger-line: rgba(179, 38, 30, 0.24);
+      --dl-ok: #22794a;
+      --dl-ok-soft: #edf7f0;
+      --dl-warn: #a9700f;
+      --dl-warn-soft: #fdf6ea;
+      --dl-warn-line: rgba(169, 112, 15, 0.26);
+      --dl-radius-s: 8px;
+      --dl-radius-m: 12px;
+      --dl-radius-l: 18px;
+      --dl-ease: cubic-bezier(0.22, 1, 0.36, 1);
       font-family: "Plus Jakarta Sans", "Segoe UI", "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
       color: var(--dl-ink);
       -webkit-font-smoothing: antialiased;
@@ -111,122 +127,169 @@ const createPanelModule = (require) => {
 
     .dshlink-backdrop {
       position: fixed; inset: 0; z-index: 99995;
-      background: rgba(10, 14, 20, 0.42);
+      background: rgba(13, 17, 23, 0.5);
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
       display: flex; align-items: center; justify-content: center;
       padding: 20px;
-      animation: dshlink-fadein 0.22s ease;
+      animation: dshlink-fadein 0.2s ease;
     }
     @keyframes dshlink-fadein { from { opacity: 0 } to { opacity: 1 } }
     .dshlink-panel {
-      width: min(440px, 100%);
+      width: min(430px, 100%);
       max-height: 86vh;
       overflow: auto;
-      border-radius: 20px;
+      border-radius: 22px;
       background: var(--dl-paper);
       border: 1px solid var(--dl-line);
-      box-shadow: 0 24px 64px rgba(10, 14, 20, 0.22);
-      padding: 22px 22px 18px;
-      animation: dshlink-rise 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+      box-shadow:
+        0 1px 2px rgba(13, 17, 23, 0.06),
+        0 12px 32px rgba(13, 17, 23, 0.14),
+        0 32px 80px rgba(13, 17, 23, 0.18);
+      padding: 26px 24px 20px;
+      animation: dshlink-rise 0.3s var(--dl-ease);
     }
     @keyframes dshlink-rise {
-      from { opacity: 0; transform: translateY(14px) scale(0.98) }
+      from { opacity: 0; transform: translateY(16px) scale(0.97) }
       to { opacity: 1; transform: none }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .dshlink-backdrop, .dshlink-panel { animation-duration: 0.01s }
+      .dshlink-device-dot.is-pending::after { animation: none }
     }
 
     .dshlink-settings {
-      display: flex; flex-direction: column; gap: 16px;
+      display: flex; flex-direction: column; gap: 18px;
       padding: 2px 0 18px;
     }
 
     .dshlink-brand {
-      display: flex; flex-direction: column; gap: 4px;
+      display: flex; align-items: flex-end; justify-content: space-between; gap: 12px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--dl-line);
     }
+    .dshlink-brand-copy { display: flex; flex-direction: column; gap: 3px }
     .dshlink-brand-kicker {
-      font-size: 11px; font-weight: 600; letter-spacing: 0.14em;
+      font-size: 11px; font-weight: 700; letter-spacing: 0.16em;
       text-transform: uppercase; color: var(--dl-accent);
     }
     .dshlink-brand-title {
-      font-size: 20px; font-weight: 650; letter-spacing: -0.02em;
-      line-height: 1.25; margin: 0;
+      font-size: 21px; font-weight: 700; letter-spacing: -0.02em;
+      line-height: 1.2; margin: 0;
     }
+    .dshlink-brand-mark {
+      flex: none; width: 34px; height: 34px; border-radius: 11px;
+      display: flex; align-items: center; justify-content: center;
+      background: linear-gradient(140deg, var(--dl-accent), var(--dl-accent-deep));
+      color: #fff; box-shadow: 0 4px 12px rgba(15, 143, 156, 0.28);
+    }
+    .dshlink-brand-mark svg { display: block }
     .dshlink-tabs {
-      display: flex; gap: 4px; padding: 4px; border-radius: 11px;
+      display: flex; gap: 4px; padding: 4px; border-radius: var(--dl-radius-m);
       background: var(--dl-soft); border: 1px solid var(--dl-line);
     }
     .dshlink-tab {
-      flex: 1; appearance: none; cursor: pointer; border: 0; border-radius: 8px;
-      min-height: 32px; padding: 6px 10px; background: transparent; color: var(--dl-muted);
-      font: inherit; font-size: 12px; font-weight: 600; white-space: nowrap;
-      transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+      flex: 1; appearance: none; cursor: pointer; border: 0; border-radius: 9px;
+      min-height: 34px; padding: 7px 10px; background: transparent; color: var(--dl-muted);
+      font: inherit; font-size: 13px; font-weight: 600; white-space: nowrap;
+      transition: background 0.18s var(--dl-ease), color 0.18s var(--dl-ease), box-shadow 0.18s var(--dl-ease);
     }
     .dshlink-tab:hover { color: var(--dl-ink) }
-    .dshlink-tab.is-active { color: var(--dl-ink); background: var(--dl-paper); box-shadow: 0 1px 3px rgba(10, 14, 20, 0.12) }
-    .dshlink-tab:focus-visible { outline: 2px solid var(--dl-accent); outline-offset: 2px }
-    .dshlink-connection { display: flex; flex-direction: column; gap: 14px }
-
-    .dshlink-lan {
-      display: flex; flex-direction: column; gap: 14px;
+    .dshlink-tab.is-active {
+      color: var(--dl-accent-deep); background: var(--dl-paper);
+      box-shadow: 0 1px 2px rgba(13, 17, 23, 0.08), 0 0 0 1px var(--dl-line);
     }
+    .dshlink-tab:focus-visible { outline: 2px solid var(--dl-accent); outline-offset: 2px }
+    .dshlink-connection { display: flex; flex-direction: column; gap: 16px }
+
+    .dshlink-lan { display: flex; flex-direction: column; gap: 16px }
     .dshlink-pair {
+      position: relative;
       display: grid;
-      grid-template-columns: 148px minmax(0, 1fr);
-      gap: 28px;
+      grid-template-columns: 140px minmax(0, 1fr);
+      gap: 22px;
       align-items: center;
-      padding: 16px 20px 16px 16px;
-      border-radius: 16px;
+      padding: 18px;
+      border-radius: var(--dl-radius-l);
       background:
-        linear-gradient(145deg, var(--dl-accent-soft), transparent 58%),
+        radial-gradient(120% 140% at 0% 0%, var(--dl-accent-soft), transparent 60%),
         var(--dl-soft);
       border: 1px solid var(--dl-line);
+      overflow: hidden;
+    }
+    .dshlink-pair::before {
+      content: ""; position: absolute; inset: 0 0 auto 0; height: 1px;
+      background: linear-gradient(90deg, transparent, var(--dl-accent-ring), transparent);
+      opacity: 0.6;
     }
     @media (max-width: 420px) {
       .dshlink-pair { grid-template-columns: 1fr; justify-items: center; text-align: center }
       .dshlink-pair-meta { align-items: center; padding-left: 0 }
-      .dshlink-code { letter-spacing: 0.28em }
+      .dshlink-code { letter-spacing: 0.24em }
     }
     .dshlink-qr-plate {
-      width: 148px; height: 148px; border-radius: 14px;
-      background: #fff; padding: 10px;
-      box-shadow: 0 8px 24px rgba(10, 158, 170, 0.12);
-      border: 1px solid rgba(10, 158, 170, 0.18);
+      position: relative;
+      width: 140px; height: 140px; border-radius: var(--dl-radius-m);
+      background: #fff; padding: 9px;
+      box-shadow:
+        0 1px 2px rgba(13, 17, 23, 0.05),
+        0 10px 28px rgba(15, 143, 156, 0.16);
+      border: 1px solid var(--dl-line);
+    }
+    .dshlink-qr-plate::after {
+      content: ""; position: absolute; inset: 3px; border-radius: 10px;
+      border: 1px dashed var(--dl-accent-ring);
+      pointer-events: none; opacity: 0.5;
     }
     .dshlink-qr {
       display: block; width: 100%; height: 100%;
-      border-radius: 6px;
+      border-radius: 6px; position: relative; z-index: 1;
     }
     .dshlink-pair-meta {
-      display: flex; flex-direction: column; gap: 6px; min-width: 0;
-      padding-left: 8px;
+      display: flex; flex-direction: column; gap: 7px; min-width: 0;
+      padding-left: 2px;
     }
     .dshlink-pair-label {
-      font-size: 11px; font-weight: 600; letter-spacing: 0.08em;
+      font-size: 11px; font-weight: 700; letter-spacing: 0.1em;
       text-transform: uppercase; color: var(--dl-faint);
     }
     .dshlink-code {
-      font-size: 28px; font-weight: 700; letter-spacing: 0.22em;
+      font-size: 27px; font-weight: 700; letter-spacing: 0.2em;
       font-variant-numeric: tabular-nums;
-      line-height: 1.1; color: var(--dl-ink);
-      margin: 0;
+      line-height: 1.15; color: var(--dl-ink);
+      margin: 0; overflow-wrap: anywhere;
+    }
+    .dshlink-pair-hint {
+      margin: 0; font-size: 12px; line-height: 1.5; color: var(--dl-muted);
     }
 
-    .dshlink-remote { display: flex; flex-direction: column; gap: 12px }
+    .dshlink-remote { display: flex; flex-direction: column; gap: 14px }
 
     .dshlink-devices { display: flex; flex-direction: column; gap: 8px }
     .dshlink-section-label {
-      font-size: 12px; font-weight: 600; color: var(--dl-muted);
+      display: flex; align-items: center; gap: 8px;
+      font-size: 12px; font-weight: 700; color: var(--dl-muted);
       letter-spacing: 0.02em;
     }
-    .dshlink-device {
-      display: flex; align-items: center; gap: 10px;
-      padding: 10px 12px; border-radius: 12px;
-      background: var(--dl-paper); border: 1px solid var(--dl-line);
-      transition: background 0.15s ease;
+    .dshlink-section-count {
+      min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px;
+      display: inline-flex; align-items: center; justify-content: center;
+      background: var(--dl-accent-soft); color: var(--dl-accent-deep);
+      font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums;
     }
-    .dshlink-device:hover { background: var(--dl-soft) }
+    .dshlink-device {
+      display: flex; align-items: center; gap: 11px;
+      padding: 11px 13px; border-radius: var(--dl-radius-m);
+      background: var(--dl-paper); border: 1px solid var(--dl-line);
+      box-shadow: 0 1px 2px rgba(13, 17, 23, 0.04);
+      transition: background 0.15s ease, border-color 0.15s ease;
+    }
+    .dshlink-device:hover { background: var(--dl-softer); border-color: var(--dl-line-strong) }
     .dshlink-device-dot {
-      width: 7px; height: 7px; flex: none; border-radius: 50%;
+      position: relative;
+      width: 8px; height: 8px; flex: none; border-radius: 50%;
       background: var(--dl-ok);
-      box-shadow: 0 0 0 3px rgba(31, 138, 76, 0.14);
+      box-shadow: 0 0 0 3px rgba(34, 121, 74, 0.14);
     }
     .dshlink-device-copy { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px }
     .dshlink-device-name {
@@ -236,98 +299,139 @@ const createPanelModule = (require) => {
     .dshlink-device-time { font-size: 11px; color: var(--dl-faint) }
     .dshlink-revoke {
       flex: none; appearance: none; cursor: pointer;
-      border: 1px solid rgba(180, 35, 24, 0.22);
+      border: 1px solid var(--dl-danger-line);
       background: var(--dl-danger-soft); color: var(--dl-danger);
-      border-radius: 8px; padding: 5px 11px;
+      border-radius: var(--dl-radius-s); padding: 5px 11px;
       font: inherit; font-size: 12px; font-weight: 600;
-      transition: background 0.15s ease, transform 0.12s ease;
+      transition: background 0.15s ease, border-color 0.15s ease, transform 0.12s ease;
     }
-    .dshlink-revoke:hover { background: #ffe4e1 }
+    .dshlink-revoke:hover { background: #fae3e1; border-color: rgba(179, 38, 30, 0.4) }
     .dshlink-revoke:active { transform: scale(0.97) }
     .dshlink-revoke:focus-visible { outline: 2px solid var(--dl-danger); outline-offset: 2px }
     .dshlink-empty {
       font-size: 12px; color: var(--dl-faint);
-      padding: 12px; border-radius: 12px;
-      border: 1px dashed var(--dl-line); text-align: center;
+      padding: 14px 12px; border-radius: var(--dl-radius-m);
+      border: 1px dashed var(--dl-line-strong); text-align: center;
     }
     .dshlink-expose {
-      margin: 0; font-size: 12px; line-height: 1.5;
-      padding: 10px 12px; border-radius: 10px;
+      display: flex; gap: 9px; align-items: flex-start;
+      margin: 0; font-size: 12px; line-height: 1.55;
+      padding: 11px 13px; border-radius: var(--dl-radius-m);
       background: var(--dl-danger-soft);
-      border: 1px solid rgba(180, 35, 24, 0.28);
+      border: 1px solid var(--dl-danger-line);
       color: var(--dl-danger);
       font-weight: 600;
     }
+    .dshlink-expose-icon { flex: none; margin-top: 1px }
     .dshlink-confirm {
-      display: flex; align-items: center; gap: 8px;
-      margin: 0; font-size: 12px; line-height: 1.45; color: var(--dl-muted);
+      display: flex; align-items: center; gap: 9px;
+      margin: 0; padding: 11px 13px;
+      font-size: 13px; line-height: 1.45; color: var(--dl-ink); font-weight: 500;
+      background: var(--dl-soft); border: 1px solid var(--dl-line);
+      border-radius: var(--dl-radius-m);
+      cursor: pointer;
+      transition: background 0.15s ease;
     }
-    .dshlink-confirm input { margin: 0; }
+    .dshlink-confirm:hover { background: var(--dl-softer) }
+    .dshlink-confirm input {
+      margin: 0; width: 16px; height: 16px; flex: none; accent-color: var(--dl-accent); cursor: pointer;
+    }
+    .dshlink-confirm input:focus-visible { outline: 2px solid var(--dl-accent); outline-offset: 2px }
     .dshlink-device.is-pending {
-      border-color: rgba(180, 110, 24, 0.28);
-      background: #fff8f0;
+      border-color: var(--dl-warn-line);
+      background: var(--dl-warn-soft);
     }
     .dshlink-device-dot.is-pending {
-      background: #c47d12;
-      box-shadow: 0 0 0 3px rgba(196, 125, 18, 0.16);
+      background: var(--dl-warn);
+      box-shadow: 0 0 0 3px rgba(169, 112, 15, 0.16);
+    }
+    .dshlink-device-dot.is-pending::after {
+      content: ""; position: absolute; inset: -3px; border-radius: 50%;
+      border: 2px solid var(--dl-warn); opacity: 0;
+      animation: dshlink-ping 1.6s ease-out infinite;
+    }
+    @keyframes dshlink-ping {
+      0% { transform: scale(0.6); opacity: 0.7 }
+      70%, 100% { transform: scale(1.5); opacity: 0 }
     }
     .dshlink-device-actions { display: flex; gap: 6px; flex: none; }
     .dshlink-approve {
       flex: none; appearance: none; cursor: pointer;
-      border: 1px solid rgba(31, 138, 76, 0.28);
-      background: #eef8f1; color: var(--dl-ok);
-      border-radius: 8px; padding: 5px 11px;
+      border: 1px solid rgba(34, 121, 74, 0.3);
+      background: var(--dl-ok-soft); color: var(--dl-ok);
+      border-radius: var(--dl-radius-s); padding: 5px 11px;
       font: inherit; font-size: 12px; font-weight: 600;
+      transition: background 0.15s ease, border-color 0.15s ease, transform 0.12s ease;
     }
-    .dshlink-approve:hover { background: #e3f3e8 }
+    .dshlink-approve:hover { background: #ddf0e4; border-color: rgba(34, 121, 74, 0.45) }
+    .dshlink-approve:active { transform: scale(0.97) }
     .dshlink-approve:focus-visible { outline: 2px solid var(--dl-ok); outline-offset: 2px }
     .dshlink-revoke-all {
       appearance: none; cursor: pointer; align-self: flex-start;
       border: 0; background: transparent; color: var(--dl-danger);
       padding: 0; font: inherit; font-size: 12px; font-weight: 600;
     }
-    .dshlink-revoke-all:hover { opacity: 0.72 }
+    .dshlink-revoke-all:hover { opacity: 0.72; text-decoration: underline }
     .dshlink-revoke-all:focus-visible { outline: 2px solid var(--dl-danger); outline-offset: 2px }
 
     .dshlink-field {
       width: 100%; box-sizing: border-box;
-      border: 1px solid var(--dl-line); border-radius: 10px;
-      padding: 9px 11px; font: inherit; font-size: 13px;
+      border: 1px solid var(--dl-line-strong); border-radius: var(--dl-radius-m);
+      padding: 10px 12px; font: inherit; font-size: 13px;
       background: var(--dl-paper); color: var(--dl-ink);
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
     }
-    .dshlink-field:focus { outline: 2px solid var(--dl-accent); outline-offset: 1px }
+    .dshlink-field::placeholder { color: var(--dl-faint) }
+    .dshlink-field:hover { border-color: rgba(22, 24, 29, 0.26) }
+    .dshlink-field:focus {
+      outline: none;
+      border-color: var(--dl-accent);
+      box-shadow: 0 0 0 3px var(--dl-accent-soft);
+    }
     .dshlink-relay-form { display: flex; flex-direction: column; gap: 10px; margin: 0 }
-    .dshlink-relay-row { display: flex; flex-direction: column; gap: 4px }
+    .dshlink-relay-row { display: flex; flex-direction: column; gap: 6px }
     .dshlink-relay-row label { font-size: 12px; font-weight: 600; color: var(--dl-muted) }
     .dshlink-relay-actions { display: flex; gap: 8px; flex-wrap: wrap }
     .dshlink-relay-status { font-size: 12px; color: var(--dl-muted); margin: 0 }
-    .dshlink-relay-status.is-ok { color: var(--dl-ok) }
-    .dshlink-relay-status.is-error { color: var(--dl-danger) }
+    .dshlink-relay-status.is-ok { color: var(--dl-ok); font-weight: 600 }
+    .dshlink-relay-status.is-error { color: var(--dl-danger); font-weight: 600 }
     .dshlink-relay-online {
       display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+      padding: 12px 13px; border-radius: var(--dl-radius-m);
+      background: var(--dl-ok-soft); border: 1px solid rgba(34, 121, 74, 0.22);
     }
     .dshlink-primary {
       appearance: none; cursor: pointer; border: 0; border-radius: 10px;
-      padding: 8px 14px; background: var(--dl-ink); color: #f7f8fa;
-      font: inherit; font-size: 13px; font-weight: 600;
+      padding: 9px 16px; background: var(--dl-accent-deep); color: #fff;
+      font: inherit; font-size: 13px; font-weight: 650;
+      box-shadow: 0 2px 8px rgba(11, 111, 122, 0.28);
+      transition: background 0.15s ease, transform 0.12s ease, box-shadow 0.15s ease;
     }
+    .dshlink-primary:hover:not(:disabled) { background: var(--dl-accent); box-shadow: 0 3px 12px rgba(15, 143, 156, 0.34) }
+    .dshlink-primary:active:not(:disabled) { transform: translateY(1px); box-shadow: 0 1px 4px rgba(11, 111, 122, 0.24) }
+    .dshlink-primary:disabled { opacity: 0.45; cursor: not-allowed; box-shadow: none }
+    .dshlink-primary:focus-visible { outline: 2px solid var(--dl-accent-deep); outline-offset: 2px }
     .dshlink-secondary {
-      appearance: none; cursor: pointer; border: 1px solid var(--dl-line);
-      border-radius: 10px; padding: 8px 14px; background: var(--dl-paper);
+      appearance: none; cursor: pointer; border: 1px solid var(--dl-line-strong);
+      border-radius: 10px; padding: 9px 16px; background: var(--dl-paper);
       font: inherit; font-size: 13px; font-weight: 600; color: var(--dl-ink);
+      transition: background 0.15s ease, border-color 0.15s ease, transform 0.12s ease;
     }
+    .dshlink-secondary:hover { background: var(--dl-soft); border-color: rgba(22, 24, 29, 0.26) }
+    .dshlink-secondary:active { transform: translateY(1px) }
+    .dshlink-secondary:focus-visible { outline: 2px solid var(--dl-accent); outline-offset: 2px }
 
     .dshlink-status { font-size: 12px; color: var(--dl-muted); padding: 4px 0 }
     .dshlink-status.is-error { color: var(--dl-danger) }
 
     .dshlink-close {
-      margin-top: 16px; width: 100%; appearance: none; cursor: pointer;
-      border: 0; border-radius: 11px; padding: 11px 14px;
-      background: var(--dl-ink); color: #f7f8fa;
+      margin-top: 18px; width: 100%; appearance: none; cursor: pointer;
+      border: 1px solid var(--dl-line-strong); border-radius: var(--dl-radius-m); padding: 11px 14px;
+      background: var(--dl-soft); color: var(--dl-ink);
       font: inherit; font-size: 14px; font-weight: 600;
-      transition: opacity 0.15s ease, transform 0.12s ease;
+      transition: background 0.15s ease, transform 0.12s ease;
     }
-    .dshlink-close:hover { opacity: 0.88 }
+    .dshlink-close:hover { background: var(--dl-softer) }
     .dshlink-close:active { transform: scale(0.985) }
     .dshlink-close:focus-visible { outline: 2px solid var(--dl-accent); outline-offset: 2px }
   `
@@ -336,8 +440,22 @@ const createPanelModule = (require) => {
     return jsxs('div', {
       className: 'dshlink-brand',
       children: [
-        jsx('div', { className: 'dshlink-brand-kicker', children: 'DSH Links' }),
-        jsx('div', { className: 'dshlink-brand-title', children: '手机连接' }),
+        jsxs('div', {
+          className: 'dshlink-brand-copy',
+          children: [
+            jsx('div', { className: 'dshlink-brand-kicker', children: 'DSH Links' }),
+            jsx('div', { className: 'dshlink-brand-title', children: '手机连接' }),
+          ],
+        }),
+        jsx('div', {
+          className: 'dshlink-brand-mark',
+          'aria-hidden': true,
+          children: jsx('svg', {
+            width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none',
+            stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round', strokeLinejoin: 'round',
+            children: jsx('path', { d: 'M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71' }),
+          }),
+        }),
       ],
     })
   }
@@ -358,7 +476,19 @@ const createPanelModule = (require) => {
 
   function ExposureBanner({ exposure }) {
     if (exposure?.level !== 'untrusted' || !exposure.warning) return null
-    return jsx('p', { className: 'dshlink-expose', children: exposure.warning })
+    return jsxs('p', {
+      className: 'dshlink-expose',
+      children: [
+        jsx('svg', {
+          className: 'dshlink-expose-icon',
+          width: 15, height: 15, viewBox: '0 0 24 24', fill: 'none',
+          stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round', strokeLinejoin: 'round',
+          'aria-hidden': true,
+          children: jsx('path', { d: 'M12 9v4M12 17h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z' }),
+        }),
+        exposure.warning,
+      ],
+    })
   }
 
   function ConfirmToggle({ requireConfirm, onChange }) {
@@ -380,7 +510,10 @@ const createPanelModule = (require) => {
     return jsxs('div', {
       className: 'dshlink-devices',
       children: [
-        jsx('div', { className: 'dshlink-section-label', children: '已配对设备' }),
+        jsxs('div', {
+          className: 'dshlink-section-label',
+          children: ['已配对设备', jsx('span', { className: 'dshlink-section-count', children: devices.length })],
+        }),
         ...devices.map((d) =>
           jsxs('div', {
             className: 'dshlink-device',
@@ -412,7 +545,10 @@ const createPanelModule = (require) => {
     return jsxs('div', {
       className: 'dshlink-devices',
       children: [
-        jsx('div', { className: 'dshlink-section-label', children: '待本机确认' }),
+        jsxs('div', {
+          className: 'dshlink-section-label',
+          children: ['待本机确认', jsx('span', { className: 'dshlink-section-count', children: devices.length })],
+        }),
         ...devices.map((d) =>
           jsxs('div', {
             className: 'dshlink-device is-pending',
@@ -468,6 +604,7 @@ const createPanelModule = (require) => {
           children: [
             jsx('div', { className: 'dshlink-pair-label', children: label }),
             jsx('p', { className: 'dshlink-code', children: code || '—' }),
+            jsx('p', { className: 'dshlink-pair-hint', children: '用手机 App 扫码，或手动输入配对码。' }),
           ],
         }),
       ],
@@ -768,6 +905,15 @@ const createPanelModule = (require) => {
         delete window.__dshlinkOpenPanel
       }
     }, [])
+
+    React.useEffect(() => {
+      if (!open) return undefined
+      const onKey = (event) => {
+        if (event.key === 'Escape') setOpen(false)
+      }
+      window.addEventListener('keydown', onKey)
+      return () => window.removeEventListener('keydown', onKey)
+    }, [open])
 
     return jsxs(React.Fragment, {
       children: [
