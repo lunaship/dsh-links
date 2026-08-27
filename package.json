@@ -1,6 +1,6 @@
 {
   "name": "dsh-links",
-  "version": "0.1.0-beta.10",
+  "version": "0.1.0-beta.11",
   "description": "DSH 手机插件：局域网配对 + 设备管理 + 18640 接入代理 + 手机 API（纯后端，无页面布局注入）",
   "type": "module",
   "main": "./src/index.js",
@@ -18,7 +18,14 @@
   "bugs": {
     "url": "https://github.com/lunaship/dsh-links/issues"
   },
-  "keywords": ["deepseek-harness", "dsh", "android", "lan", "mobile", "plugin"],
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "android",
+    "lan",
+    "mobile",
+    "plugin"
+  ],
   "engines": {
     "node": ">=20"
   },
