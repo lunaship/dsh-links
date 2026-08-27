@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: plugin-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Node gates
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 9
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: pnpm
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify DLR/1 vectors
+        run: node scripts/check-dlr1-vectors.mjs
+
+      - name: Generate client and verify clean tree
+        run: pnpm build:client && git diff --exit-code -- src/client.js
+
+      - name: Run tests
+        run: pnpm test
+
+      - name: Verify package contents
+        run: pnpm pack --dry-run
+
+      - name: Audit production dependencies
+        run: pnpm audit --prod
+
+      - name: Check whitespace errors
+        run: git diff --check
