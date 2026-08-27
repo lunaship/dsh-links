@@ -44,7 +44,7 @@ jobs:
         run: pnpm test
 
       - name: Verify package contents
-        run: pnpm pack --dry-run
+        run: npm pack --dry-run
 
       - name: Audit production dependencies
         run: pnpm audit --prod
