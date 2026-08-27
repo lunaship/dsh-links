@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: relay-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Go gates
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify formatting
+        run: test -z "$(gofmt -l .)"
+
+      - name: Run race tests
+        run: CGO_ENABLED=0 go test ./... -race -count=1 -timeout 120s
+
+      - name: Run vet
+        run: CGO_ENABLED=0 go vet ./...
+
+      - name: Build binary
+        run: CGO_ENABLED=0 go build ./cmd/dsh-links-relay
+
+      - name: Run protocol fuzz smoke gate
+        run: go test ./internal/protocol -run=^$ -fuzz=FuzzFrameReader -fuzztime=10s
+
+      - name: Check whitespace errors
+        run: git diff --check

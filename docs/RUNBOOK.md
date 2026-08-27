@@ -94,10 +94,29 @@ curl -H "Authorization: Bearer $(cat /etc/dsh-links-relay/admin.token)" -H "Cont
 - 错误率 >0.1%
 - Control DB 磁盘 >80%
 
+### 4.3 本机诊断导出
+
+在测试者明确同意后执行 `deploy/collect-diagnostics.sh <relay-pid> [output]`。
+它只导出时间、进程资源、工作目录、磁盘和 FD 数；不读取配置、环境变量、
+SQLite、日志、请求体或凭据。不要把原始日志追加到该文件。若需要开发者
+分析日志，先在 Relay 代码边界使用 `internal/logutil.RedactDiagnosticText`
+并通过 `go test ./internal/logutil -run Redact` 验证 Token、`routeSecret`、
+邀请码、私钥、明文凭据和消息正文均已移除。
+
 ## 5. 备份与恢复
 - **Control DB**: `sqlite3 /var/lib/dsh-links-relay/control.db ".backup /backup/control-$(date +%F).db"` 每日
 - **密钥**: routeMasterKey、issuer.key、admin.token 加密备份到离线存储, 权限 0600
 - **恢复**: 停止服务, 恢复 DB 与密钥, `systemctl start`
+
+### 5.1 RC1 单实例演练
+
+`deploy/soak-single-instance.sh -- <relay command>` 默认要求完整 86400 秒，
+每 60 秒采集进程、FD 和磁盘快照；设置 `ALLOW_SHORT_SOAK=1` 才能运行短时
+探索，产物会明确标记为不可替代 24h 证据。`deploy/collect-capacity.sh
+<relay-pid> [output]` 只做快照并打印阈值目标，目标不是容量承诺。脚本均在
+本机执行，不会连接或改动外部服务器。soak 目录权限为仅当前用户可读；其中
+`process.log` 是未经脱敏的原始进程输出，不得直接作为共享证据，分享前必须
+单独审查并脱敏。
 
 ## 6. 吊销
 - **手机**: 在插件 UI 吊销设备, 后续 Token 401, 已有 SSE 关闭

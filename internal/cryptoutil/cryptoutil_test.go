@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"os"
 	"testing"
 )
@@ -35,6 +36,26 @@ func TestHKDFVectors(t *testing.T) {
 	}
 	if string(got) != string(expected) {
 		t.Fatalf("hkdf mismatch: got %x want %x", got, expected)
+	}
+}
+
+func TestCanonicalDLR1VectorHash(t *testing.T) {
+	data, err := os.ReadFile("../../testdata/dlr1-vectors.json")
+	if err != nil {
+		t.Fatalf("read vectors: %v", err)
+	}
+	var value interface{}
+	if err := json.Unmarshal(data, &value); err != nil {
+		t.Fatalf("unmarshal vectors: %v", err)
+	}
+	canonical, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("canonicalize vectors: %v", err)
+	}
+	hash := sha256.Sum256(canonical)
+	const expected = "e46ddf3ebe091b544376d70cd81b0489d621d2f232fcb705e90b8e49312f7467"
+	if got := fmt.Sprintf("%x", hash[:]); got != expected {
+		t.Fatalf("DLR/1 vectors drifted: got %s want %s", got, expected)
 	}
 }
 
