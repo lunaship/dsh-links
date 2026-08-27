@@ -2,8 +2,11 @@
 
 ## Unreleased
 
+## dsh-links 0.1.0-beta.10 — 2026-08-27
+
 - 工程：新增 push/PR CI——DLR/1 向量校验、`build:client` 产物一致性检查、单测、`pack` 试运行、生产依赖审计。
 - 工程：新增 RC1 封测计划（T1–T6、停止条件、出口标准）、七层验收证据模板与三仓证据收集脚本。
+- Android 客户端仍为 `0.5.0-beta.14`，本次无 App 变更。
 
 ## dsh-links 0.1.0-beta.9 — 2026-08-26
 
