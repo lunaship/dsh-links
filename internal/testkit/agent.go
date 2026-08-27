@@ -42,6 +42,17 @@ type SimAgent struct {
 
 	// dial timeouts
 	DialTimeout time.Duration
+
+	// Dial optionally overrides connection establishment (e.g. TLS against a
+	// real deployment). nil means plain TCP, which matches unit-test ingresses.
+	Dial func(network, addr string, timeout time.Duration) (net.Conn, error)
+}
+
+func (a *SimAgent) dial(network, addr string, timeout time.Duration) (net.Conn, error) {
+	if a.Dial != nil {
+		return a.Dial(network, addr, timeout)
+	}
+	return net.DialTimeout(network, addr, timeout)
 }
 
 func NewSimAgent(agentAddr, hostId string, priv ed25519.PrivateKey, echoAddr string) *SimAgent {
@@ -60,7 +71,7 @@ func NewSimAgent(agentAddr, hostId string, priv ed25519.PrivateKey, echoAddr str
 
 // Enroll performs ENROLL and stores result. Returns routeId/secret/cap.
 func (a *SimAgent) Enroll(inviteCode string) error {
-	conn, err := net.DialTimeout("tcp", a.AgentAddr, a.DialTimeout)
+	conn, err := a.dial("tcp", a.AgentAddr, a.DialTimeout)
 	if err != nil {
 		return err
 	}
@@ -124,7 +135,7 @@ func (a *SimAgent) Enroll(inviteCode string) error {
 
 // Register connects control channel and handles OPEN/BIND loop. Blocks until StopCh.
 func (a *SimAgent) Register() error {
-	conn, err := net.DialTimeout("tcp", a.AgentAddr, a.DialTimeout)
+	conn, err := a.dial("tcp", a.AgentAddr, a.DialTimeout)
 	if err != nil {
 		return err
 	}
@@ -248,7 +259,7 @@ func (a *SimAgent) Register() error {
 
 func (a *SimAgent) handleOpen(open protocol.OpenFrame) {
 	// New connection for BIND
-	conn, err := net.DialTimeout("tcp", a.AgentAddr, a.DialTimeout)
+	conn, err := a.dial("tcp", a.AgentAddr, a.DialTimeout)
 	if err != nil {
 		return
 	}
