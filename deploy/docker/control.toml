@@ -2,8 +2,12 @@
 # 127.0.0.1; Relay is attached to a different Docker network.
 admin_listen = "0.0.0.0:8080"
 admin_allow_non_loopback = true
-admin_tls_cert = "/etc/dsh-links-relay/admin.crt"
+# 管理面 TLS 与数据面 TLS 复用同一张 relay 证书（见 docker-compose.yml 的
+# relay-certificate config）：它们都挂在容器的这个路径上。
+admin_tls_cert = "/etc/dsh-links-relay/relay.crt"
 admin_tls_key = "/run/secrets/admin-tls-key"
+# 数据面证书：仅用于生成接入串的 TLS 指纹与 public_host 兜底。
+tls_cert = "/etc/dsh-links-relay/relay.crt"
 control_socket = "/run/dsh-links-relay/control.sock"
 ipc_auth_token_file = "/run/secrets/ipc-auth"
 
@@ -15,5 +19,8 @@ admin_user = "admin"
 
 database = "/var/lib/dsh-links-relay/control.db"
 default_max_streams_per_route = 8
-# Hostname the plugin should dial for Agent TLS (8444).
+# 公网域名（插件拨号 8444 的 Agent TLS 主机名）。两者都不填时控制台
+# 只有裸邀请码，无法生成完整接入串与二维码；docker-compose 可用环境变量注入：
+#   DSH_RELAY_PUBLIC_HOST=relay.example.com docker compose up -d
+# 或在此取消注释直接填写。
 # public_host = "relay.example.com"

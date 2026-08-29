@@ -40,12 +40,16 @@ users.
 ## Start
 
 ```sh
+# 必须提供公网域名：控制台才能生成完整接入串与二维码（见下方说明）
+export DSH_RELAY_PUBLIC_HOST=relay.example.com
 docker compose build --pull
 docker compose config >/dev/null
 docker compose up -d
 docker compose ps
 ./deploy/docker/verify-runtime.sh
 ```
+
+`DSH_RELAY_PUBLIC_HOST` 注入 control 容器的 `RELAY_HOST` 环境变量，作为接入串的主机名（也可直接在 `deploy/docker/control.toml` 填写 `public_host`）。**两个都不填时，控制台只能创建裸邀请码，无法生成完整接入串与二维码**——测试者将无法使用「手机扫码搬运」流程。
 
 The TLS-protected Control UI is published only at `https://127.0.0.1:8080`;
 ports 8443 and 8444 are the only public listeners. The generated certificate

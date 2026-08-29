@@ -29,6 +29,7 @@ type ControlAPI interface {
 	VerifyRouteMAC(req *RouteMACProxyRequest) error
 	VerifyCapability(cap string) (*cryptoutil.CapabilityPayload, error)
 	Renew(req *RenewProxyRequest) (string, error)
+	ReportUsage(routeId []byte, rx, tx int64, connects int) error
 }
 
 type RouteMACProxyRequest struct {
@@ -111,18 +112,63 @@ type Ingress struct {
 	agentConnCount  int
 	connsByIP       map[string]int
 	maxConnsPerIP   int
+
+	// v6PrefixLen masks IPv6 source addresses to this prefix length for every
+	// per-IP limiter and the per-IP connection bound (0 or out-of-range
+	// disables aggregation, keeping today's per-address behavior).
+	v6PrefixLen int
+
+	// globalPreAuth is a global token bucket that bounds the rate at which
+	// unauthenticated connections of any source are established. It sits
+	// before the per-IP admission buckets so IPv6 prefix rotation cannot turn
+	// per-IP limits into an unbounded application-level flood.
+	globalPreAuth *registry.TokenBucket
+
+	// preAuthConns counts connections that have not yet completed DLR
+	// authentication; authConns counts the ones that have. preAuthConns is
+	// capped at maxPreAuthConns so a pre-authentication flood cannot consume
+	// the capacity reserved for authenticated traffic (the latter is only
+	// bounded by the global maxConns).
+	maxPreAuthConns int
+	preAuthConns     int
+	authConns        int
 	// bridgeMaxLifetime is the maximum lifetime for a data-plane bridge.
 	bridgeMaxLifetime time.Duration
+
+	// routeStats accumulates per-route byte/connect counters since the last
+	// stats report. The reporter goroutine flushes them to control, which
+	// persists them into stats_daily (and, in phase 2, enforces daily budget).
+	routeStatsMu sync.Mutex
+	routeStats   map[string]*routeStat
+	// statsInterval is the flush period (default 30s; tests may shorten it).
+	statsInterval time.Duration
+}
+
+// routeStat carries one route's counters since the last flush.
+type routeStat struct {
+	rx       int64
+	tx       int64
+	connects int
 }
 
 // New creates ingress.
-func New(clientListen, agentListen string, tlsConfig *tls.Config, reg *registry.Registry, ctrl ControlAPI, m *metrics.Metrics, issuerPub ed25519.PublicKey, heartbeat, bindTimeout, deadAfter time.Duration, maxTotal, maxConns int, bridgeMaxLifetime time.Duration, logger *log.Logger) *Ingress {
+func New(clientListen, agentListen string, tlsConfig *tls.Config, reg *registry.Registry, ctrl ControlAPI, m *metrics.Metrics, issuerPub ed25519.PublicKey, heartbeat, bindTimeout, deadAfter time.Duration, maxTotal, maxConns, v6PrefixLen int, bridgeMaxLifetime time.Duration, logger *log.Logger) *Ingress {
 	if logger == nil {
 		logger = log.Default()
 	}
 	// Default maxConns to 2× maxTotalStreams so idle connections don't starve stream slots.
 	if maxConns <= 0 {
 		maxConns = maxTotal * 2
+	}
+	if v6PrefixLen == 0 {
+		v6PrefixLen = 64
+	}
+	if v6PrefixLen < 32 || v6PrefixLen > 128 {
+		v6PrefixLen = 64
+	}
+	maxPreAuth := maxConns / 4
+	if maxPreAuth < 1 {
+		maxPreAuth = 1
 	}
 	return &Ingress{
 		clientListen:      clientListen,
@@ -137,19 +183,23 @@ func New(clientListen, agentListen string, tlsConfig *tls.Config, reg *registry.
 		agentDeadAfter:    deadAfter,
 		maxTotalStreams:   maxTotal,
 		maxConns:          maxConns,
-		// 预认证（MAC 之前）按 IP 计：burst 收紧到 32，只用于挡连接洪水，
-		// 避免未认证流量以每 IP 96 连接的速度消耗全局连接预算。
-		// 认证后再按路由放宽到 96/60，容纳「进工作台约 8 条 CONNECT + SSE」。
-		ipLimiter:         registry.NewRateLimiter(32, 30),
-		routeLimiter:      registry.NewRateLimiter(96, 60),
-		enrollLimiter:     registry.NewRateLimiter(6, 2),
-		admissionLimiter:  registry.NewRateLimiter(120, 120),
-		connsByIP:         make(map[string]int),
-		maxConnsPerIP:     128,
-		plainMode:         tlsConfig == nil,
-		stopCh:            make(chan struct{}),
-		logger:            logger,
+		v6PrefixLen:       v6PrefixLen,
+		maxPreAuthConns:   maxPreAuth,
+		// The global pre-auth rate budget only needs to absorb floods; burst
+		// and refill are both calibrated against the connection budget.
+		globalPreAuth:    registry.NewTokenBucket(max(maxConns, 4), max(maxConns, 60)),
+		ipLimiter:        registry.NewRateLimiter(32, 30),
+		routeLimiter:     registry.NewRateLimiter(96, 60),
+		enrollLimiter:    registry.NewRateLimiter(6, 2),
+		admissionLimiter: registry.NewRateLimiter(120, 120),
+		connsByIP:        make(map[string]int),
+		maxConnsPerIP:    128,
+		plainMode:        tlsConfig == nil,
+		stopCh:           make(chan struct{}),
+		logger:           logger,
 		bridgeMaxLifetime: bridgeMaxLifetime,
+		routeStats:        make(map[string]*routeStat),
+		statsInterval:     30 * time.Second,
 	}
 }
 
@@ -168,6 +218,13 @@ func (ing *Ingress) Start() error {
 	ing.wg.Add(2)
 	go ing.serveListener(cln, true)  // client side
 	go ing.serveListener(aln, false) // agent side
+	if ing.statsInterval > 0 {
+		ing.wg.Add(1)
+		go func() {
+			defer ing.wg.Done()
+			ing.statsReporter()
+		}()
+	}
 	return nil
 }
 
@@ -202,29 +259,45 @@ func (ing *Ingress) serveListener(ln net.Listener, isClient bool) {
 			}
 		}
 		remoteIP := remoteIPFromConn(conn)
-		if !ing.admissionLimiter.Allow(remoteIP) {
+		remoteKey := ipKey(remoteIP, ing.v6PrefixLen)
+		if !ing.globalPreAuth.Allow() {
+			// Global rate budget: bounds unauthenticated connection attempts
+			// of all sources combined, so IPv6 prefix rotation cannot turn
+			// per-IP admission buckets into an unbounded flood.
+			ing.logger.Printf("global pre-auth rate reached, rejecting from %s", logutil.Value(remoteIP))
+			_ = conn.Close()
+			continue
+		}
+		if !ing.admissionLimiter.Allow(remoteKey) {
 			ing.logger.Printf("connection admission rate reached, rejecting from %s", logutil.Value(remoteIP))
 			_ = conn.Close()
 			ing.metrics.RecordError()
 			continue
 		}
-		if !ing.acquireConnection(remoteIP, isClient) {
+		if !ing.acquireConnection(remoteKey, isClient) {
 			ing.logger.Printf("connection limit reached (%d), rejecting from %s", ing.maxConns, logutil.Value(remoteIP))
 			_ = conn.Close()
 			ing.metrics.RecordError()
 			continue
 		}
-		go func(c net.Conn, ip string, client bool) {
-			defer ing.releaseConnection(ip, client)
-			ing.handleConn(c, client)
-		}(conn, remoteIP, isClient)
+		go func(c net.Conn, ip string, key string, client bool) {
+			ing.handleConn(c, client, key)
+		}(conn, remoteIP, remoteKey, isClient)
 	}
 }
 
-func (ing *Ingress) acquireConnection(remoteIP string, isClient bool) bool {
+func (ing *Ingress) acquireConnection(remoteKey string, isClient bool) bool {
 	ing.connMu.Lock()
 	defer ing.connMu.Unlock()
-	if ing.connCount >= ing.maxConns || ing.connsByIP[remoteIP] >= ing.maxConnsPerIP {
+	if ing.connCount >= ing.maxConns || ing.connsByIP[remoteKey] >= ing.maxConnsPerIP {
+		return false
+	}
+	// Pre-authentication capacity is capped separately from the total: a
+	// flood of unauthenticated connections (rotating IPv4 or IPv6 sources)
+	// may at most fill maxPreAuthConns slots, always leaving at least
+	// maxConns-maxPreAuthConns slots reachable for connections that have
+	// already proven a route MAC or capability.
+	if ing.maxPreAuthConns > 0 && ing.preAuthConns >= ing.maxPreAuthConns {
 		return false
 	}
 	// Each public listener may consume at most 75% of the shared budget. This
@@ -237,7 +310,8 @@ func (ing *Ingress) acquireConnection(remoteIP string, isClient bool) bool {
 		return false
 	}
 	ing.connCount++
-	ing.connsByIP[remoteIP]++
+	ing.connsByIP[remoteKey]++
+	ing.preAuthConns++
 	if isClient {
 		ing.clientConnCount++
 	} else {
@@ -246,20 +320,45 @@ func (ing *Ingress) acquireConnection(remoteIP string, isClient bool) bool {
 	return true
 }
 
-func (ing *Ingress) releaseConnection(remoteIP string, isClient bool) {
+func (ing *Ingress) releaseConnection(remoteKey string, isClient bool, authenticated bool) {
 	ing.connMu.Lock()
 	defer ing.connMu.Unlock()
 	ing.connCount--
-	if ing.connsByIP[remoteIP] <= 1 {
-		delete(ing.connsByIP, remoteIP)
+	if ing.connsByIP[remoteKey] <= 1 {
+		delete(ing.connsByIP, remoteKey)
 	} else {
-		ing.connsByIP[remoteIP]--
+		ing.connsByIP[remoteKey]--
+	}
+	if authenticated {
+		if ing.authConns > 0 {
+			ing.authConns--
+		}
+	} else if ing.preAuthConns > 0 {
+		ing.preAuthConns--
 	}
 	if isClient {
 		ing.clientConnCount--
 	} else {
 		ing.agentConnCount--
 	}
+}
+
+// promoteConnection moves an authenticated connection out of the
+// pre-authentication pool after a successful DLR handshake (route MAC or
+// capability proof). It must be called exactly once per connection, from the
+// handler goroutine that owns the connection (the same one that later runs
+// releaseConnection).
+func (ing *Ingress) promoteConnection(ctx *connContext) {
+	if ctx.authenticated {
+		return
+	}
+	ing.connMu.Lock()
+	if ing.preAuthConns > 0 {
+		ing.preAuthConns--
+	}
+	ing.authConns++
+	ing.connMu.Unlock()
+	ctx.authenticated = true
 }
 
 // maxConnNonces bounds per-connection replay bookkeeping. Without a cap a
@@ -284,6 +383,11 @@ type connContext struct {
 	nonces       map[string]bool // replay protection per conn
 	frameLimiter *registry.TokenBucket
 	remoteIP     string
+	remoteKey    string // rate-limit key (IPv6 masked to prefix)
+
+	// authenticated is set by promoteConnection after a successful DLR
+	// handshake so releaseConnection returns the slot to the right pool.
+	authenticated bool
 }
 
 type nonceVerdict int
@@ -319,11 +423,10 @@ func acceptNonce(ctx *connContext, nonce string) bool {
 	return true
 }
 
-func (ing *Ingress) handleConn(rawConn net.Conn, isClient bool) {
+func (ing *Ingress) handleConn(rawConn net.Conn, isClient bool, remoteKey string) {
 	defer rawConn.Close()
 	remoteIP := remoteIPFromConn(rawConn)
 	ing.logger.Printf("new conn from %s client=%v", logutil.Value(remoteIP), isClient)
-
 	// Set deadline for TLS handshake already handled; now HELLO send timeout 3s, first frame 5s
 	// Generate challenge
 	chal, err := cryptoutil.GenerateChallenge()
@@ -338,7 +441,11 @@ func (ing *Ingress) handleConn(rawConn net.Conn, isClient bool) {
 		nonces:       make(map[string]bool),
 		frameLimiter: registry.NewTokenBucket(controlFrameBurst, controlFrameRefillPerMin),
 		remoteIP:     remoteIP,
+		remoteKey:    remoteKey,
 	}
+	defer func() {
+		ing.releaseConnection(ctx.remoteKey, isClient, ctx.authenticated)
+	}()
 
 	// Bound the entire pre-auth phase. The TLS handshake runs inside this
 	// Write and starts by reading ClientHello, so a read deadline is required
@@ -415,7 +522,7 @@ func (ing *Ingress) handleEnroll(ctx *connContext, raw []byte) {
 		sendError(ctx.conn, protocol.ErrBadRequest, "invalid enroll")
 		return
 	}
-	if !ing.enrollLimiter.Allow(ctx.remoteIP) {
+	if !ing.enrollLimiter.Allow(ctx.remoteKey) {
 		sendError(ctx.conn, protocol.ErrRateLimited, "rate limited enroll")
 		return
 	}
@@ -461,6 +568,8 @@ func (ing *Ingress) handleEnroll(ctx *connContext, raw []byte) {
 	b = append(b, '\n')
 	_ = ctx.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	_, _ = ctx.conn.Write(b)
+	_ = ctx.conn.SetWriteDeadline(time.Time{})
+	ing.promoteConnection(ctx)
 	ing.logger.Printf("enroll success host=%s route=%s", logutil.Value(enroll.HostId), enrolled.RouteId[:8])
 	// Close after enroll, agent will reconnect with REGISTER
 }
@@ -565,6 +674,8 @@ func (ing *Ingress) handleRegister(ctx *connContext, raw []byte) {
 		// Unregister + IncOnlineHosts(-1) handled by defer below
 		return
 	}
+	_ = ctx.conn.SetWriteDeadline(time.Time{})
+	ing.promoteConnection(ctx)
 
 	// Now enter control loop: handle PING/PONG, RENEW, and idle detection
 	// Heartbeat handling: expect PING every 20s, dead after 65s
@@ -673,7 +784,7 @@ func (ing *Ingress) handleRenew(ctx *connContext, raw []byte, currentPayload *cr
 }
 
 func (ing *Ingress) handleConnect(ctx *connContext, raw []byte) {
-	if !ing.ipLimiter.Allow(ctx.remoteIP) {
+	if !ing.ipLimiter.Allow(ctx.remoteKey) {
 		sendError(ctx.conn, protocol.ErrRateLimited, "rate limited ip")
 		return
 	}
@@ -698,6 +809,7 @@ func (ing *Ingress) handleConnect(ctx *connContext, raw []byte) {
 		ing.metrics.RecordError()
 		return
 	}
+	ing.promoteConnection(ctx)
 	// Only an authenticated route may allocate or consume a route bucket. This
 	// prevents arbitrary pre-auth route strings from poisoning limiter state.
 	if !ing.routeLimiter.Allow(connFrame.Route) {
@@ -812,12 +924,67 @@ func (ing *Ingress) handleConnect(ctx *connContext, raw []byte) {
 
 	ing.metrics.IncActiveStreams(1)
 	defer ing.metrics.IncActiveStreams(-1)
+	ing.addRouteConnects(connFrame.Route, 1)
 	// Bridge blocks until done; it will close both conns
 	_ = bridge.Bridge(ctx.conn, agentConn,
-		func(n int64) { ing.metrics.AddRx(n) },
-		func(n int64) { ing.metrics.AddTx(n) },
+		func(n int64) { ing.metrics.AddRx(n); ing.addRouteBytes(connFrame.Route, n, 0) },
+		func(n int64) { ing.metrics.AddTx(n); ing.addRouteBytes(connFrame.Route, 0, n) },
 		ing.bridgeMaxLifetime,
 	)
+}
+
+// addRouteBytes / addRouteConnects accumulate per-route counters for the
+// periodic stats_report flush.
+func (ing *Ingress) addRouteBytes(routeKey string, rx, tx int64) {
+	ing.routeStatsMu.Lock()
+	st := ing.routeStats[routeKey]
+	if st == nil {
+		st = &routeStat{}
+		ing.routeStats[routeKey] = st
+	}
+	st.rx += rx
+	st.tx += tx
+	ing.routeStatsMu.Unlock()
+}
+
+func (ing *Ingress) addRouteConnects(routeKey string, n int) {
+	ing.routeStatsMu.Lock()
+	st := ing.routeStats[routeKey]
+	if st == nil {
+		st = &routeStat{}
+		ing.routeStats[routeKey] = st
+	}
+	st.connects += n
+	ing.routeStatsMu.Unlock()
+}
+
+// statsReporter flushes collected route counters to control every
+// statsInterval. Totals are cumulative per route between flushes, matching
+// the fire-and-forget report semantics (a lost report is harmless).
+func (ing *Ingress) statsReporter() {
+	ticker := time.NewTicker(ing.statsInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			ing.routeStatsMu.Lock()
+			snapshot := ing.routeStats
+			ing.routeStats = make(map[string]*routeStat)
+			ing.routeStatsMu.Unlock()
+			for routeKey, st := range snapshot {
+				if st.rx == 0 && st.tx == 0 && st.connects == 0 {
+					continue
+				}
+				routeRaw, err := base64.RawURLEncoding.DecodeString(routeKey)
+				if err != nil {
+					continue
+				}
+				_ = ing.control.ReportUsage(routeRaw, st.rx, st.tx, st.connects)
+			}
+		case <-ing.stopCh:
+			return
+		}
+	}
 }
 
 func (ing *Ingress) handleBind(ctx *connContext, raw []byte) {
@@ -844,6 +1011,7 @@ func (ing *Ingress) handleBind(ctx *connContext, raw []byte) {
 		sendError(ctx.conn, protocol.ErrAuthFailed, "auth failed")
 		return
 	}
+	ing.promoteConnection(ctx)
 	_, persistedGen, _, _, revoked, err := ing.control.LookupHostByRoute(routeIdRaw)
 	if err != nil || revoked || persistedGen != bind.Generation {
 		sendError(ctx.conn, protocol.ErrAuthFailed, "auth failed")

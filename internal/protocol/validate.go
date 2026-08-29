@@ -10,6 +10,28 @@ import (
 	"github.com/dsh-links/dsh-links-relay/internal/cryptoutil"
 )
 
+// ValidHostID reports whether s is an accepted host identifier.
+//
+// hostId must be a 1..64 byte label drawn from the URL-safe alphabet
+// [A-Za-z0-9_-]. This keeps every enrolled host addressable through the admin
+// API URL path segment /v1/hosts/{id}/revoke (a slash, dot or other character
+// would either break path routing or shadow the purge endpoint). The plugin
+// currently generates dsh-<hex> ids, which satisfies the rule.
+func ValidHostID(s string) bool {
+	if len(s) == 0 || len(s) > 64 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '-', c == '_':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 func ValidateHello(raw []byte) (*HelloFrame, error) {
 	var f HelloFrame
 	if err := json.Unmarshal(raw, &f); err != nil {
@@ -35,8 +57,8 @@ func ValidateEnroll(raw []byte) (*EnrollFrame, error) {
 	if f.Type != TypeEnroll {
 		return nil, fmt.Errorf("%s: not ENROLL", ErrBadRequest)
 	}
-	if len(f.HostId) == 0 || len(f.HostId) > 64 {
-		return nil, fmt.Errorf("%s: hostId length", ErrBadRequest)
+	if !ValidHostID(f.HostId) {
+		return nil, fmt.Errorf("%s: invalid hostId", ErrBadRequest)
 	}
 	if _, err := cryptoutil.DecodeBase64URLLen(f.HostPublicKey, 32); err != nil {
 		return nil, fmt.Errorf("%s: hostPublicKey: %w", ErrBadRequest, err)

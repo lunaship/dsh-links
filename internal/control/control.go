@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/dsh-links/dsh-links-relay/internal/cryptoutil"
+	"github.com/dsh-links/dsh-links-relay/internal/protocol"
 	"github.com/dsh-links/dsh-links-relay/internal/store"
 )
 
@@ -22,8 +23,10 @@ type Control struct {
 	routeMasterKey    []byte // 32 bytes, if set; otherwise routeSecret derivation not available for direct enroll? But control derives secret
 	defaultMaxStreams int
 
-	// revokeFn is called after a successful RevokeHost (set by main.go to broadcast to relays).
-	revokeFn func(routeId, hostId string)
+	// revokeFn is called after a successful RevokeHost (set by main.go to
+	// broadcast to relays). It reports how many relays received the push and
+	// how many confirmed the route was closed locally.
+	revokeFn func(routeId, hostId string) (delivered, acked int)
 }
 
 // maxCredentialsPerHost caps stored credentials per host so repeated renewals
@@ -121,7 +124,7 @@ type EnrollResult struct {
 
 // Enroll handles enrollment via control.
 func (c *Control) Enroll(req *EnrollRequest) (*EnrollResult, error) {
-	if len(req.HostId) == 0 || len([]byte(req.HostId)) > 64 || len(req.HostPublicKey) != ed25519.PublicKeySize || len(req.Nonce) != 16 || len(req.Challenge) != 32 || len(req.Proof) != ed25519.SignatureSize {
+	if !protocol.ValidHostID(req.HostId) || len(req.HostPublicKey) != ed25519.PublicKeySize || len(req.Nonce) != 16 || len(req.Challenge) != 32 || len(req.Proof) != ed25519.SignatureSize {
 		return nil, errors.New("invalid enrollment fields")
 	}
 	if diff := req.Ts - time.Now().Unix(); diff < -60 || diff > 60 {
@@ -305,41 +308,46 @@ func buildRenewTranscript(capability string, ts int64, nonce, challenge []byte) 
 	return cryptoutil.BuildRenewTranscript(capability, ts, nonce, challenge)
 }
 
-// RevokeHost revokes host and increments generation, then calls revokeFn if set.
-func (c *Control) RevokeHost(hostId string) error {
+// RevokeHost revokes host and increments generation, then calls revokeFn if
+// set. It returns the relay push delivery/ack counts observed by revokeFn
+// (0/0 when no callback is configured).
+func (c *Control) RevokeHost(hostId string) (delivered, acked int, err error) {
 	if err := c.store.RevokeHost(hostId); err != nil {
-		return err
+		return 0, 0, err
 	}
 	if c.revokeFn != nil {
 		// Look up routeId for the broadcast message.
 		h, err := c.store.GetHostByID(hostId)
 		if err == nil && h != nil {
 			routeStr := base64.RawURLEncoding.EncodeToString(h.RouteID)
-			c.revokeFn(routeStr, hostId)
+			delivered, acked = c.revokeFn(routeStr, hostId)
 		}
 	}
-	return nil
+	return delivered, acked, nil
 }
 
 // DeleteHost disconnects a live host if needed, then removes the record.
-func (c *Control) DeleteHost(hostId string) error {
+func (c *Control) DeleteHost(hostId string) (delivered, acked int, err error) {
 	h, err := c.store.GetHostByID(hostId)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return store.ErrHostNotFound
+			return 0, 0, store.ErrHostNotFound
 		}
-		return err
+		return 0, 0, err
 	}
 	routeStr := base64.RawURLEncoding.EncodeToString(h.RouteID)
 	if h.RevokedAt == nil {
 		if err := c.store.RevokeHost(hostId); err != nil {
-			return err
+			return 0, 0, err
 		}
 	}
 	if c.revokeFn != nil {
-		c.revokeFn(routeStr, hostId)
+		delivered, acked = c.revokeFn(routeStr, hostId)
 	}
-	return c.store.DeleteHost(hostId)
+	if err := c.store.DeleteHost(hostId); err != nil {
+		return delivered, acked, err
+	}
+	return delivered, acked, nil
 }
 
 func (c *Control) PurgeRevokedHosts() (int64, error) {
@@ -355,8 +363,19 @@ func (c *Control) PurgeRevokedHosts() (int64, error) {
 	return c.store.PurgeRevokedHosts()
 }
 
+// ReportUsage accumulates routed byte/connect counters into stats_daily for
+// the host owning the route. Unknown routes are ignored (they may have been
+// purged since the relay last synced).
+func (c *Control) ReportUsage(routeID []byte, rx, tx int64, connects int) error {
+	h, err := c.store.GetHostByRoute(routeID)
+	if err != nil || h == nil {
+		return nil
+	}
+	return c.store.AddRouteUsage(h.ID, store.Today(), rx, tx, connects)
+}
+
 // SetRevokeFn sets the post-revoke callback (called from main.go with IPC server).
-func (c *Control) SetRevokeFn(fn func(routeId, hostId string)) {
+func (c *Control) SetRevokeFn(fn func(routeId, hostId string) (int, int)) {
 	c.revokeFn = fn
 }
 

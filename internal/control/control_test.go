@@ -140,11 +140,12 @@ func TestReenrollRevokesPriorRouteImmediately(t *testing.T) {
 		t.Fatal(err)
 	}
 	var revokedRoute string
-	ctrl.SetRevokeFn(func(routeId, id string) {
+	ctrl.SetRevokeFn(func(routeId, id string) (int, int) {
 		revokedRoute = routeId
 		if id != "same-host-revoke" {
 			t.Fatalf("revoke host=%q", id)
 		}
+		return 1, 1
 	})
 	secondInvite, err := ctrl.CreateInvite(time.Minute)
 	if err != nil {
@@ -395,13 +396,14 @@ func TestDeleteHostRemovesRecordAndAllowsReenroll(t *testing.T) {
 		t.Fatal(err)
 	}
 	called := false
-	ctrl.SetRevokeFn(func(routeId, id string) {
+	ctrl.SetRevokeFn(func(routeId, id string) (int, int) {
 		called = true
 		if id != hostID || routeId == "" {
 			t.Fatalf("revokeFn route=%q id=%q", routeId, id)
 		}
+		return 1, 1
 	})
-	if err := ctrl.DeleteHost(hostID); err != nil {
+	if _, _, err := ctrl.DeleteHost(hostID); err != nil {
 		t.Fatal(err)
 	}
 	if !called {
@@ -458,5 +460,29 @@ func TestPurgeStaleInvitesLeavesLiveCode(t *testing.T) {
 	}
 	if err := ctrl.DeleteInvite(left[0].ID); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestEnrollRejectsUnaddressableHostID(t *testing.T) {
+	ctrl, st := newTestControl(t)
+	defer st.Close()
+	invite, err := ctrl.CreateInvite(time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{"a/b", "a.b", "..", "a b", "p%2Fq", strings.Repeat("x", 65)} {
+		req := enrollRequest(t, invite, bad, priv)
+		if _, err := ctrl.Enroll(req); err == nil {
+			t.Fatalf("Enroll accepted hostId %q, want rejection", bad)
+		}
+	}
+	// The invite must remain consumable by a legitimate host after all rejects.
+	req := enrollRequest(t, invite, "legit-host-1", priv)
+	if _, err := ctrl.Enroll(req); err != nil {
+		t.Fatalf("legitimate enroll after rejects failed: %v", err)
 	}
 }

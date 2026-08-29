@@ -81,6 +81,7 @@
           <h2 id="forgeTitle">签发邀请码</h2>
           <p>30 分钟有效 · 一次性 · 仅显示一次</p>
         </header>
+        <p class="banner-warn" id="publicHostMissing" hidden role="alert">未配置 <code>public_host</code> / <code>RELAY_HOST</code>：接入串与二维码不可用，只能签发裸邀请码。请在 config 中填写公网域名后重启 control。</p>
         <div class="forge-body">
           <div class="forge-action">
             <button class="button button--primary" id="btnInvite" type="button">创建邀请码</button>
@@ -96,6 +97,10 @@
               <span class="stat-note">仅显示这一次，关闭页面后无法找回。</span>
             </div>
             <div id="enrollBlock" hidden>
+              <div class="invite-qr">
+                <canvas id="inviteQr" width="220" height="220" aria-label="接入串二维码" role="img"></canvas>
+                <p class="stat-note">手机任意扫码器扫这张图，把解码出的接入串发到电脑，粘贴进插件「远端」面板即可完成接入。</p>
+              </div>
               <details class="invite-advanced">
                 <summary>自托管完整接入串</summary>
                 <div class="invite-code-row">

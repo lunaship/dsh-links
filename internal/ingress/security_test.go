@@ -158,15 +158,15 @@ func TestEnrollHasDedicatedPerIPRateLimit(t *testing.T) {
 }
 
 func TestConnectionAdmissionReservesRolesAndBoundsPerIP(t *testing.T) {
-	ing := &Ingress{maxConns: 4, maxConnsPerIP: 2, connsByIP: make(map[string]int)}
+	ing := &Ingress{maxConns: 4, maxConnsPerIP: 2, maxPreAuthConns: 16, connsByIP: make(map[string]int)}
 	if !ing.acquireConnection("192.0.2.1", true) || !ing.acquireConnection("192.0.2.1", true) {
 		t.Fatal("connections within per-IP limit were rejected")
 	}
 	if ing.acquireConnection("192.0.2.1", false) {
 		t.Fatal("per-IP connection limit was bypassed across listeners")
 	}
-	ing.releaseConnection("192.0.2.1", true)
-	ing.releaseConnection("192.0.2.1", true)
+	ing.releaseConnection("192.0.2.1", true, false)
+	ing.releaseConnection("192.0.2.1", true, false)
 
 	if !ing.acquireConnection("192.0.2.1", true) || !ing.acquireConnection("192.0.2.2", true) || !ing.acquireConnection("192.0.2.3", true) {
 		t.Fatal("client connections within listener budget were rejected")
@@ -176,6 +176,73 @@ func TestConnectionAdmissionReservesRolesAndBoundsPerIP(t *testing.T) {
 	}
 	if !ing.acquireConnection("192.0.2.4", false) {
 		t.Fatal("reserved agent capacity was unavailable")
+	}
+}
+
+// Pre-authentication connections have a separate, smaller floor so a flood
+// of unauthenticated connections cannot starve authenticated ones.
+func TestPreAuthPoolReservesAuthenticatedCapacity(t *testing.T) {
+	ing := &Ingress{maxConns: 4, maxConnsPerIP: 4, maxPreAuthConns: 1, connsByIP: make(map[string]int)}
+	if !ing.acquireConnection("192.0.2.1", true) {
+		t.Fatal("first pre-auth connection rejected")
+	}
+	if ing.acquireConnection("192.0.2.2", true) {
+		t.Fatal("pre-auth pool allowed a second unauthenticated connection")
+	}
+
+	// Promoting the first connection frees its pre-auth slot for a newcomer.
+	ctx := &connContext{remoteKey: "192.0.2.1"}
+	ing.promoteConnection(ctx)
+	if !ing.acquireConnection("192.0.2.2", true) {
+		t.Fatal("second pre-auth connection rejected after promote")
+	}
+	if ctx.authenticated != true {
+		t.Fatal("promoteConnection did not mark the context authenticated")
+	}
+
+	ing.releaseConnection("192.0.2.1", true, ctx.authenticated)
+	ing.releaseConnection("192.0.2.2", true, false)
+	if ing.preAuthConns != 0 || ing.authConns != 0 || ing.connCount != 0 {
+		t.Fatalf("release accounting mismatch: pre=%d auth=%d total=%d", ing.preAuthConns, ing.authConns, ing.connCount)
+	}
+}
+
+// IPv6 sources are masked to their network prefix for every per-IP limit,
+// so rotating addresses inside one /64 cannot multiply the budget.
+func TestIPv6PrefixKey(t *testing.T) {
+	cases := []struct {
+		addr   string
+		prefix int
+		want   string
+	}{
+		{"192.0.2.7", 64, "192.0.2.7"},
+		{"2001:db8::1", 64, "2001:db8::"},
+		{"2001:db8:1:2::3", 64, "2001:db8:1:2::"},
+		{"2001:db8:1:2:ffff::3", 128, "2001:db8:1:2:ffff::3"},
+		{"2001:db8:1:2::3", 56, "2001:db8:1::"},
+		{"::ffff:192.0.2.9", 64, "192.0.2.9"},
+		{"not-an-ip", 64, "not-an-ip"},
+	}
+	for _, c := range cases {
+		if got := ipKey(c.addr, c.prefix); got != c.want {
+			t.Errorf("ipKey(%q, %d) = %q, want %q", c.addr, c.prefix, got, c.want)
+		}
+	}
+	// A /64 and a /48 neighbor share the default aggregation key.
+	a := ipKey("2001:db8::1", 64)
+	b := ipKey("2001:db8:0:0::2", 64)
+	if a != b {
+		t.Fatalf("same-prefix addresses did not aggregate: %q vs %q", a, b)
+	}
+	ing := &Ingress{maxConns: 2, maxConnsPerIP: 1, maxPreAuthConns: 2, connsByIP: make(map[string]int)}
+	if !ing.acquireConnection(ipKey("2001:db8::1", 64), true) {
+		t.Fatal("first v6 connection rejected")
+	}
+	if ing.acquireConnection(ipKey("2001:db8::2", 64), true) {
+		t.Fatal("second address inside the same /64 bypassed the per-prefix bound")
+	}
+	if !ing.acquireConnection(ipKey("2001:db9::1", 64), true) {
+		t.Fatal("address in a different /64 was rejected")
 	}
 }
 
@@ -392,7 +459,7 @@ func TestStaleBindRejectedAfterReenroll(t *testing.T) {
 	ing, ctrl, cleanup := setupIngress(t)
 	defer cleanup()
 	_, agentAddr := getAddrs(ing)
-	ctrl.SetRevokeFn(func(string, string) {})
+	ctrl.SetRevokeFn(func(string, string) (int, int) { return 1, 1 })
 
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -499,7 +566,7 @@ func TestOldGenerationNotDeleted(t *testing.T) {
 		}
 	}
 	if targetId != "" {
-		_ = ctrl.RevokeHost(targetId)
+		_, _, _ = ctrl.RevokeHost(targetId)
 		time.Sleep(100 * time.Millisecond)
 		// Try to re-register with old capability (generation 1) should fail with REVOKED
 		// Use raw dial
@@ -730,7 +797,7 @@ func TestHostRevokeClosesWithin1s(t *testing.T) {
 	if hid == "" {
 		t.Fatalf("host not found")
 	}
-	if err := ctrl.RevokeHost(hid); err != nil {
+	if _, _, err := ctrl.RevokeHost(hid); err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
 	// The control revoke callback should close the route immediately.
@@ -976,7 +1043,7 @@ func TestTLSHandshakeStallReleasesSlot(t *testing.T) {
 	issuerPub := ed25519.NewKeyFromSeed(issuerSeed[:]).Public().(ed25519.PublicKey)
 	reg := registry.New(100)
 	// maxConns=1: the stalled connection occupies the entire budget.
-	ing := New("127.0.0.1:0", "127.0.0.1:0", tlsCfg, reg, NewInProcessControl(ctrl), metrics.New(), issuerPub, 20*time.Second, 10*time.Second, 65*time.Second, 100, 1, 0, nil)
+	ing := New("127.0.0.1:0", "127.0.0.1:0", tlsCfg, reg, NewInProcessControl(ctrl), metrics.New(), issuerPub, 20*time.Second, 10*time.Second, 65*time.Second, 100, 1, 64, 0, nil)
 	if err := ing.Start(); err != nil {
 		t.Fatalf("start ingress: %v", err)
 	}
@@ -1006,5 +1073,69 @@ func TestTLSHandshakeStallReleasesSlot(t *testing.T) {
 			t.Fatal("stalled TLS handshake held the only connection slot")
 		}
 		time.Sleep(300 * time.Millisecond)
+	}
+}
+
+// An agent may not enroll a hostId that the admin API cannot later address
+// (slash, dot, traversal labels). The wire protocol rejects it before any
+// control-plane work.
+func TestEnrollRejectsUnaddressableHostID(t *testing.T) {
+	ing, ctrl, cleanup := setupIngress(t)
+	defer cleanup()
+	_, agentAddr := getAddrs(ing)
+	invite, err := ctrl.CreateInvite(30 * time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, hostID := range []string{"a/b", "a.b", ".."} {
+		conn, err := net.Dial("tcp", agentAddr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fr := protocol.NewFrameReader(conn)
+		helloRaw, err := fr.ReadFrame(protocol.MaxHello)
+		if err != nil {
+			conn.Close()
+			t.Fatal(err)
+		}
+		var hello protocol.HelloFrame
+		if err := json.Unmarshal(helloRaw, &hello); err != nil {
+			conn.Close()
+			t.Fatal(err)
+		}
+		challenge, _ := base64.RawURLEncoding.DecodeString(hello.Challenge)
+		nonce, _ := cryptoutil.GenerateNonce()
+		ts := time.Now().Unix()
+		proof := ed25519.Sign(priv, cryptoutil.BuildEnrollTranscript(invite, hostID, pub, ts, nonce, challenge))
+		frame := protocol.EnrollFrame{
+			Type: protocol.TypeEnroll, InviteCode: invite, HostId: hostID,
+			HostPublicKey: base64.RawURLEncoding.EncodeToString(pub), Ts: ts,
+			Nonce: base64.RawURLEncoding.EncodeToString(nonce), Proof: base64.RawURLEncoding.EncodeToString(proof),
+		}
+		line, _ := json.Marshal(frame)
+		line = append(line, '\n')
+		if _, err := conn.Write(line); err != nil {
+			conn.Close()
+			t.Fatal(err)
+		}
+		respRaw, err := fr.ReadFrame(2048)
+		conn.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var response protocol.ErrorFrame
+		if err := json.Unmarshal(respRaw, &response); err != nil {
+			t.Fatal(err)
+		}
+		if response.Code != protocol.ErrBadRequest {
+			t.Fatalf("hostId %q attempt %d code=%s, want BAD_REQUEST", hostID, i, response.Code)
+		}
+	}
+	if hosts, err := ctrl.ListHosts(); err != nil || len(hosts) != 0 {
+		t.Fatalf("hosts after rejected enrolls = %d (err %v), want 0", len(hosts), err)
 	}
 }

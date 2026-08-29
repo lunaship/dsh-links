@@ -38,7 +38,10 @@ services:
       - source: control-config
         target: /etc/dsh-links-relay/config.toml
       - source: relay-certificate
-        target: /etc/dsh-links-relay/admin.crt
+        target: /etc/dsh-links-relay/relay.crt
+    environment:
+      # 供控制台生成完整接入串/二维码（优先于 config 中的 public_host）。
+      - RELAY_HOST=${DSH_RELAY_PUBLIC_HOST:-}
     secrets:
       - issuer-private
       - route-master

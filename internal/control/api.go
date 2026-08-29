@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/dsh-links/dsh-links-relay/internal/cryptoutil"
+	"github.com/dsh-links/dsh-links-relay/internal/protocol"
 	"github.com/dsh-links/dsh-links-relay/internal/registry"
 )
 
@@ -491,19 +492,35 @@ func (s *Server) handleHostItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if id, ok := actionTarget(r.URL.Path, "hosts", "revoke"); ok {
-		if err := s.control.RevokeHost(id); err != nil {
+		if !protocol.ValidHostID(id) {
+			http.Error(w, "invalid host id", http.StatusBadRequest)
+			return
+		}
+		delivered, acked, err := s.control.RevokeHost(id)
+		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		writeJSONOK(w, nil)
+		// Report how many relays provably closed the route. pending is the
+		// number of relays that only received the push and will converge via
+		// the reconciliation poll (reg.Revoke on next sync).
+		writeJSONOK(w, map[string]any{
+			"ok": true, "delivered": delivered, "acked": acked,
+			"pending": delivered - acked,
+		})
 		return
 	}
 	if id, ok := actionTarget(r.URL.Path, "hosts", "delete"); ok {
-		if err := s.control.DeleteHost(id); err != nil {
+		if !protocol.ValidHostID(id) {
+			http.Error(w, "invalid host id", http.StatusBadRequest)
+			return
+		}
+		delivered, acked, err := s.control.DeleteHost(id)
+		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		writeJSONOK(w, nil)
+		writeJSONOK(w, map[string]any{"ok": true, "delivered": delivered, "acked": acked})
 		return
 	}
 	http.Error(w, "bad path", http.StatusBadRequest)

@@ -71,3 +71,7 @@ func (c *InProcessControl) Renew(req *RenewProxyRequest) (string, error) {
 
 // Ensure InProcessControl satisfies ControlAPI
 var _ ControlAPI = (*InProcessControl)(nil)
+
+func (c *InProcessControl) ReportUsage(routeID []byte, rx, tx int64, connects int) error {
+	return c.ctrl.ReportUsage(routeID, rx, tx, connects)
+}

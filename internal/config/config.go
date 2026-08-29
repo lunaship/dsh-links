@@ -41,6 +41,7 @@ type Config struct {
 	MaxTotalStreams           int    `toml:"max_total_streams"`
 	DefaultMaxStreamsPerRoute int    `toml:"default_max_streams_per_route"`
 	MaxConns                  int    `toml:"max_conns"`
+	IPv6PrefixLen             int    `toml:"ipv6_prefix_len"`
 	BridgeMaxLifetime         string `toml:"bridge_max_lifetime"`
 	HeartbeatInterval         string `toml:"heartbeat_interval"`
 	AgentDeadAfter            string `toml:"agent_dead_after"`
@@ -72,6 +73,7 @@ func DefaultConfig() *Config {
 		MaxTotalStreams:           1000,
 		DefaultMaxStreamsPerRoute: 8,
 		MaxConns:                  2000,
+		IPv6PrefixLen:             64,
 		BridgeMaxLifetime:         "30m",
 		HeartbeatInterval:         "20s",
 		AgentDeadAfter:            "65s",
@@ -136,6 +138,9 @@ func (c *Config) Validate() error {
 	}
 	if c.MaxConns <= 0 {
 		return fmt.Errorf("max_conns must be >0")
+	}
+	if c.IPv6PrefixLen != 0 && (c.IPv6PrefixLen < 32 || c.IPv6PrefixLen > 128) {
+		return fmt.Errorf("ipv6_prefix_len must be 32..128 (or 0 to disable aggregation)")
 	}
 	return nil
 }

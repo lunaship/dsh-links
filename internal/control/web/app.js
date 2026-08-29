@@ -155,6 +155,8 @@ function renderOverview(data) {
   }).format(new Date())}`;
   setConnectionState(true);
   renderTlsFingerprint(data && data.tlsFingerprint);
+  const hasPublicHost = typeof data.publicHost === 'string' && data.publicHost.trim() !== '';
+  byId('publicHostMissing').hidden = hasPublicHost;
 }
 
 function renderTlsFingerprint(value) {
@@ -379,6 +381,16 @@ byId('btnInvite').addEventListener('click', async () => {
       byId('enrollURI').textContent = latestEnrollURI;
       byId('enrollBlock').hidden = !latestEnrollURI;
       byId('inviteResult').hidden = false;
+      if (latestEnrollURI) {
+        const canvas = byId('inviteQr');
+        const ok = qrRender(canvas, latestEnrollURI);
+        if (!ok) {
+          canvas.style.display = 'none';
+          byId('inviteQrNote')?.remove?.();
+        } else {
+          canvas.style.display = '';
+        }
+      }
       byId('btnCopyInvite').focus();
       await Promise.all([loadInvites(), loadOverview()]);
       announce('接入码已创建。');
@@ -492,3 +504,366 @@ document.querySelectorAll('.rail-link').forEach(link => {
 });
 
 checkSession();
+
+/* ---- QR 编码器（byte 模式 + 纠错 M + 版本 1..40） ----
+ * 三类模块绘制、Reed-Solomon、掩码与评分逻辑参考
+ * nayuki/QR-Code-generator (MIT License) 的实现思路重写。
+ * 用途：把一次性接入串渲染成二维码，方便测试者扫码搬运到电脑。
+ */
+const QR_ECC_PER_BLOCK = [-1, 10, 16, 26, 18, 24, 16, 18, 22, 22, 26, 30, 22, 22, 24, 24, 28, 28, 26, 26, 26, 26, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28];
+const QR_BLOCKS_PER_LEVEL = [-1, 1, 1, 1, 2, 2, 4, 4, 4, 5, 5, 5, 8, 9, 9, 10, 10, 11, 13, 14, 16, 17, 17, 18, 20, 21, 23, 25, 26, 28, 29, 31, 33, 35, 37, 38, 40, 43, 45, 47, 49];
+
+function qrRawDataModules(ver) {
+  let result = (16 * ver + 128) * ver + 64;
+  if (ver >= 2) {
+    const numAlign = Math.floor(ver / 7) + 2;
+    result -= (25 * numAlign - 10) * numAlign - 55;
+    if (ver >= 7) result -= 36;
+  }
+  return result;
+}
+
+function qrCapacityBytes(ver) {
+  const total = Math.floor(qrRawDataModules(ver) / 8);
+  return total - QR_ECC_PER_BLOCK[ver] * QR_BLOCKS_PER_LEVEL[ver];
+}
+
+function qrFitVersion(textLen) {
+  for (let ver = 1; ver <= 40; ver++) {
+    const countBits = ver < 10 ? 8 : 16;
+    if (qrCapacityBytes(ver) * 8 >= 4 + countBits + textLen * 8) return ver;
+  }
+  return 0;
+}
+
+// GF(2^8) w/ 0x11D —— 对数表
+const QR_GF_EXP = new Uint8Array(512);
+const QR_GF_LOG = new Uint8Array(256);
+(function () {
+  let x = 1;
+  for (let i = 0; i < 255; i++) {
+    QR_GF_EXP[i] = x;
+    QR_GF_LOG[x] = i;
+    x <<= 1;
+    if (x & 0x100) x ^= 0x11D;
+  }
+  for (let i = 255; i < 512; i++) QR_GF_EXP[i] = QR_GF_EXP[i - 255];
+})();
+
+function qrMul(a, b) {
+  return a === 0 || b === 0 ? 0 : QR_GF_EXP[QR_GF_LOG[a] + QR_GF_LOG[b]];
+}
+
+function qrRSDivisor(degree) {
+  let result = [1];
+  for (let i = 0; i < degree; i++) {
+    const next = new Array(result.length + 1).fill(0);
+    for (let j = 0; j < result.length; j++) {
+      next[j] ^= qrMul(result[j], QR_GF_EXP[i]);
+      next[j + 1] ^= result[j];
+    }
+    result = next;
+  }
+  return result;
+}
+
+function qrRSRemainder(data, divisor) {
+  // divisor 以升序存储（[常数项, x 系数, ..., x^d 系数]，首项恒 1 在末尾）。
+  // 除法寄存器按降序语义推进，因此系数从高次往低次取。
+  const result = new Array(divisor.length - 1).fill(0);
+  for (const b of data) {
+    const factor = b ^ result[0];
+    result.shift();
+    result.push(0);
+    for (let i = 0; i < result.length; i++) result[i] ^= qrMul(divisor[divisor.length - 2 - i], factor);
+  }
+  return result;
+}
+
+function qrBuildData(text, ver) {
+  const countBits = ver < 10 ? 8 : 16;
+  const capBytes = qrCapacityBytes(ver);
+  const bytes = new TextEncoder().encode(text);
+  const bits = [];
+  const pushBits = (value, length) => {
+    for (let i = length - 1; i >= 0; i--) bits.push((value >>> i) & 1);
+  };
+  pushBits(0b0100, 4); // byte mode
+  pushBits(bytes.length, countBits);
+  for (const b of bytes) pushBits(b, 8);
+  const capacityBits = capBytes * 8;
+  const terminator = Math.min(4, capacityBits - bits.length);
+  pushBits(0, terminator);
+  while (bits.length % 8 !== 0) bits.push(0);
+  const padByte = [0xEC, 0x11];
+  let i = 0;
+  while (bits.length < capacityBits) pushBits(padByte[i++ % 2], 8);
+  return bits;
+}
+
+function qrSplitIntoBlocks(data, ver, eccLen, numBlocks) {
+  const rawCodewords = Math.floor(qrRawDataModules(ver) / 8);
+  const numShortBlocks = numBlocks - (rawCodewords % numBlocks);
+  const shortBlockLen = Math.floor(rawCodewords / numBlocks);
+  const bytes = [];
+  for (let i = 0; i < data.length; i += 8) {
+    let b = 0;
+    for (let j = 0; j < 8; j++) b = (b << 1) | data[i + j];
+    bytes.push(b);
+  }
+  const blocks = [];
+  const rsDiv = qrRSDivisor(eccLen);
+  let k = 0;
+  for (let i = 0; i < numBlocks; i++) {
+    const dat = bytes.slice(k, k + shortBlockLen - eccLen + (i < numShortBlocks ? 0 : 1));
+    k += dat.length;
+    const ecc = qrRSRemainder(dat, rsDiv);
+    blocks.push({ dat, ecc });
+  }
+  return blocks;
+}
+
+function qrInterleave(blocks) {
+  const result = [];
+  const maxData = Math.max(...blocks.map(b => b.dat.length));
+  for (let i = 0; i < maxData; i++) {
+    for (const b of blocks) if (i < b.dat.length) result.push(b.dat[i]);
+  }
+  const maxEcc = Math.max(...blocks.map(b => b.ecc.length));
+  for (let i = 0; i < maxEcc; i++) {
+    for (const b of blocks) if (i < b.ecc.length) result.push(b.ecc[i]);
+  }
+  return result;
+}
+
+function qrAlignmentPositions(ver) {
+  if (ver === 1) return [];
+  const size = ver * 4 + 17;
+  const numAlign = Math.floor(ver / 7) + 2;
+  const step = ver === 32 ? 26 : Math.ceil((ver * 4 + 4) / (numAlign * 2 - 2)) * 2;
+  const result = [6];
+  for (let pos = size - 7; result.length < numAlign; pos -= step) result.splice(1, 0, pos);
+  return result;
+}
+
+// 画除数据码字以外的全部功能模块。
+// 返回 { m, fn, size }：m 是模块颜色（true=深色），fn 标记功能模块
+// （无论深浅），数据放置只允许写入 !fn 的格子——白色格式位/分隔符/对齐
+// 白圈是功能模块，不能仅凭颜色判断。
+function qrDrawFunctionPatterns(ver) {
+  const size = ver * 4 + 17;
+  const m = Array.from({ length: size }, () => new Array(size).fill(false));
+  const fn = Array.from({ length: size }, () => new Array(size).fill(false));
+  const set = (x, y, v) => { m[y][x] = v; fn[y][x] = true; };
+  const setRange = (x0, y0, x1, y1, v) => {
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) set(x, y, v);
+  };
+  const drawFinder = (cx, cy) => {
+    for (let dy = -4; dy <= 4; dy++) {
+      for (let dx = -4; dx <= 4; dx++) {
+        const dist = Math.max(Math.abs(dx), Math.abs(dy));
+        const x = cx + dx, y = cy + dy;
+        if (x >= 0 && x < size && y >= 0 && y < size) set(x, y, dist !== 2 && dist !== 4);
+      }
+    }
+  };
+  drawFinder(3, 3); drawFinder(size - 4, 3); drawFinder(3, size - 4);
+
+  // 时序
+  for (let i = 8; i < size - 8; i++) {
+    set(i, 6, i % 2 === 0);
+    set(6, i, i % 2 === 0);
+  }
+  // 对齐
+  const aligns = qrAlignmentPositions(ver);
+  for (const y of aligns) {
+    for (const x of aligns) {
+      if ((x === 6 && y === 6) || (x === 6 && y === size - 7) || (x === size - 7 && y === 6)) continue;
+      for (let dy = -2; dy <= 2; dy++) {
+        for (let dx = -2; dx <= 2; dx++) {
+          set(x + dx, y + dy, Math.max(Math.abs(dx), Math.abs(dy)) !== 1);
+        }
+      }
+    }
+  }
+  set(8, size - 8, true); // 暗模块
+  return { m, fn, size };
+}
+
+function qrFormatBits(bits) {
+  let data = bits;
+  let rem = data;
+  for (let i = 0; i < 10; i++) rem = (rem << 1) ^ ((rem >>> 9) * 0x537);
+  const full = ((data << 10) | rem) ^ 0x5412;
+  const out = [];
+  for (let i = 0; i < 15; i++) out.push((full >>> i) & 1);
+  return out;
+}
+
+function qrVersionBits(ver) {
+  let rem = ver;
+  for (let i = 0; i < 12; i++) rem = (rem << 1) ^ ((rem >>> 11) * 0x1F25);
+  const full = (ver << 12) | rem;
+  const out = [];
+  for (let i = 0; i < 18; i++) out.push((full >>> i) & 1);
+  return out;
+}
+
+function qrDrawFormatAndVersion(state, ver, formatBits) {
+  const { m, fn, size } = state;
+  const fmt = qrFormatBits(formatBits);
+  const put = (x, y, v) => {
+    if (x >= 0 && x < size && y >= 0 && y < size) { m[y][x] = v; fn[y][x] = true; }
+  };
+  // 围绕左上 finder 的 15 位
+  for (let i = 0; i < 6; i++) put(8, i, fmt[i]);
+  put(8, 7, fmt[6]);
+  put(8, 8, fmt[7]);
+  put(7, 8, fmt[8]);
+  for (let i = 9; i < 15; i++) put(14 - i, 8, fmt[i]);
+  // 另两份副本
+  for (let i = 0; i < 8; i++) put(size - 1 - i, 8, fmt[i]);
+  for (let i = 8; i < 15; i++) put(8, size - 15 + i, fmt[i]);
+  put(8, size - 8, true); // 暗模块旁固定
+  if (ver >= 7) {
+    const vb = qrVersionBits(ver);
+    for (let i = 0; i < 18; i++) {
+      const a = Math.floor(i / 3), b = i % 3;
+      put(size - 11 + b, a, vb[i]);
+      put(a, size - 11 + b, vb[i]);
+    }
+  }
+}
+
+function qrPlaceCodewords(state, ver, codewords, maskIdx) {
+  const { m, size } = state;
+  const maskFns = [
+    (x, y) => (x + y) % 2 === 0,
+    (x, y) => y % 2 === 0,
+    (x, y) => x % 3 === 0,
+    (x, y) => (x + y) % 3 === 0,
+    (x, y) => (Math.floor(y / 2) + Math.floor(x / 3)) % 2 === 0,
+    (x, y) => (x * y) % 2 + (x * y) % 3 === 0,
+    (x, y) => ((x * y) % 2 + (x * y) % 3) % 2 === 0,
+    (x, y) => ((x + y) % 2 + (x * y) % 3) % 2 === 0,
+  ];
+  const mask = maskFns[maskIdx];
+  // 数据位从流的头部（模式指示位）正向填充；剩余位（remainder bits）
+  // 也计入 i 的推进，与规范保持同步。
+  let i = 0;
+  const totalBits = codewords.length * 8;
+  let x = size - 1, upward = true;
+  while (x > 0) {
+    if (x === 6) x--;
+    for (let c = 0; c < size; c++) {
+      const y = upward ? size - 1 - c : c;
+      for (let j = 0; j < 2; j++) {
+        const xx = x - j;
+        if (xx < 0) continue;
+        if (!state.fn[y][xx]) {
+          if (i < totalBits) {
+            const v = ((codewords[i >> 3] >>> (7 - (i & 7))) & 1) !== 0;
+            m[y][xx] = v !== mask(xx, y);
+          } else {
+            // 剩余位（remainder bits）：规范中为 0，与其他数据模块一样
+            // 参与掩码翻转（解码器忽略其取值，但矩阵应与参考实现一致）。
+            m[y][xx] = mask(xx, y);
+          }
+          i++;
+        }
+      }
+    }
+    x -= 2;
+    upward = !upward;
+  }
+}
+
+function qrPenalty(state) {
+  const { m, size } = state;
+  let score = 0;
+  // 规则 1/2：行列连块
+  for (let run = 0, i = 0; i < size; i++) {
+    let prev = null;
+    run = 0;
+    for (let j = 0; j <= size; j++) {
+      const v = j < size ? m[i][j] : !prev;
+      if (v === prev) { run++; continue; }
+      if (prev !== null && run >= 5) score += 3 + (run - 5);
+      prev = v; run = 1;
+    }
+  }
+  for (let j = 0; j < size; j++) {
+    prev = null; run = 0;
+    for (let i = 0; i <= size; i++) {
+      const v = i < size ? m[i][j] : !prev;
+      if (v === prev) { run++; continue; }
+      if (prev !== null && run >= 5) score += 3 + (run - 5);
+      prev = v; run = 1;
+    }
+  }
+  // 规则 2：2x2 同色块
+  for (let y = 0; y < size - 1; y++) {
+    for (let x = 0; x < size - 1; x++) {
+      const v = m[y][x];
+      if (v === m[y][x + 1] && v === m[y + 1][x] && v === m[y + 1][x + 1]) score += 3;
+    }
+  }
+  // 规则 3：finder 伪装 1011101 前后各 4 白
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size - 6; x++) {
+      if (m[y][x] && !m[y][x + 1] && m[y][x + 2] && m[y][x + 3] && m[y][x + 4] && m[y][x + 5] && !m[y][x + 6]) {
+        if ((x + 7 < size && !m[y][x + 7]) || (x >= 4 && !m[y][x - 1])) score += 40;
+      }
+    }
+  }
+  for (let x = 0; x < size; x++) {
+    for (let y = 0; y < size - 6; y++) {
+      if (m[y][x] && !m[y + 1][x] && m[y + 2][x] && m[y + 3][x] && m[y + 4][x] && m[y + 5][x] && !m[y + 6][x]) {
+        if ((y + 7 < size && !m[y + 7][x]) || (y >= 4 && !m[y - 1][x])) score += 40;
+      }
+    }
+  }
+  // 规则 4：深浅比例
+  let dark = 0;
+  for (const row of m) for (const v of row) if (v) dark++;
+  const total = size * size;
+  const k = Math.ceil(Math.abs(dark * 20 - total * 10) / total) - 1;
+  score += k * 10;
+  return score;
+}
+
+function qrRender(canvas, text) {
+  const textLen = new TextEncoder().encode(text).length;
+  const ver = qrFitVersion(textLen);
+  if (!ver) return false;
+  const bits = qrBuildData(text, ver);
+  const eccLen = QR_ECC_PER_BLOCK[ver];
+  const blocks = qrSplitIntoBlocks(bits, ver, eccLen, QR_BLOCKS_PER_LEVEL[ver]);
+  const codewords = qrInterleave(blocks);
+  // 数据模块的掩码在 qrPlaceCodewords 内翻转；格式/版本位是功能模块，
+  // 在数据放置前画好且不被掩码影响（格式位自带 0x5412 异或）。
+  let bestScore = Infinity, bestState = null;
+  for (let mask = 0; mask < 8; mask++) {
+    const state = qrDrawFunctionPatterns(ver);
+    // 格式信息 5 位 = [纠错级别(2) | 掩码(3)]，纠错位在高位。
+    qrDrawFormatAndVersion(state, ver, (0b00 << 3) | mask);
+    qrPlaceCodewords(state, ver, codewords, mask);
+    const score = qrPenalty(state);
+    if (score < bestScore) { bestScore = score; bestState = state; }
+  }
+  const { m, size } = bestState;
+  const scale = Math.max(2, Math.floor(220 / (size + 8)));
+  const quiet = Math.max(2, Math.floor((220 - size * scale) / 2));
+  canvas.width = size * scale + quiet * 2;
+  canvas.height = canvas.width;
+  const g = canvas.getContext('2d');
+  g.fillStyle = '#ffffff';
+  g.fillRect(0, 0, canvas.width, canvas.height);
+  g.fillStyle = '#0d1117';
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      if (m[y][x]) g.fillRect(quiet + x * scale, quiet + y * scale, scale, scale);
+    }
+  }
+  return true;
+}

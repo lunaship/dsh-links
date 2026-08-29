@@ -125,10 +125,13 @@ func runControl(configPath string) {
 	defer ipcSrv.Close()
 	log.Printf("control IPC listening on %s", cfg.ControlSocket)
 
-	// Inject revoke push callback so RevokeHost immediately notifies relays.
-	ctrl.SetRevokeFn(func(routeId, hostId string) {
-		n := ipcSrv.BroadcastRevoke(routeId, hostId)
-		log.Printf("host revoked %s host=%s broadcast to %d relay(s)", routeId[:min(len(routeId), 8)], logutil.Value(hostId), n)
+	// Inject revoke push callback so RevokeHost immediately notifies relays,
+	// and waits up to 1s for each relay to confirm the route is actually
+	// closed locally (delivered/acked reach the admin API response).
+	ctrl.SetRevokeFn(func(routeId, hostId string) (int, int) {
+		delivered, acked := ipcSrv.BroadcastRevokeAndWait(routeId, hostId, time.Second)
+		log.Printf("host revoked %s host=%s delivered=%d acked=%d", routeId[:min(len(routeId), 8)], logutil.Value(hostId), delivered, acked)
+		return delivered, acked
 	})
 
 	// Start HTTP admin
@@ -246,7 +249,7 @@ func runRelay(configPath string) {
 		issuerPub: issuerPub,
 	}
 
-	ing := ingress.New(cfg.ClientListen, cfg.AgentListen, tlsConfig, reg, relayCtrl, m, issuerPub, cfg.HeartbeatIntervalDur, cfg.BindTimeoutDur, cfg.AgentDeadAfterDur, cfg.MaxTotalStreams, cfg.MaxConns, cfg.BridgeMaxLifetimeDur, log.Default())
+	ing := ingress.New(cfg.ClientListen, cfg.AgentListen, tlsConfig, reg, relayCtrl, m, issuerPub, cfg.HeartbeatIntervalDur, cfg.BindTimeoutDur, cfg.AgentDeadAfterDur, cfg.MaxTotalStreams, cfg.MaxConns, cfg.IPv6PrefixLen, cfg.BridgeMaxLifetimeDur, log.Default())
 	if err := ing.Start(); err != nil {
 		log.Fatalf("start ingress: %v", err)
 	}
@@ -420,4 +423,8 @@ func (a *ipcControlAdapter) Renew(req *ingress.RenewProxyRequest) (string, error
 		Proof:         req.Proof,
 		OldCapability: req.OldCapability,
 	})
+}
+
+func (a *ipcControlAdapter) ReportUsage(routeID []byte, rx, tx int64, connects int) error {
+	return a.client.ReportUsage(routeID, rx, tx, connects)
 }

@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"io"
 	"net"
 	"os"
@@ -367,7 +368,7 @@ func TestIPCServerPushesRevocationSetOnConnect(t *testing.T) {
 		t.Fatal(err)
 	}
 	routeB64 := base64.RawURLEncoding.EncodeToString(enrolled.RouteId)
-	if err := ctrl.RevokeHost("rev-sync-host"); err != nil {
+	if _, _, err := ctrl.RevokeHost("rev-sync-host"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -390,3 +391,115 @@ func TestIPCServerPushesRevocationSetOnConnect(t *testing.T) {
 		t.Fatal("revocation set not pushed to freshly connected relay")
 	}
 }
+
+// The relay confirms each revoke_notify with revoke_acked after applying it
+// locally, so BroadcastRevokeAndWait can report a provable ack count.
+func TestRevokeAckRoundTrip(t *testing.T) {
+	ctrl, st := newTestControl(t)
+	defer st.Close()
+	tempDir, err := os.MkdirTemp("", "dlr-ipc-ack-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tempDir)
+	socket := filepath.Join(tempDir, "control.sock")
+	server := NewIPCServer(ctrl, socket, "")
+	if err := server.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+
+	client := NewIPCClient(socket, "")
+	push := make(chan string, 1)
+	client.SetRevokeFn(func(routeID, _ string) {
+		// Non-blocking: the waitFor probe re-broadcasts while this channel may
+		// still hold a previous value, and a blocked fn would stall the ack.
+		select {
+		case push <- routeID:
+		default:
+		}
+	})
+	if err := client.Connect(); err != nil {
+		t.Fatal(err)
+	}
+	client.StartReconnect()
+	defer client.Close()
+
+	// Wait for the server goroutine to register this connection in its
+	// clients set after the auth frame (Connect returns before that).
+	waitFor := func(want int) {
+		t.Helper()
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			delivered, acked := server.BroadcastRevokeAndWait("route-ack-1", "host-ack-1", 200*time.Millisecond)
+			if delivered == want && acked == want {
+				return
+			}
+			time.Sleep(30 * time.Millisecond)
+		}
+	}
+	waitFor(1)
+
+	// The client is connected: broadcast must be delivered and acked within 1s.
+	delivered, acked := server.BroadcastRevokeAndWait("route-ack-1", "host-ack-1", time.Second)
+	if delivered != 1 || acked != 1 {
+		t.Fatalf("delivered=%d acked=%d, want both 1 (connected relay)", delivered, acked)
+	}
+	select {
+	case got := <-push:
+		if got != "route-ack-1" {
+			t.Fatalf("push route=%q", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("revoke push not received")
+	}
+
+	// No clients connected: nothing is delivered and nothing can be acked.
+	client.Close()
+	time.Sleep(50 * time.Millisecond)
+	delivered, acked = server.BroadcastRevokeAndWait("route-ack-2", "host-ack-2", 200*time.Millisecond)
+	if delivered != 0 || acked != 0 {
+		t.Fatalf("disconnected: delivered=%d acked=%d, want 0/0", delivered, acked)
+	}
+}
+
+// An ack for the wrong route does not count toward the revoked route.
+func TestRevokeAckMismatchedRouteNotCounted(t *testing.T) {
+	ctrl, st := newTestControl(t)
+	defer st.Close()
+	tempDir, err := os.MkdirTemp("", "dlr-ipc-ack2-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tempDir)
+	socket := filepath.Join(tempDir, "control.sock")
+	server := NewIPCServer(ctrl, socket, "")
+	if err := server.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+
+	client := NewIPCClient(socket, "")
+	client.SetRevokeFn(func(routeID, _ string) {
+		// Reply with a mismatched route on purpose (peer bug or misuse).
+		ack := IPCMessage{Type: "revoke_acked", Payload: jsonRaw(`{"routeId":"other-route","hostId":"x"}`)}
+		line, _ := json.Marshal(ack)
+		line = append(line, '\n')
+		client.writeMu.Lock()
+		_, _ = client.conn.Write(line)
+		client.writeMu.Unlock()
+	})
+	if err := client.Connect(); err != nil {
+		t.Fatal(err)
+	}
+	client.StartReconnect()
+	defer client.Close()
+
+	time.Sleep(100 * time.Millisecond)
+	delivered, acked := server.BroadcastRevokeAndWait("route-ack-3", "host-ack-3", 300*time.Millisecond)
+	if delivered != 1 || acked != 0 {
+		t.Fatalf("delivered=%d acked=%d, want 1/0 (mismatched ack ignored)", delivered, acked)
+	}
+}
+
+func jsonRaw(s string) json.RawMessage { return json.RawMessage(s) }

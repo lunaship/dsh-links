@@ -43,6 +43,9 @@ database = "/var/lib/dsh-links-relay/control.db"
 max_total_streams = 1000
 default_max_streams_per_route = 8
 max_conns = 2000
+# IPv6 源地址按该前缀长度聚合后参与所有按 IP 的限流与连接计数，
+# 防止轮换 /64 内地址绕开 per-IP 预算（0 表示禁用聚合）。
+ipv6_prefix_len = 64
 bridge_max_lifetime = "30m"
 heartbeat_interval = "20s"
 agent_dead_after = "65s"

@@ -207,6 +207,46 @@ func TestHostIdLength(t *testing.T) {
 	}
 }
 
+func TestValidHostID(t *testing.T) {
+	valid := []string{"dsh-0123456789abcdef", "host-A_1", "h", "h-" + strings.Repeat("x", 62)}
+	for _, s := range valid {
+		if !ValidHostID(s) {
+			t.Errorf("ValidHostID(%q) = false, want true", s)
+		}
+	}
+	invalid := []string{
+		"",
+		"a/b",   // slash breaks admin API path routing
+		"a.b",   // dot conflicts with clean-path handling
+		"..",    // path traversal label
+		"a b",   // whitespace
+		"a%2Fb", // encoded slash
+		"a\u0000b",
+		"中文",
+		"host_id!",
+		strings.Repeat("x", 65), // too long
+	}
+	for _, s := range invalid {
+		if ValidHostID(s) {
+			t.Errorf("ValidHostID(%q) = true, want false", s)
+		}
+	}
+}
+
+func TestValidateEnrollRejectsUnaddressableHostID(t *testing.T) {
+	mk := func(hostId string) []byte {
+		return []byte(`{"type":"ENROLL","inviteCode":"` + base64.RawURLEncoding.EncodeToString(make([]byte, 24)) + `","hostId":"` + hostId + `","hostPublicKey":"` + base64.RawURLEncoding.EncodeToString(make([]byte, 32)) + `","ts":` + jsonNumberNow() + `,"nonce":"` + base64.RawURLEncoding.EncodeToString(make([]byte, 16)) + `","proof":"` + base64.RawURLEncoding.EncodeToString(make([]byte, 64)) + `"}`)
+	}
+	for _, hostId := range []string{"a/b", "a.b", "..", "a b"} {
+		if _, err := ValidateEnroll(mk(hostId)); err == nil {
+			t.Errorf("ValidateEnroll accepted hostId %q", hostId)
+		}
+	}
+	if _, err := ValidateEnroll(mk("legit-host-1")); err != nil {
+		t.Errorf("ValidateEnroll rejected legit hostId: %v", err)
+	}
+}
+
 func TestCapabilityTamper(t *testing.T) {
 	seed := sha256.Sum256([]byte("test issuer"))
 	priv := ed25519.NewKeyFromSeed(seed[:])

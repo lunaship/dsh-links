@@ -92,6 +92,7 @@ type IPCServer struct {
 	clients            map[net.Conn]struct{}
 	connections        map[net.Conn]struct{}
 	writers            map[net.Conn]*sync.Mutex
+	ackChans           map[net.Conn]chan RevokeAck
 	preAuthConnections int
 	revokeHandlers     []func(routeId string)
 	// authToken is the shared IPC secret. The real trust boundary is the Unix
@@ -111,6 +112,7 @@ func NewIPCServer(ctrl *Control, socketPath string, authToken string) *IPCServer
 	return &IPCServer{
 		control: ctrl, socket: socketPath, authToken: authToken,
 		clients: make(map[net.Conn]struct{}), connections: make(map[net.Conn]struct{}), writers: make(map[net.Conn]*sync.Mutex),
+		ackChans: make(map[net.Conn]chan RevokeAck),
 	}
 }
 
@@ -176,6 +178,13 @@ func (s *IPCServer) acceptLoop() {
 	}
 }
 
+// RevokeAck is a relay-side confirmation that a revoke_notify was applied
+// (the route was removed from the in-memory registry and its streams closed).
+type RevokeAck struct {
+	RouteId string `json:"routeId"`
+	HostId  string `json:"hostId"`
+}
+
 func (s *IPCServer) handleConn(conn net.Conn) {
 	authenticated := s.authToken == ""
 	defer func() {
@@ -186,6 +195,7 @@ func (s *IPCServer) handleConn(conn net.Conn) {
 		delete(s.clients, conn)
 		delete(s.connections, conn)
 		delete(s.writers, conn)
+		delete(s.ackChans, conn)
 		s.mu.Unlock()
 		conn.Close()
 	}()
@@ -221,6 +231,7 @@ func (s *IPCServer) handleConn(conn net.Conn) {
 		authenticated = true
 	}
 	s.clients[conn] = struct{}{}
+	s.ackChans[conn] = make(chan RevokeAck, 16)
 	s.mu.Unlock()
 	// Reconcile persisted revocations before serving requests: a relay that
 	// (re)connects (or that missed a BroadcastRevoke while offline) drops any
@@ -251,6 +262,41 @@ func (s *IPCServer) handleConn(conn net.Conn) {
 			s.handleVerifyRouteMAC(conn, msg.Payload)
 		case "revoke_notify":
 			s.handleRevokeNotify(conn, msg.Payload)
+		case "revoke_acked":
+			// The relay confirmed that the route was revoked in its local
+			// registry. Deliver it to the waiting BroadcastRevokeAndWait.
+			var ack RevokeAck
+			if err := json.Unmarshal(msg.Payload, &ack); err != nil || ack.RouteId == "" {
+				continue
+			}
+			s.mu.Lock()
+			ch := s.ackChans[conn]
+			s.mu.Unlock()
+			if ch != nil {
+				select {
+				case ch <- ack:
+				default:
+				}
+			}
+		case "stats_report":
+			// Relay pushes per-route byte/connect counters periodically.
+			var sr struct {
+				RouteID  string `json:"routeId"`
+				RX       int64  `json:"rx"`
+				TX       int64  `json:"tx"`
+				Connects int    `json:"connects"`
+			}
+			if err := json.Unmarshal(msg.Payload, &sr); err != nil || sr.RouteID == "" {
+				continue
+			}
+			routeRaw, err := base64.RawURLEncoding.DecodeString(sr.RouteID)
+			if err != nil {
+				continue
+			}
+			if err := s.control.ReportUsage(routeRaw, sr.RX, sr.TX, sr.Connects); err != nil {
+				// Non-fatal: stats lag is acceptable.
+				continue
+			}
 		default:
 			s.sendIPCError(conn, "bad_request", "unknown type")
 		}
@@ -335,6 +381,18 @@ func (s *IPCServer) handleVerifyRouteMAC(conn net.Conn, payload json.RawMessage)
 // BroadcastRevoke sends a revoke notification to all connected relay clients.
 // Returns the number of clients that received the message.
 func (s *IPCServer) BroadcastRevoke(routeId, hostId string) int {
+	delivered, _ := s.BroadcastRevokeAndWait(routeId, hostId, 0)
+	return delivered
+}
+
+// BroadcastRevokeAndWait pushes a revoke notification to every connected
+// relay client and collects their revoke_acked confirmations until wait
+// elapses. The returned acked count is the number of relays that provably
+// removed the route from their local registry (and therefore closed or
+// rejected its streams); the gap delivered-acked is the number that only
+// received the push and will converge via the reconciliation poll. A wait of
+// zero skips the ack collection entirely.
+func (s *IPCServer) BroadcastRevokeAndWait(routeId, hostId string, wait time.Duration) (int, int) {
 	msg := IPCMessage{
 		Type:    "revoke_notify",
 		Payload: json.RawMessage(`{"routeId":` + jsonString(routeId) + `,` + `"hostId":` + jsonString(hostId) + `}`),
@@ -343,8 +401,10 @@ func (s *IPCServer) BroadcastRevoke(routeId, hostId string) int {
 	line = append(line, '\n')
 	s.mu.Lock()
 	clients := make([]net.Conn, 0, len(s.clients))
+	ackChans := make([]chan RevokeAck, 0, len(s.clients))
 	for c := range s.clients {
 		clients = append(clients, c)
+		ackChans = append(ackChans, s.ackChans[c])
 	}
 	s.mu.Unlock()
 	delivered := make(chan bool, len(clients))
@@ -359,7 +419,24 @@ func (s *IPCServer) BroadcastRevoke(routeId, hostId string) int {
 			count++
 		}
 	}
-	return count
+	acked := 0
+	if wait > 0 && len(ackChans) > 0 {
+		deadline := time.After(wait)
+	collect:
+		for _, ch := range ackChans {
+			select {
+			case ack := <-ch:
+				// Only count the ack for the route we revoked; a peer that
+				// answers with a mismatched routeId does not prove closure.
+				if ack.RouteId == routeId {
+					acked++
+				}
+			case <-deadline:
+				break collect
+			}
+		}
+	}
+	return count, acked
 }
 
 func (s *IPCServer) handleRevokeNotify(conn net.Conn, payload json.RawMessage) {
@@ -533,6 +610,9 @@ type IPCClient struct {
 	socket    string
 	mu        sync.Mutex
 	requestMu sync.Mutex
+	// writeMu serializes control-frame writes from the request path and the
+	// recvLoop's revoke ack, which can run concurrently.
+	writeMu   sync.Mutex
 	conn      net.Conn
 	reader    *bufio.Reader
 	// closed is closed when the client is explicitly Closed; prevents reconnect after shutdown
@@ -662,6 +742,17 @@ func (c *IPCClient) recvLoop() {
 				var n notify
 				if err := json.Unmarshal(msg.Payload, &n); err == nil && n.RouteId != "" {
 					fn(n.RouteId, n.HostId)
+					// Confirm to control that the route was actually revoked
+					// locally (registry removal + stream teardown), so the admin
+					// API can report a provable ack count instead of "pushed".
+					ack := IPCMessage{Type: "revoke_acked", Payload: msg.Payload}
+					ackLine, _ := json.Marshal(ack)
+					ackLine = append(ackLine, '\n')
+					c.writeMu.Lock()
+					_ = conn.SetWriteDeadline(time.Now().Add(ipcWriteTimeout))
+					_, _ = conn.Write(ackLine)
+					_ = conn.SetWriteDeadline(time.Time{})
+					c.writeMu.Unlock()
 				}
 			}
 		default:
@@ -789,6 +880,39 @@ func (c *IPCClient) LookupHostByRoute(routeID []byte) (*LookupHostIPCResponse, e
 	return &resp, nil
 }
 
+// ReportUsage pushes per-route byte/connect counters to control. It is
+// fire-and-forget: a dropped report is fine because the relay keeps its own
+// counters and the next interval re-reports the same totals.
+func (c *IPCClient) ReportUsage(routeID []byte, rx, tx int64, connects int) error {
+	if len(routeID) != 16 {
+		return fmt.Errorf("routeId must be 16 bytes")
+	}
+	c.StartReconnect()
+	if err := c.Connect(); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	conn := c.conn
+	c.mu.Unlock()
+	if conn == nil {
+		return fmt.Errorf("ipc not connected")
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"routeId":  base64.RawURLEncoding.EncodeToString(routeID),
+		"rx":       rx,
+		"tx":       tx,
+		"connects": connects,
+	})
+	line, _ := json.Marshal(IPCMessage{Type: "stats_report", Payload: payload})
+	line = append(line, '\n')
+	c.writeMu.Lock()
+	_ = conn.SetWriteDeadline(time.Now().Add(ipcWriteTimeout))
+	_, err := conn.Write(line)
+	_ = conn.SetWriteDeadline(time.Time{})
+	c.writeMu.Unlock()
+	return err
+}
+
 func (c *IPCClient) VerifyRouteMAC(req VerifyRouteMACIPCRequest) error {
 	payload, _ := json.Marshal(req)
 	respMsg, err := c.request(IPCMessage{Type: "verify_route_mac", Payload: payload})
@@ -838,12 +962,15 @@ func (c *IPCClient) request(msg IPCMessage) (IPCMessage, error) {
 		return IPCMessage{}, err
 	}
 	line = append(line, '\n')
+	c.writeMu.Lock()
 	_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-	if _, err := conn.Write(line); err != nil {
-		c.invalidate(conn)
-		return IPCMessage{}, err
-	}
+	_, werr := conn.Write(line)
 	_ = conn.SetWriteDeadline(time.Time{})
+	c.writeMu.Unlock()
+	if werr != nil {
+		c.invalidate(conn)
+		return IPCMessage{}, werr
+	}
 	select {
 	case result := <-c.responses:
 		return result.msg, result.err

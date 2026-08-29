@@ -532,3 +532,29 @@ td { border-block-end: var(--rule-thin) solid var(--color-rule); }
 @media (prefers-reduced-motion: reduce) {
   .term-caret { animation: none; opacity: 1; }
 }
+
+/* 邀请码二维码 */
+.invite-qr {
+  margin: 12px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.invite-qr canvas {
+  background: #fff;
+  border: 1px solid var(--border, #30363d);
+  border-radius: 8px;
+  padding: 4px;
+  max-width: 100%;
+}
+.banner-warn {
+  margin: 8px 0 12px;
+  padding: 8px 10px;
+  border: 1px solid #d29922;
+  border-radius: 6px;
+  background: rgba(210, 153, 34, 0.12);
+  color: #e3b341;
+  font-size: 12px;
+  line-height: 1.5;
+}

@@ -101,3 +101,31 @@ func TestDeployExamplesLoad(t *testing.T) {
 		}
 	}
 }
+
+func TestIPv6PrefixLenValidation(t *testing.T) {
+	base := DefaultConfig()
+	base.IPv6PrefixLen = 64
+	if err := base.Validate(); err != nil {
+		t.Fatalf("default 64 should validate: %v", err)
+	}
+	for _, bad := range []int{31, 129, -1} {
+		c := DefaultConfig()
+		c.IPv6PrefixLen = bad
+		if err := c.Validate(); err == nil {
+			t.Errorf("ipv6_prefix_len=%d should fail validation", bad)
+		}
+	}
+	// 0 explicitly disables aggregation (the DefaultConfig always carries 64).
+	c := DefaultConfig()
+	c.IPv6PrefixLen = 0
+	if err := c.Validate(); err != nil {
+		t.Errorf("ipv6_prefix_len=0 (disable aggregation) should validate: %v", err)
+	}
+	for _, good := range []int{32, 56, 64, 96, 128} {
+		c := DefaultConfig()
+		c.IPv6PrefixLen = good
+		if err := c.Validate(); err != nil {
+			t.Errorf("ipv6_prefix_len=%d should validate: %v", good, err)
+		}
+	}
+}
