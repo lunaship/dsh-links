@@ -274,15 +274,23 @@ func (s *Store) GetHostByRouteWithDevice(routeID []byte) (*RouteLookup, error) {
 	row := s.db.QueryRow(
 		`SELECT h.id, h.user_id, h.route_id, h.host_name, h.host_pubkey,
 		        h.generation, h.max_streams, h.version, h.last_seen_at,
-		        h.revoked_at, h.created_at, h.device_id, d.enabled
+		        h.revoked_at, h.created_at, h.device_id, h.suspended_until, d.enabled
 		 FROM hosts h LEFT JOIN devices d ON d.id = h.device_id
 		 WHERE h.route_id = ?`, routeID)
 	var h Host
 	var deviceID sql.NullString
+	var suspended sql.NullInt64
 	var deviceEnabled sql.NullInt64
 	err := row.Scan(&h.ID, &h.UserID, &h.RouteID, &h.HostName, &h.HostPubKey,
 		&h.Generation, &h.MaxStreams, &h.Version, &h.LastSeenAt, &h.RevokedAt,
-		&h.CreatedAt, &deviceID, &deviceEnabled)
+		&h.CreatedAt, &deviceID, &suspended, &deviceEnabled)
+	if suspended.Valid {
+		v := suspended.Int64
+		h.SuspendedUntil = &v
+	}
+	if deviceID.Valid {
+		h.DeviceID = deviceID.String
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -291,4 +299,35 @@ func (s *Store) GetHostByRouteWithDevice(routeID []byte) (*RouteLookup, error) {
 		enabled = deviceEnabled.Int64 != 0
 	}
 	return &RouteLookup{Host: &h, DeviceEnabled: enabled}, nil
+}
+
+// ListHostsByDevice returns every host linked to a device (revoked or not).
+func (s *Store) ListHostsByDevice(deviceID string) ([]*Host, error) {
+	rows, err := s.db.Query(
+		`SELECT id, user_id, route_id, host_name, host_pubkey, generation,
+		        max_streams, version, last_seen_at, revoked_at, created_at
+		 FROM hosts WHERE device_id = ? ORDER BY created_at DESC`, deviceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Host
+	for rows.Next() {
+		var h Host
+		var last, revoked sql.NullInt64
+		if err := rows.Scan(&h.ID, &h.UserID, &h.RouteID, &h.HostName, &h.HostPubKey,
+			&h.Generation, &h.MaxStreams, &h.Version, &last, &revoked, &h.CreatedAt); err != nil {
+			return nil, err
+		}
+		if last.Valid {
+			v := last.Int64
+			h.LastSeenAt = &v
+		}
+		if revoked.Valid {
+			v := revoked.Int64
+			h.RevokedAt = &v
+		}
+		out = append(out, &h)
+	}
+	return out, rows.Err()
 }

@@ -98,6 +98,9 @@ func (s *Server) Handler() http.Handler {
 	apiMux.HandleFunc("/v1/invites/", s.handleInviteItem)
 	apiMux.HandleFunc("/v1/hosts", s.handleHosts)
 	apiMux.HandleFunc("/v1/hosts/", s.handleHostItem)
+	apiMux.HandleFunc("/v1/devices", s.handleDevices)
+	apiMux.HandleFunc("/v1/devices/", s.handleDeviceItem)
+	apiMux.HandleFunc("/v1/settings/anonymous", s.handleAnonymousSetting)
 	apiMux.HandleFunc("/v1/overview", s.handleOverview)
 
 	// UI without auth (initial page), API with auth
@@ -396,6 +399,77 @@ func actionTarget(path, kind, action string) (string, bool) {
 	return parts[3], true
 }
 
+func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	devs, err := s.control.ListDevices()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSONOK(w, map[string]any{"devices": devs})
+}
+
+func (s *Server) handleDeviceItem(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if id, ok := actionTarget(r.URL.Path, "devices", "disable"); ok {
+		if err := s.control.DisableDevice(id); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSONOK(w, map[string]any{"ok": true})
+		return
+	}
+	if id, ok := actionTarget(r.URL.Path, "devices", "enable"); ok {
+		if err := s.control.EnableDevice(id); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSONOK(w, map[string]any{"ok": true})
+		return
+	}
+	if id, ok := actionTarget(r.URL.Path, "devices", "delete"); ok {
+		if err := s.control.DeleteDevice(id); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSONOK(w, map[string]any{"ok": true})
+		return
+	}
+	http.Error(w, "not found", http.StatusNotFound)
+}
+
+// handleAnonymousSetting toggles the anonymous-enrollment kill switch. The
+// state persists in settings so a restart cannot silently re-open the door.
+func (s *Server) handleAnonymousSetting(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		writeJSONOK(w, map[string]any{"anonymousEnroll": s.control.AnonymousEnabled()})
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	if err := s.control.SetAnonymousEnabled(body.Enabled); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSONOK(w, map[string]any{"ok": true, "anonymousEnroll": body.Enabled})
+}
+
+
 // revokeTarget validates that a POST path is exactly /v1/<kind>/<id>/revoke
 // and returns the id. Requiring the literal /revoke suffix keeps the catch-all
 // routes below from treating an arbitrary trailing segment as a revoke trigger.
@@ -542,6 +616,9 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	}
 	if host := strings.TrimSpace(s.publicHost); host != "" {
 		out["publicHost"] = host
+	out["anonymousEnroll"] = s.control.AnonymousEnabled()
+	devs, _ := s.control.ListDevices()
+	out["deviceCount"] = len(devs)
 	}
 	json.NewEncoder(w).Encode(out)
 }

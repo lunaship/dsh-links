@@ -440,13 +440,40 @@ func (c *Control) PurgeRevokedHosts() (int64, error) {
 
 // ReportUsage accumulates routed byte/connect counters into stats_daily for
 // the host owning the route. Unknown routes are ignored (they may have been
-// purged since the relay last synced).
+// purged since the relay last synced). Anonymous hosts whose accumulated
+// daily usage crossed the budget get suspended until the next UTC midnight
+// and their routes are pushed revoked immediately.
 func (c *Control) ReportUsage(routeID []byte, rx, tx int64, connects int) error {
 	h, err := c.store.GetHostByRoute(routeID)
 	if err != nil || h == nil {
 		return nil
 	}
-	return c.store.AddRouteUsage(h.ID, store.Today(), rx, tx, connects)
+	if err := c.store.AddRouteUsage(h.ID, store.Today(), rx, tx, connects); err != nil {
+		return err
+	}
+	if c.anonymousDailyBytes <= 0 || h.DeviceID == "" {
+		return nil
+	}
+	// Budget check only applies to anonymous (device-linked) hosts.
+	u, err := c.store.GetDailyUsage(h.ID, store.Today())
+	if err != nil {
+		return err
+	}
+	if u.RXBytes+u.TXBytes < c.anonymousDailyBytes {
+		return nil
+	}
+	if h.SuspendedUntil != nil && *h.SuspendedUntil > time.Now().Unix() {
+		return nil // already suspended
+	}
+	until := nextMidnightUTC()
+	if err := c.store.SuspendHostUntil(h.ID, until); err != nil {
+		return err
+	}
+	routeStr := base64.RawURLEncoding.EncodeToString(h.RouteID)
+	if c.revokeFn != nil {
+		c.revokeFn(routeStr, h.ID)
+	}
+	return nil
 }
 
 // SetRevokeFn sets the post-revoke callback (called from main.go with IPC server).
@@ -490,15 +517,34 @@ func (c *Control) GetHostByRoute(routeId []byte) (*store.Host, error) {
 }
 
 // LookupRouteStatus is the data-plane route status: a host whose device was
-// disabled is immediately treated as revoked so relays stop serving its
-// streams without waiting for an explicit revoke.
+// disabled or whose daily budget was exhausted is immediately treated as
+// revoked so relays stop serving its streams without waiting for an explicit
+// revoke. Expired suspensions are cleared lazily here.
 func (c *Control) LookupRouteStatus(routeId []byte) (hostID string, generation uint64, pubKey []byte, maxStreams int, revoked bool, err error) {
 	l, err := c.store.GetHostByRouteWithDevice(routeId)
 	if err != nil {
 		return "", 0, nil, 0, false, err
 	}
 	h := l.Host
-	return h.ID, uint64(h.Generation), h.HostPubKey, h.MaxStreams, h.RevokedAt != nil || !l.DeviceEnabled, nil
+	revoked = h.RevokedAt != nil || !l.DeviceEnabled
+	if h.SuspendedUntil != nil {
+		now := time.Now().Unix()
+		if *h.SuspendedUntil > now {
+			revoked = true
+		} else {
+			// Window elapsed: budget resets, remove the flag lazily.
+			_ = c.store.ClearSuspendedUntil(h.ID)
+		}
+	}
+	return h.ID, uint64(h.Generation), h.HostPubKey, h.MaxStreams, revoked, nil
+}
+
+// nextMidnightUTC returns the unix time of the next 00:00 UTC, when a new
+// daily budget begins.
+func nextMidnightUTC() int64 {
+	now := time.Now().UTC()
+	next := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).Add(24 * time.Hour)
+	return next.Unix()
 }
 
 // RevokedHosts returns hosts that are currently revoked. A (re)connecting
@@ -655,4 +701,84 @@ func (c *Control) RevokeSelf(routeId []byte, ts int64, nonce, challenge, proof [
 		return "", err
 	}
 	return h.ID, nil
+}
+
+// DeviceInfo is the admin-visible device row with current host count.
+type DeviceInfo struct {
+	ID         string   `json:"id"`
+	Enabled    bool     `json:"enabled"`
+	MaxHosts   int      `json:"maxHosts"`
+	HostCount  int      `json:"hostCount"`
+	CreatedAt  int64    `json:"createdAt"`
+	DisabledAt *int64   `json:"disabledAt,omitempty"`
+	HostIDs    []string `json:"hostIds,omitempty"`
+}
+
+// ListDevices returns all anonymous devices with live host counts.
+func (c *Control) ListDevices() ([]DeviceInfo, error) {
+	devs, err := c.store.ListDevices()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]DeviceInfo, 0, len(devs))
+	for _, d := range devs {
+		info := DeviceInfo{
+			ID: d.ID, Enabled: d.Enabled, MaxHosts: d.MaxHosts,
+			CreatedAt: d.CreatedAt.Unix(),
+		}
+		if d.DisabledAt != nil {
+			v := d.DisabledAt.Unix()
+			info.DisabledAt = &v
+		}
+		hosts, err := c.store.ListHostsByDevice(d.ID)
+		if err == nil {
+			info.HostCount = len(hosts)
+			for _, h := range hosts {
+				if h.RevokedAt == nil {
+					info.HostIDs = append(info.HostIDs, h.ID)
+				}
+			}
+		}
+		out = append(out, info)
+	}
+	return out, nil
+}
+
+// DisableDevice disables an anonymous device and cascades: every live host of
+// the device is revoked and pushed to relays immediately.
+func (c *Control) DisableDevice(id string) error {
+	hosts, err := c.store.ListHostsByDevice(id)
+	if err != nil {
+		return err
+	}
+	for _, h := range hosts {
+		if h.RevokedAt == nil {
+			if _, _, err := c.RevokeHost(h.ID); err != nil {
+				return err
+			}
+		}
+	}
+	return c.store.SetDeviceEnabled(id, false)
+}
+
+// EnableDevice re-enables a previously disabled device. Its hosts stay
+// revoked; the device may enroll fresh hosts up to its quota.
+func (c *Control) EnableDevice(id string) error {
+	return c.store.SetDeviceEnabled(id, true)
+}
+
+// DeleteDevice revokes all hosts and removes the device identity.
+func (c *Control) DeleteDevice(id string) error {
+	hosts, err := c.store.ListHostsByDevice(id)
+	if err != nil {
+		return err
+	}
+	for _, h := range hosts {
+		if h.RevokedAt == nil {
+			if _, _, err := c.RevokeHost(h.ID); err != nil {
+				return err
+			}
+		}
+	}
+	return c.store.DeleteDevice(id)
 }

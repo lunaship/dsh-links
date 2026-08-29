@@ -256,3 +256,67 @@ func TestRevokeSelf(t *testing.T) {
 		t.Fatalf("second revoke-self: %v", err)
 	}
 }
+
+// Daily byte budget: once an anonymous host crosses the budget its route is
+// reported revoked (suspended) and active streams get pushed out; the next
+// UTC midnight resets.
+func TestAnonymousDailyBudgetSuspends(t *testing.T) {
+	suspended := make(chan string, 1)
+	ctrl, st := newTestControlWithPolicy(t, AnonymousPolicy{Enabled: true, MaxHosts: 2, MaxStreams: 2, DailyBytes: 1000}, 0)
+	defer st.Close()
+	ctrl.SetRevokeFn(func(routeID, hostID string) (int, int) {
+		suspended <- hostID
+		return 1, 1
+	})
+	hostPub, hostPriv, _ := ed25519.GenerateKey(rand.Reader)
+	nonce, _ := cryptoutil.GenerateNonce()
+	challenge, _ := cryptoutil.RandomBytes(32)
+	ts := time.Now().Unix()
+	proof := ed25519.Sign(hostPriv, cryptoutil.BuildBootstrapTranscript(hostPub, ts, nonce, challenge))
+	token, _ := ctrl.Bootstrap(hostPub, ts, nonce, challenge, proof)
+	nonce2, _ := cryptoutil.GenerateNonce()
+	enrollProof := ed25519.Sign(hostPriv, cryptoutil.BuildEnrollTranscript(token, "h-b", hostPub, ts, nonce2, challenge))
+	res, err := ctrl.Enroll(&EnrollRequest{InviteCode: token, HostId: "h-b", HostPublicKey: hostPub, Ts: ts, Nonce: nonce2, Proof: enrollProof, Challenge: challenge})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Under budget: route stays live.
+	if err := ctrl.ReportUsage(res.RouteId, 600, 0, 1); err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, _, revoked, err := ctrl.LookupRouteStatus(res.RouteId)
+	if err != nil || revoked {
+		t.Fatalf("under budget revoked=%v err=%v", revoked, err)
+	}
+	// Crossing the budget suspends and pushes a revoke.
+	if err := ctrl.ReportUsage(res.RouteId, 500, 0, 1); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case hostID := <-suspended:
+		if hostID != res.HostId {
+			t.Fatalf("suspended host %q want %q", hostID, res.HostId)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("budget suspension did not push revoke")
+	}
+	_, _, _, _, revoked, err = ctrl.LookupRouteStatus(res.RouteId)
+	if err != nil || !revoked {
+		t.Fatalf("over budget revoked=%v err=%v, want revoked", revoked, err)
+	}
+	// Invite-enrolled hosts are exempt from the anonymous budget.
+	invite, _ := ctrl.CreateInvite(time.Hour)
+	_, invitePriv, _ := ed25519.GenerateKey(rand.Reader)
+	req := enrollRequest(t, invite, "budget-invite-host", invitePriv)
+	inviteRes, err := ctrl.Enroll(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ctrl.ReportUsage(inviteRes.RouteId, 1<<30, 1<<30, 1); err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, _, revoked, err = ctrl.LookupRouteStatus(inviteRes.RouteId)
+	if err != nil || revoked {
+		t.Fatalf("invite host budget-exempt revoked=%v err=%v", revoked, err)
+	}
+}

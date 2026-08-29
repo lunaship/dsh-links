@@ -145,6 +145,21 @@
         <p class="panel-message" id="invitesMessage" role="alert" hidden></p>
       </section>
 
+      <section class="ledger" id="devicesSection" aria-labelledby="devicesTitle">
+        <header class="ledger-header">
+          <div class="ledger-heading">
+            <h2 id="devicesTitle">匿名设备</h2>
+            <p>自助接入的设备（公钥指纹为身份）。禁用即级联吊销其全部 Host。</p>
+          </div>
+          <div class="ledger-actions">
+            <span class="switch-label" id="anonymousEnrollLabel" hidden></span>
+            <button class="button button--quiet" id="btnToggleAnonymous" type="button" hidden>停止匿名接入</button>
+          </div>
+        </header>
+        <div class="table-wrap" id="devices"></div>
+        <p class="panel-message" id="devicesMessage" role="alert" hidden></p>
+      </section>
+
       <footer class="foot-stmt">
         <p class="foot-stmt-line"><span aria-hidden="true"># </span>秘密不经过这个页面。</p>
         <div class="foot-stmt-meta">

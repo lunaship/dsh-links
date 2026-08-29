@@ -1,6 +1,8 @@
 package control
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -8,6 +10,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dsh-links/dsh-links-relay/internal/cryptoutil"
+	"github.com/dsh-links/dsh-links-relay/internal/store"
 )
 
 func TestHandlerServesWebAssets(t *testing.T) {
@@ -482,5 +487,99 @@ func TestDeleteAndPurgeInviteAPI(t *testing.T) {
 	final, err := ctrl.ListInvites()
 	if err != nil || len(final) != 0 {
 		t.Fatalf("after purge: %v count=%d", err, len(final))
+	}
+}
+
+
+func newAdminTestServer(t *testing.T) (*Server, *Control, *store.Store) {
+	t.Helper()
+	ctrl, st := newTestControl(t)
+	ctrl.ApplyAnonymousPolicy(AnonymousPolicy{Enabled: true, MaxHosts: 2, MaxStreams: 2, DailyBytes: 0})
+	ctrl.SetCapabilityTTL(48 * time.Hour)
+	srv := NewServer(ctrl, "test-admin-token", "admin", "pw")
+	return srv, ctrl, st
+}
+
+func adminCall(t *testing.T, srv *Server, method, path, body string) map[string]any {
+	t.Helper()
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer test-admin-token")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	var out map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("%s %s -> %d: %s", method, path, rec.Code, rec.Body.String())
+	}
+	return out
+}
+
+// Devices are listed, disabled (cascading revoke), re-enabled and deleted via
+// the admin API; the anonymous kill switch round-trips through settings.
+func TestDevicesAndAnonymousSwitchAPI(t *testing.T) {
+	srv, ctrl, st := newAdminTestServer(t)
+	defer st.Close()
+	ctrl.SetAnonymousEnabled(true)
+
+	hostPub, hostPriv, _ := ed25519.GenerateKey(rand.Reader)
+	nonce, _ := cryptoutil.GenerateNonce()
+	challenge, _ := cryptoutil.RandomBytes(32)
+	ts := time.Now().Unix()
+	proof := ed25519.Sign(hostPriv, cryptoutil.BuildBootstrapTranscript(hostPub, ts, nonce, challenge))
+	token, err := ctrl.Bootstrap(hostPub, ts, nonce, challenge, proof)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonce2, _ := cryptoutil.GenerateNonce()
+	enrollProof := ed25519.Sign(hostPriv, cryptoutil.BuildEnrollTranscript(token, "h-a", hostPub, ts, nonce2, challenge))
+	res, err := ctrl.Enroll(&EnrollRequest{InviteCode: token, HostId: "h-a", HostPublicKey: hostPub, Ts: ts, Nonce: nonce2, Proof: enrollProof, Challenge: challenge})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	list := adminCall(t, srv, "GET", "/v1/devices", "")
+	devs, ok := list["devices"].([]any)
+	if !ok || len(devs) != 1 {
+		t.Fatalf("devices: %v", list)
+	}
+	dev := devs[0].(map[string]any)
+	id := dev["id"].(string)
+	if dev["enabled"] != true || dev["hostCount"].(float64) != 1 {
+		t.Fatalf("device info: %v", dev)
+	}
+
+	adminCall(t, srv, "POST", "/v1/devices/"+id+"/disable", `{}`)
+	h, err := st.GetHostByRoute(res.RouteId)
+	if err != nil || h.RevokedAt == nil {
+		t.Fatalf("host not revoked after device disable (err %v)", err)
+	}
+	if _, _, _, _, revoked, _ := ctrl.LookupRouteStatus(res.RouteId); !revoked {
+		t.Fatal("route live after device disable")
+	}
+
+	adminCall(t, srv, "POST", "/v1/devices/"+id+"/enable", `{}`)
+	d, err := st.GetDevice(id)
+	if err != nil || !d.Enabled {
+		t.Fatalf("device not re-enabled: %v", err)
+	}
+
+	// kill switch
+	sw := adminCall(t, srv, "GET", "/v1/settings/anonymous", "")
+	if sw["anonymousEnroll"] != true {
+		t.Fatalf("switch read: %v", sw)
+	}
+	sw = adminCall(t, srv, "POST", "/v1/settings/anonymous", `{"enabled":false}`)
+	if sw["anonymousEnroll"] != false || ctrl.AnonymousEnabled() {
+		t.Fatalf("switch not off: %v", sw)
+	}
+	// persisted
+	if v, _ := st.GetSetting(SettingAnonymousEnroll); v != "0" {
+		t.Fatalf("persisted switch = %q", v)
+	}
+
+	adminCall(t, srv, "POST", "/v1/devices/"+id+"/delete", `{}`)
+	if _, err := st.GetDevice(id); err == nil {
+		t.Fatal("device still present after delete")
 	}
 }

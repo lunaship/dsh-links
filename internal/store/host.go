@@ -18,6 +18,12 @@ type Host struct {
 	LastSeenAt *int64
 	RevokedAt  *int64
 	CreatedAt  int64
+	// DeviceID links anonymous self-service hosts to their device; empty =
+	// invite enrolled (account-based) host, never budget-suspended.
+	DeviceID string
+	// SuspendedUntil holds a unix time while the host's daily budget is
+	// exhausted; routes report as revoked until then.
+	SuspendedUntil *int64
 }
 
 func (s *Store) CreateHost(userID, hostId string, routeId, hostPubKey []byte, hostName string, maxStreams int, version string, generation int64) (*Host, error) {
@@ -42,31 +48,19 @@ func (s *Store) CreateHost(userID, hostId string, routeId, hostPubKey []byte, ho
 }
 
 func (s *Store) GetHostByRoute(routeId []byte) (*Host, error) {
-	var h Host
-	var last sql.NullInt64
-	var revoked sql.NullInt64
-	err := s.db.QueryRow(`SELECT id, user_id, route_id, host_name, host_pubkey, generation, max_streams, version, last_seen_at, revoked_at, created_at FROM hosts WHERE route_id=?`, routeId).
-		Scan(&h.ID, &h.UserID, &h.RouteID, &h.HostName, &h.HostPubKey, &h.Generation, &h.MaxStreams, &h.Version, &last, &revoked, &h.CreatedAt)
+	l, err := s.GetHostByRouteWithDevice(routeId)
 	if err != nil {
 		return nil, err
 	}
-	if last.Valid {
-		v := last.Int64
-		h.LastSeenAt = &v
-	}
-	if revoked.Valid {
-		v := revoked.Int64
-		h.RevokedAt = &v
-	}
-	return &h, nil
+	return l.Host, nil
 }
 
 func (s *Store) GetHostByID(id string) (*Host, error) {
 	var h Host
-	var last sql.NullInt64
-	var revoked sql.NullInt64
-	err := s.db.QueryRow(`SELECT id, user_id, route_id, host_name, host_pubkey, generation, max_streams, version, last_seen_at, revoked_at, created_at FROM hosts WHERE id=?`, id).
-		Scan(&h.ID, &h.UserID, &h.RouteID, &h.HostName, &h.HostPubKey, &h.Generation, &h.MaxStreams, &h.Version, &last, &revoked, &h.CreatedAt)
+	var last, revoked, suspended sql.NullInt64
+	var deviceID sql.NullString
+	err := s.db.QueryRow(`SELECT id, user_id, route_id, host_name, host_pubkey, generation, max_streams, version, last_seen_at, revoked_at, created_at, device_id, suspended_until FROM hosts WHERE id=?`, id).
+		Scan(&h.ID, &h.UserID, &h.RouteID, &h.HostName, &h.HostPubKey, &h.Generation, &h.MaxStreams, &h.Version, &last, &revoked, &h.CreatedAt, &deviceID, &suspended)
 	if err != nil {
 		return nil, err
 	}
@@ -77,6 +71,13 @@ func (s *Store) GetHostByID(id string) (*Host, error) {
 	if revoked.Valid {
 		v := revoked.Int64
 		h.RevokedAt = &v
+	}
+	if deviceID.Valid {
+		h.DeviceID = deviceID.String
+	}
+	if suspended.Valid {
+		v := suspended.Int64
+		h.SuspendedUntil = &v
 	}
 	return &h, nil
 }

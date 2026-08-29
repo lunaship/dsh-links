@@ -201,3 +201,17 @@ func (s *Store) EnsureDefaultUser() (string, error) {
 func nowSec() int64 {
 	return time.Now().Unix()
 }
+
+// SuspendHostUntil marks a host suspended until the given unix time. While
+// suspended the route lookup reports it as revoked and the operator's push
+// (via revokeFn) evicts active streams.
+func (s *Store) SuspendHostUntil(hostID string, until int64) error {
+	_, err := s.db.Exec(`UPDATE hosts SET suspended_until = ? WHERE id = ?`, until, hostID)
+	return err
+}
+
+// ClearSuspendedUntil removes a suspension (used after the window elapsed).
+func (s *Store) ClearSuspendedUntil(hostID string) error {
+	_, err := s.db.Exec(`UPDATE hosts SET suspended_until = NULL WHERE id = ?`, hostID)
+	return err
+}

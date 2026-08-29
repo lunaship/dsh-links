@@ -68,12 +68,13 @@ async function showMain(overview) {
   byId('loginPanel').classList.add('hidden');
   byId('mainPanel').classList.remove('hidden');
   renderOverview(overview);
-  await Promise.allSettled([loadHosts(), loadInvites()]);
+  await Promise.allSettled([loadHosts(), loadInvites(), loadDevices()]);
   stopRefresh();
   refreshTimer = window.setInterval(() => {
     loadOverview();
     loadHosts();
     loadInvites();
+    loadDevices();
   }, REFRESH_MS);
 }
 
@@ -157,6 +158,8 @@ function renderOverview(data) {
   renderTlsFingerprint(data && data.tlsFingerprint);
   const hasPublicHost = typeof data.publicHost === 'string' && data.publicHost.trim() !== '';
   byId('publicHostMissing').hidden = hasPublicHost;
+  latestAnonymousEnroll = !!data.anonymousEnroll;
+  renderAnonymousSwitch();
 }
 
 function renderTlsFingerprint(value) {
@@ -867,3 +870,97 @@ function qrRender(canvas, text) {
   }
   return true;
 }
+
+/* ---- 匿名设备面板 ---- */
+let latestDevices = [];
+let latestAnonymousEnroll = false;
+
+function renderDevices(list) {
+  latestDevices = list || [];
+  const el = byId('devices');
+  if (!el) return;
+  if (!latestDevices.length) {
+    el.innerHTML = '<p class="panel-message">尚未有设备通过匿名自助接入登记。</p>';
+    renderAnonymousSwitch();
+    return;
+  }
+  el.innerHTML = `<table class="data-table">
+    <thead><tr><th>设备指纹</th><th>状态</th><th>Host 数</th><th>登记时间</th><th></th></tr></thead>
+    <tbody>${latestDevices.map((d, i) => {
+      const short = (d.id || '').slice(0, 12) + '…';
+      const when = d.createdAt ? new Date(d.createdAt * 1000).toLocaleString() : '';
+      const live = (d.hostIds || []).length;
+      return `<tr>
+        <td><code class="invite-code" title="${escapeHtml(d.id)}">${escapeHtml(short)}</code></td>
+        <td>${d.enabled ? '<span class="chip chip--ok">启用</span>' : '<span class="chip">已禁用</span>'}</td>
+        <td>${live} / ${d.maxHosts}</td>
+        <td>${escapeHtml(when)}</td>
+        <td>
+          ${d.enabled
+            ? `<button class="button button--quiet" data-device-action="disable" data-device-index="${i}" type="button">禁用</button>`
+            : `<button class="button button--quiet" data-device-action="enable" data-device-index="${i}" type="button">启用</button>`}
+          <button class="button button--quiet" data-device-action="delete" data-device-index="${i}" type="button">删除</button>
+        </td>
+      </tr>`;}).join('')}</tbody>
+  </table>`;
+  renderAnonymousSwitch();
+}
+
+function renderAnonymousSwitch() {
+  const btn = byId('btnToggleAnonymous');
+  const label = byId('anonymousEnrollLabel');
+  if (!btn || !label) return;
+  btn.hidden = false;
+  label.hidden = false;
+  if (latestAnonymousEnroll) {
+    label.textContent = '匿名自助接入：开';
+    btn.textContent = '停止匿名接入';
+  } else {
+    label.textContent = '匿名自助接入：关';
+    btn.textContent = '开启匿名接入';
+  }
+}
+
+async function loadDevices() {
+  try {
+    const res = await fetch('/v1/devices', { credentials: 'same-origin' });
+    if (!res.ok) return;
+    const data = await res.json();
+    renderDevices(data.devices || []);
+  } catch (_) { /* console renders next refresh */ }
+}
+
+async function toggleAnonymous() {
+  if (!confirm('切换匿名自助接入开关？')) return;
+  const next = !latestAnonymousEnroll;
+  try {
+    const res = await fetch('/v1/settings/anonymous', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: next }),
+    });
+    if (!res.ok) { byId('devicesMessage').textContent = '切换失败'; return; }
+    latestAnonymousEnroll = next;
+    renderAnonymousSwitch();
+  } catch (_) { /* ignore */ }
+}
+
+byId('btnToggleAnonymous').addEventListener('click', toggleAnonymous);
+
+document.addEventListener('click', (event) => {
+  const btn = event.target.closest('[data-device-action]');
+  if (!btn) return;
+  const idx = Number(btn.dataset.deviceIndex);
+  const dev = latestDevices[idx];
+  if (!dev) return;
+  const action = btn.dataset.deviceAction;
+  if (action === 'delete' && !confirm('删除设备将级联吊销其全部 Host，继续？')) return;
+  if (action === 'disable' && !confirm('禁用设备将立即吊销其全部 Host，继续？')) return;
+  fetch(`/v1/devices/${encodeURIComponent(dev.id)}/${action}`, {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+  }).then((res) => {
+    if (res.ok) { loadDevices(); loadHosts(); }
+  }).catch(() => {});
+});
