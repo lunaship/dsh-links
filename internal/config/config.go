@@ -47,11 +47,19 @@ type Config struct {
 	AgentDeadAfter            string `toml:"agent_dead_after"`
 	BindTimeout               string `toml:"bind_timeout"`
 
+	// Phase 2 anonymous self-service enrollment.
+	AnonymousEnroll              bool   `toml:"anonymous_enroll"`
+	AnonymousMaxHostsPerDevice   int    `toml:"anonymous_max_hosts_per_device"`
+	AnonymousMaxStreamsPerRoute  int    `toml:"anonymous_max_streams_per_route"`
+	AnonymousDailyBytes          int64  `toml:"anonymous_daily_bytes"`
+	CapabilityTTL                string `toml:"capability_ttl"`
+
 	// Parsed durations
 	HeartbeatIntervalDur time.Duration `toml:"-"`
 	AgentDeadAfterDur    time.Duration `toml:"-"`
 	BindTimeoutDur       time.Duration `toml:"-"`
 	BridgeMaxLifetimeDur time.Duration `toml:"-"`
+	CapabilityTTLDur     time.Duration `toml:"-"`
 }
 
 func DefaultConfig() *Config {
@@ -78,6 +86,10 @@ func DefaultConfig() *Config {
 		HeartbeatInterval:         "20s",
 		AgentDeadAfter:            "65s",
 		BindTimeout:               "10s",
+		AnonymousMaxHostsPerDevice:   2,
+		AnonymousMaxStreamsPerRoute:  2,
+		AnonymousDailyBytes:          512 << 20, // 512 MiB/day per route
+		CapabilityTTL:                "168h", // 7 days (ParseDuration has no "d" unit)
 	}
 }
 
@@ -117,6 +129,18 @@ func (c *Config) Validate() error {
 	}
 	if c.BridgeMaxLifetimeDur, err = time.ParseDuration(c.BridgeMaxLifetime); err != nil {
 		return fmt.Errorf("bridge_max_lifetime: %w", err)
+	}
+	if c.CapabilityTTLDur, err = time.ParseDuration(c.CapabilityTTL); err != nil {
+		return fmt.Errorf("capability_ttl: %w", err)
+	}
+	if c.AnonymousMaxHostsPerDevice <= 0 {
+		return fmt.Errorf("anonymous_max_hosts_per_device must be >0")
+	}
+	if c.AnonymousMaxStreamsPerRoute <= 0 {
+		return fmt.Errorf("anonymous_max_streams_per_route must be >0")
+	}
+	if c.AnonymousDailyBytes < 0 {
+		return fmt.Errorf("anonymous_daily_bytes must be >=0 (0 = unlimited)")
 	}
 	if c.BridgeMaxLifetimeDur <= 0 {
 		return fmt.Errorf("bridge_max_lifetime >0")

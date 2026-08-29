@@ -1139,3 +1139,101 @@ func TestEnrollRejectsUnaddressableHostID(t *testing.T) {
 		t.Fatalf("hosts after rejected enrolls = %d (err %v), want 0", len(hosts), err)
 	}
 }
+
+// Anonymous devices get a short-lived bootstrap token over the agent wire,
+// then enroll with the token — all without an invite.
+func TestBootstrapThenAnonymousEnrollOverWire(t *testing.T) {
+	ing, ctrl, cleanup := setupIngress(t)
+	defer cleanup()
+	ctrl.ApplyAnonymousPolicy(control.AnonymousPolicy{Enabled: true, MaxHosts: 2, MaxStreams: 2, DailyBytes: 0})
+	_, agentAddr := getAddrs(ing)
+
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+
+	sendFrame := func(conn net.Conn, fr *protocol.FrameReader, line []byte) []byte {
+		t.Helper()
+		line = append(line, '\n')
+		if _, err := conn.Write(line); err != nil {
+			t.Fatal(err)
+		}
+		respRaw, err := fr.ReadFrame(8192)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return respRaw
+	}
+
+	// HELLO
+	conn, err := net.Dial("tcp", agentAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fr := protocol.NewFrameReader(conn)
+	helloRaw, err := fr.ReadFrame(protocol.MaxHello)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hello protocol.HelloFrame
+	if err := json.Unmarshal(helloRaw, &hello); err != nil {
+		t.Fatal(err)
+	}
+	challenge, _ := base64.RawURLEncoding.DecodeString(hello.Challenge)
+
+	// BOOTSTRAP (proof of possession)
+	nonce, _ := cryptoutil.GenerateNonce()
+	ts := time.Now().Unix()
+	proof := ed25519.Sign(priv, cryptoutil.BuildBootstrapTranscript(pub, ts, nonce, challenge))
+	frame := protocol.BootstrapFrame{
+		Type: protocol.TypeBootstrap,
+		PubKey: base64.RawURLEncoding.EncodeToString(pub),
+		Ts:     ts,
+		Nonce:  base64.RawURLEncoding.EncodeToString(nonce),
+		Proof:  base64.RawURLEncoding.EncodeToString(proof),
+	}
+	line, _ := json.Marshal(frame)
+	respRaw := sendFrame(conn, fr, line)
+	var booted protocol.BootstrappedFrame
+	if err := json.Unmarshal(respRaw, &booted); err != nil || booted.Type != protocol.TypeBootstrapped || booted.Token == "" {
+		t.Fatalf("unexpected bootstrap response: %s (err %v)", string(respRaw), err)
+	}
+
+	// ENROLL with the token on a fresh connection (handlers are
+	// one-frame-per-connection by design).
+	conn.Close()
+	conn2, err := net.Dial("tcp", agentAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn2.Close()
+	fr2 := protocol.NewFrameReader(conn2)
+	helloRaw2, err := fr2.ReadFrame(protocol.MaxHello)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hello2 protocol.HelloFrame
+	if err := json.Unmarshal(helloRaw2, &hello2); err != nil {
+		t.Fatal(err)
+	}
+	// Each connection gets a fresh challenge; the ENROLL proof must be signed
+	// against this connection's challenge (the bootstrap token itself is not
+	// challenge-bound, only key-bound).
+	challenge2, _ := base64.RawURLEncoding.DecodeString(hello2.Challenge)
+	_ = challenge
+	nonce2, _ := cryptoutil.GenerateNonce()
+	placeholder := "h-placeholder"
+	enrollProof := ed25519.Sign(priv, cryptoutil.BuildEnrollTranscript(booted.Token, placeholder, pub, ts, nonce2, challenge2))
+	enrollFrame := protocol.EnrollFrame{
+		Type: protocol.TypeEnroll, InviteCode: booted.Token, HostId: placeholder,
+		HostPublicKey: base64.RawURLEncoding.EncodeToString(pub), Ts: ts,
+		Nonce: base64.RawURLEncoding.EncodeToString(nonce2), Proof: base64.RawURLEncoding.EncodeToString(enrollProof),
+	}
+	line, _ = json.Marshal(enrollFrame)
+	respRaw = sendFrame(conn2, fr2, line)
+	var enrolled protocol.EnrolledFrame
+	if err := json.Unmarshal(respRaw, &enrolled); err != nil || enrolled.Type != protocol.TypeEnrolled {
+		t.Fatalf("enroll with bootstrap token failed: %s", string(respRaw))
+	}
+	if enrolled.HostId == "" || enrolled.HostId == placeholder {
+		t.Fatalf("server-assigned hostId missing in ENROLLED: %q", enrolled.HostId)
+	}
+}

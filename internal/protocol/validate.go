@@ -1,10 +1,12 @@
 package protocol
 
 import (
+	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/dsh-links/dsh-links-relay/internal/cryptoutil"
@@ -66,8 +68,17 @@ func ValidateEnroll(raw []byte) (*EnrollFrame, error) {
 	if len(f.InviteCode) == 0 {
 		return nil, fmt.Errorf("%s: missing inviteCode", ErrBadRequest)
 	}
-	// inviteCode is base64url 32 chars (24 bytes) but we just check decode possible
-	if _, err := base64.RawURLEncoding.DecodeString(f.InviteCode); err != nil {
+	// inviteCode is either the invite code (base64url 32 chars) or a JWS
+	// bootstrap token (two dots); a JWS bypasses the base64 check — control
+	// decides which path applies.
+	if strings.Count(f.InviteCode, ".") == 2 {
+		parts := strings.Split(f.InviteCode, ".")
+		for _, p := range parts {
+			if p == "" {
+				return nil, fmt.Errorf("%s: inviteCode jws malformed", ErrBadRequest)
+			}
+		}
+	} else if _, err := base64.RawURLEncoding.DecodeString(f.InviteCode); err != nil {
 		return nil, fmt.Errorf("%s: inviteCode b64: %w", ErrBadRequest, err)
 	}
 	if _, err := cryptoutil.DecodeBase64URLLen(f.Nonce, 16); err != nil {
@@ -185,3 +196,53 @@ func MarshalError(code, msg string) []byte {
 
 // Strict check for message not containing secrets: caller must ensure.
 var ErrInvalidFrame = errors.New("invalid frame")
+
+// ValidateBootstrap verifies a BOOTSTRAP frame. ts freshness is enforced by
+// the ingress handler (same window as ENROLL).
+func ValidateBootstrap(raw []byte) (*BootstrapFrame, error) {
+	var f BootstrapFrame
+	if err := json.Unmarshal(raw, &f); err != nil {
+		return nil, fmt.Errorf("%s: %w", ErrBadRequest, err)
+	}
+	if f.Type != TypeBootstrap {
+		return nil, fmt.Errorf("%s: type", ErrBadRequest)
+	}
+	pub, err := base64.RawURLEncoding.DecodeString(f.PubKey)
+	if err != nil || len(pub) != ed25519.PublicKeySize {
+		return nil, fmt.Errorf("%s: pubkey", ErrBadRequest)
+	}
+	nonce, err := base64.RawURLEncoding.DecodeString(f.Nonce)
+	if err != nil || len(nonce) != 16 {
+		return nil, fmt.Errorf("%s: nonce", ErrBadRequest)
+	}
+	proof, err := base64.RawURLEncoding.DecodeString(f.Proof)
+	if err != nil || len(proof) != ed25519.SignatureSize {
+		return nil, fmt.Errorf("%s: proof", ErrBadRequest)
+	}
+	return &f, nil
+}
+
+// ValidateRevokeSelf verifies a REVOKE_SELF frame. ts freshness is enforced
+// by the ingress handler (same window as ENROLL).
+func ValidateRevokeSelf(raw []byte) (*RevokeSelfFrame, error) {
+	var f RevokeSelfFrame
+	if err := json.Unmarshal(raw, &f); err != nil {
+		return nil, fmt.Errorf("%s: %w", ErrBadRequest, err)
+	}
+	if f.Type != TypeRevokeSelf {
+		return nil, fmt.Errorf("%s: type", ErrBadRequest)
+	}
+	route, err := base64.RawURLEncoding.DecodeString(f.RouteId)
+	if err != nil || len(route) != 16 {
+		return nil, fmt.Errorf("%s: routeId", ErrBadRequest)
+	}
+	nonce, err := base64.RawURLEncoding.DecodeString(f.Nonce)
+	if err != nil || len(nonce) != 16 {
+		return nil, fmt.Errorf("%s: nonce", ErrBadRequest)
+	}
+	proof, err := base64.RawURLEncoding.DecodeString(f.Proof)
+	if err != nil || len(proof) != ed25519.SignatureSize {
+		return nil, fmt.Errorf("%s: proof", ErrBadRequest)
+	}
+	return &f, nil
+}

@@ -6,8 +6,10 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/dsh-links/dsh-links-relay/internal/cryptoutil"
@@ -27,6 +29,22 @@ type Control struct {
 	// broadcast to relays). It reports how many relays received the push and
 	// how many confirmed the route was closed locally.
 	revokeFn func(routeId, hostId string) (delivered, acked int)
+
+	// capTTL is the lifetime of newly issued capabilities (config
+	// capability_ttl). Set explicitly by main.go; New defaults to 30 days to
+	// preserve behavior for tests and existing deployments that do not
+	// configure it.
+	capTTL time.Duration
+	// anonymous policy: anonymousMaxHosts caps hosts per device; anonymous-
+	// enrolled routes get anonymousDailyBytes daily budget (0 = unlimited);
+	// anonymousMaxStreams caps simultaneous streams per anonymous route.
+	anonymousMaxHosts    int
+	anonymousMaxStreams  int
+	anonymousDailyBytes  int64
+	// anonymousEnabled is the runtime anonymous-enrollment kill switch
+	// (initialized from config, toggleable via admin API, persisted in
+	// settings).
+	anonymousEnabled atomic.Bool
 }
 
 // maxCredentialsPerHost caps stored credentials per host so repeated renewals
@@ -53,8 +71,57 @@ func New(st *store.Store, issuerPriv []byte, routeMasterKey []byte, defaultMaxSt
 		issuerPub:         pub,
 		routeMasterKey:    routeMasterKey,
 		defaultMaxStreams: defaultMaxStreams,
+		capTTL:            30 * 24 * time.Hour,
 	}, nil
 }
+
+// SetCapabilityTTL changes the lifetime of newly issued capabilities.
+func (c *Control) SetCapabilityTTL(ttl time.Duration) {
+	if ttl <= 0 {
+		return
+	}
+	c.capTTL = ttl
+}
+
+// AnonymousPolicy carries the config-derived anonymous enrollment limits.
+type AnonymousPolicy struct {
+	Enabled    bool
+	MaxHosts   int
+	MaxStreams int
+	DailyBytes int64
+}
+
+// ApplyAnonymousPolicy sets the policy limits and the runtime kill switch.
+func (c *Control) ApplyAnonymousPolicy(p AnonymousPolicy) {
+	if p.MaxHosts > 0 {
+		c.anonymousMaxHosts = p.MaxHosts
+	}
+	if p.MaxStreams > 0 {
+		c.anonymousMaxStreams = p.MaxStreams
+	}
+	c.anonymousDailyBytes = p.DailyBytes
+	c.anonymousEnabled.Store(p.Enabled)
+}
+
+// AnonymousEnabled reports whether self-service enrollment is currently
+// accepting bootstrap tokens.
+func (c *Control) AnonymousEnabled() bool {
+	return c.anonymousEnabled.Load()
+}
+
+// SetAnonymousEnabled flips the runtime kill switch (persisted to settings so
+// it survives restarts).
+func (c *Control) SetAnonymousEnabled(enabled bool) error {
+	c.anonymousEnabled.Store(enabled)
+	v := "0"
+	if enabled {
+		v = "1"
+	}
+	return c.store.SetSetting(SettingAnonymousEnroll, v)
+}
+
+// SettingAnonymousEnroll is the persistent settings key for the kill switch.
+const SettingAnonymousEnroll = "anonymous_enroll"
 
 func (c *Control) IssuerPublicKey() ed25519.PublicKey { return c.issuerPub }
 
@@ -120,6 +187,10 @@ type EnrollResult struct {
 	RouteSecret []byte
 	Capability  string
 	Generation  uint64
+	// HostId is the stored host identifier. For anonymous bootstrap
+	// enrollment the server assigns it (client-side hostId is a placeholder);
+	// invite enrollment returns the requested hostId unchanged.
+	HostId string
 }
 
 // Enroll handles enrollment via control.
@@ -133,6 +204,9 @@ func (c *Control) Enroll(req *EnrollRequest) (*EnrollResult, error) {
 	// Reject unknown, expired, consumed, or revoked invites before signature
 	// verification, random ID generation, capability signing, or writes. The
 	// final atomic EnrollHost call revalidates and consumes the invite.
+	if isBootstrapToken(req.InviteCode) {
+		return c.enrollWithBootstrap(req)
+	}
 	if err := c.store.ValidateInvite(req.InviteCode); err != nil {
 		return nil, errors.New("invite unavailable")
 	}
@@ -185,7 +259,7 @@ func (c *Control) Enroll(req *EnrollRequest) (*EnrollResult, error) {
 			Generation: uint64(generation),
 			MaxStreams: c.defaultMaxStreams,
 			Iat:        time.Now().Unix(),
-			Exp:        time.Now().Add(30 * 24 * time.Hour).Unix(),
+			Exp:        time.Now().Add(c.capTTL).Unix(),
 		}
 		signed, err := cryptoutil.SignCapability(c.issuerPriv, payload)
 		if err != nil {
@@ -206,6 +280,7 @@ func (c *Control) Enroll(req *EnrollRequest) (*EnrollResult, error) {
 		RouteSecret: secret,
 		Capability:  capStr,
 		Generation:  uint64(host.Generation),
+		HostId:      host.ID,
 	}, nil
 }
 
@@ -286,7 +361,7 @@ func (c *Control) Renew(req *RenewRequest) (string, error) {
 		Generation: uint64(host.Generation),
 		MaxStreams: host.MaxStreams,
 		Iat:        time.Now().Unix(),
-		Exp:        time.Now().Add(30 * 24 * time.Hour).Unix(),
+		Exp:        time.Now().Add(c.capTTL).Unix(),
 	}
 	capStr, err := cryptoutil.SignCapability(c.issuerPriv, payload)
 	if err != nil {
@@ -414,9 +489,170 @@ func (c *Control) GetHostByRoute(routeId []byte) (*store.Host, error) {
 	return c.store.GetHostByRoute(routeId)
 }
 
+// LookupRouteStatus is the data-plane route status: a host whose device was
+// disabled is immediately treated as revoked so relays stop serving its
+// streams without waiting for an explicit revoke.
+func (c *Control) LookupRouteStatus(routeId []byte) (hostID string, generation uint64, pubKey []byte, maxStreams int, revoked bool, err error) {
+	l, err := c.store.GetHostByRouteWithDevice(routeId)
+	if err != nil {
+		return "", 0, nil, 0, false, err
+	}
+	h := l.Host
+	return h.ID, uint64(h.Generation), h.HostPubKey, h.MaxStreams, h.RevokedAt != nil || !l.DeviceEnabled, nil
+}
+
 // RevokedHosts returns hosts that are currently revoked. A (re)connecting
 // relay uses this set to reconcile its in-memory registry with persisted
 // revocations immediately, instead of polling every online session each second.
 func (c *Control) RevokedHosts() ([]store.Host, error) {
 	return c.store.ListRevokedHosts()
+}
+
+// isBootstrapToken distinguishes a JWS bootstrap token (two dots) from a
+// plain invite code (URL-safe base64, no dots).
+func isBootstrapToken(code string) bool {
+	dots := 0
+	for i := 0; i < len(code); i++ {
+		if code[i] == '.' {
+			dots++
+		}
+	}
+	return dots == 2
+}
+
+// NewAnonymousHostID generates the server-assigned host identifier for
+// self-service enrollment ("h-" + 16 random bytes in hex); the client-supplied
+// placeholder is discarded per the anonymous model.
+func NewAnonymousHostID() (string, error) {
+	randBytes, err := cryptoutil.RandomBytes(16)
+	if err != nil {
+		return "", err
+	}
+	return "h-" + hex.EncodeToString(randBytes), nil
+}
+
+// Bootstrap issues a short-lived bootstrap token for a device public key
+// after proving possession. The caller (ingress) is responsible for
+// per-IP/prefix and global rate limiting; this method enforces the
+// anonymous-enrollment kill switch and signs the token.
+func (c *Control) Bootstrap(pubKey ed25519.PublicKey, ts int64, nonce, challenge, proof []byte) (string, error) {
+	if len(pubKey) != ed25519.PublicKeySize || len(nonce) != 16 || len(challenge) != 32 || len(proof) != ed25519.SignatureSize {
+		return "", errors.New("invalid bootstrap fields")
+	}
+	if diff := ts - time.Now().Unix(); diff < -60 || diff > 60 {
+		return "", errors.New("bootstrap timestamp outside allowed window")
+	}
+	if !c.AnonymousEnabled() {
+		return "", store.ErrDeviceNotAllowed
+	}
+	transcript := cryptoutil.BuildBootstrapTranscript(pubKey, ts, nonce, challenge)
+	if !ed25519.Verify(pubKey, transcript, proof) {
+		return "", errors.New("bootstrap proof invalid")
+	}
+	return cryptoutil.SignBootstrapToken(c.issuerPriv, store.DeviceFingerprint(pubKey))
+}
+
+// enrollWithBootstrap is the anonymous counterpart of Enroll: the inviteCode
+// carries a bootstrap token, the client's hostId is only a placeholder for
+// proof binding, the real hostId is server-assigned, and quota/device checks
+// replace invite consumption.
+func (c *Control) enrollWithBootstrap(req *EnrollRequest) (*EnrollResult, error) {
+	if !c.AnonymousEnabled() {
+		return nil, store.ErrDeviceNotAllowed
+	}
+	payload, err := cryptoutil.VerifyBootstrapToken(c.issuerPub, req.InviteCode)
+	if err != nil {
+		return nil, fmt.Errorf("bootstrap token: %w", err)
+	}
+	if payload.Sub != store.DeviceFingerprint(req.HostPublicKey) {
+		return nil, errors.New("bootstrap token device mismatch")
+	}
+	device, err := c.store.EnsureDevice(ed25519.PublicKey(req.HostPublicKey), c.anonymousMaxHosts)
+	if err != nil {
+		return nil, err
+	}
+	if !device.Enabled {
+		return nil, store.ErrDeviceDisabled
+	}
+	// Server-assigned hostId; the placeholder in the request is discarded.
+	hostID, err := NewAnonymousHostID()
+	if err != nil {
+		return nil, err
+	}
+	routeId, err := cryptoutil.RandomBytes(16)
+	if err != nil {
+		return nil, err
+	}
+	secret, err := cryptoutil.DeriveRouteSecret(c.routeMasterKey, routeId)
+	if err != nil {
+		return nil, err
+	}
+	streams := c.defaultMaxStreams
+	if c.anonymousMaxStreams > 0 && c.anonymousMaxStreams < streams {
+		streams = c.anonymousMaxStreams
+	}
+	host := &store.Host{
+		ID: hostID, RouteID: routeId, HostName: hostID,
+		HostPubKey: req.HostPublicKey,
+		MaxStreams: streams, Version: "v0.1.0",
+	}
+	var capStr string
+	err = c.store.EnrollAnonymousHost(device.ID, host, device.MaxHosts, func(generation int64) (*store.EnrollMaterial, error) {
+		jti, err := cryptoutil.RandomBytes(16)
+		if err != nil {
+			return nil, err
+		}
+		payload := cryptoutil.CapabilityPayload{
+			Iss:        "dsh-links-relay",
+			Jti:        base64.RawURLEncoding.EncodeToString(jti),
+			Host:       hostID,
+			Route:      base64.RawURLEncoding.EncodeToString(routeId),
+			HostPK:     base64.RawURLEncoding.EncodeToString(req.HostPublicKey),
+			Generation: uint64(generation),
+			MaxStreams: streams,
+			Iat:        time.Now().Unix(),
+			Exp:        time.Now().Add(c.capTTL).Unix(),
+		}
+		signed, err := cryptoutil.SignCapability(c.issuerPriv, payload)
+		if err != nil {
+			return nil, err
+		}
+		capStr = signed
+		hash := sha256.Sum256([]byte(signed))
+		return &store.EnrollMaterial{CapabilityHash: hash[:], IssuedAt: payload.Iat, ExpiresAt: payload.Exp}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("anonymous enroll: %w", err)
+	}
+	return &EnrollResult{
+		RouteId:     routeId,
+		RouteSecret: secret,
+		Capability:  capStr,
+		Generation:  uint64(host.Generation),
+		HostId:      hostID,
+	}, nil
+}
+
+// RevokeSelf revokes the host owning routeId after verifying that the caller
+// holds the host private key. It returns the revoked host ID ("" when the
+// route is unknown, which the caller may treat as already-gone).
+func (c *Control) RevokeSelf(routeId []byte, ts int64, nonce, challenge, proof []byte) (string, error) {
+	if len(routeId) != 16 || len(nonce) != 16 || len(challenge) != 32 || len(proof) != ed25519.SignatureSize {
+		return "", errors.New("invalid revoke-self fields")
+	}
+	h, err := c.store.GetHostByRoute(routeId)
+	if err != nil {
+		return "", nil // unknown route: nothing to revoke
+	}
+	if h.RevokedAt != nil {
+		return h.ID, nil // idempotent
+	}
+	transcript := cryptoutil.BuildRevokeSelfTranscript(routeId, ts, nonce, challenge)
+	if !ed25519.Verify(ed25519.PublicKey(h.HostPubKey), transcript, proof) {
+		return "", errors.New("revoke-self proof invalid")
+	}
+	if _, _, err := c.RevokeHost(h.ID); err != nil {
+		return "", err
+	}
+	return h.ID, nil
 }

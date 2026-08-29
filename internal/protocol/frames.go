@@ -10,6 +10,10 @@ const (
 	TypeHello      = "HELLO"
 	TypeEnroll     = "ENROLL"
 	TypeEnrolled   = "ENROLLED"
+	TypeBootstrap  = "BOOTSTRAP"
+	TypeBootstrapped = "BOOTSTRAPPED"
+	TypeRevokeSelf = "REVOKE_SELF"
+	TypeRevoked     = "REVOKED"
 	TypeRegister   = "REGISTER"
 	TypeRegistered = "REGISTERED"
 	TypeConnect    = "CONNECT"
@@ -59,12 +63,45 @@ type EnrollFrame struct {
 	Proof         string `json:"proof"` // base64url 64B
 }
 
+// BootstrapFrame requests a short-lived bootstrap token. The device submits
+// its public key with a proof of possession; the relay signs a token that
+// authorizes exactly one anonymous ENROLL (inviteCode field = token).
+type BootstrapFrame struct {
+	Type   string `json:"type"`
+	PubKey string `json:"pubkey"` // base64url 32B
+	Ts     int64  `json:"ts"`
+	Nonce  string `json:"nonce"` // base64url 16B
+	Proof  string `json:"proof"` // base64url 64B
+}
+
+type BootstrappedFrame struct {
+	Type  string `json:"type"`
+	Token string `json:"token"` // JWS compact, ~10 min TTL
+}
+
+// RevokeSelfFrame asks the relay to revoke the host owning this route. The
+// device proves possession of the host key; no admin involvement needed.
+type RevokeSelfFrame struct {
+	Type    string `json:"type"`
+	RouteId string `json:"routeId"` // base64url 16B
+	Ts      int64  `json:"ts"`
+	Nonce   string `json:"nonce"` // base64url 16B
+	Proof   string `json:"proof"` // base64url 64B
+}
+
+type RevokedFrame struct {
+	Type string `json:"type"`
+}
+
 type EnrolledFrame struct {
 	Type        string `json:"type"`
 	RouteId     string `json:"routeId"`     // base64url 16B
 	RouteSecret string `json:"routeSecret"` // base64url 32B
 	Capability  string `json:"capability"`  // JWS
 	Generation  uint64 `json:"generation"`
+	// HostId is the stored host identifier; for anonymous bootstrap enrollment
+	// it is the server-assigned id (the client's placeholder is discarded).
+	HostId string `json:"hostId"`
 }
 
 type RegisterFrame struct {

@@ -2,6 +2,7 @@ package control
 
 import (
 	"bufio"
+	"crypto/ed25519"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -55,6 +56,7 @@ type EnrollIPCResponse struct {
 	RouteSecret string `json:"routeSecret"`
 	Capability  string `json:"capability"`
 	Generation  uint64 `json:"generation"`
+	HostId      string `json:"hostId,omitempty"`
 	Error       string `json:"error,omitempty"`
 }
 
@@ -254,6 +256,10 @@ func (s *IPCServer) handleConn(conn net.Conn) {
 		switch msg.Type {
 		case "enroll":
 			s.handleEnroll(conn, msg.Payload)
+		case "bootstrap":
+			s.handleBootstrap(conn, msg.Payload)
+		case "revoke_self":
+			s.handleRevokeSelf(conn, msg.Payload)
 		case "renew":
 			s.handleRenew(conn, msg.Payload)
 		case "lookup_host":
@@ -303,6 +309,47 @@ func (s *IPCServer) handleConn(conn net.Conn) {
 	}
 }
 
+func (s *IPCServer) handleBootstrap(conn net.Conn, payload json.RawMessage) {
+	var req struct {
+		PubKey    string `json:"pubkey"`
+		Ts        int64  `json:"ts"`
+		Nonce     string `json:"nonce"`
+		Proof     string `json:"proof"`
+		Challenge string `json:"challenge"`
+	}
+	if err := json.Unmarshal(payload, &req); err != nil {
+		s.sendIPCError(conn, "bad_request", err.Error())
+		return
+	}
+	pub, err := base64.RawURLEncoding.DecodeString(req.PubKey)
+	if err != nil {
+		s.sendIPCError(conn, "bad_request", "pubkey b64")
+		return
+	}
+	nonce, err := base64.RawURLEncoding.DecodeString(req.Nonce)
+	if err != nil {
+		s.sendIPCError(conn, "bad_request", "nonce b64")
+		return
+	}
+	proof, err := base64.RawURLEncoding.DecodeString(req.Proof)
+	if err != nil {
+		s.sendIPCError(conn, "bad_request", "proof b64")
+		return
+	}
+	challenge, err := base64.RawURLEncoding.DecodeString(req.Challenge)
+	if err != nil {
+		s.sendIPCError(conn, "bad_request", "challenge b64")
+		return
+	}
+	token, err := s.control.Bootstrap(ed25519.PublicKey(pub), req.Ts, nonce, challenge, proof)
+	if err != nil {
+		s.sendIPCError(conn, "unauthorized", err.Error())
+		return
+	}
+	resp, _ := json.Marshal(map[string]string{"token": token})
+	s.sendIPCResponse(conn, "bootstrap_response", json.RawMessage(resp))
+}
+
 func (s *IPCServer) handleLookupHost(conn net.Conn, payload json.RawMessage) {
 	var req struct {
 		RouteID string `json:"routeId"`
@@ -316,15 +363,15 @@ func (s *IPCServer) handleLookupHost(conn net.Conn, payload json.RawMessage) {
 		s.sendIPCError(conn, "bad_request", "invalid routeId")
 		return
 	}
-	host, err := s.control.GetHostByRoute(routeID)
+	hostID, generation, pubKey, maxStreams, revoked, err := s.control.LookupRouteStatus(routeID)
 	if err != nil {
 		s.sendIPCResponse(conn, "lookup_host_resp", LookupHostIPCResponse{Error: "route unavailable"})
 		return
 	}
 	s.sendIPCResponse(conn, "lookup_host_resp", LookupHostIPCResponse{
-		HostID: host.ID, Generation: uint64(host.Generation),
-		HostPublicKey: base64.RawURLEncoding.EncodeToString(host.HostPubKey),
-		MaxStreams:    host.MaxStreams, Revoked: host.RevokedAt != nil,
+		HostID: hostID, Generation: generation,
+		HostPublicKey: base64.RawURLEncoding.EncodeToString(pubKey),
+		MaxStreams:    maxStreams, Revoked: revoked,
 	})
 }
 
@@ -518,6 +565,7 @@ func (s *IPCServer) handleEnroll(conn net.Conn, payload json.RawMessage) {
 		RouteSecret: base64.RawURLEncoding.EncodeToString(res.RouteSecret),
 		Capability:  res.Capability,
 		Generation:  res.Generation,
+		HostId:      res.HostId,
 	}
 	s.sendIPCResponse(conn, "enroll_resp", resp)
 }
@@ -814,6 +862,38 @@ func (c *IPCClient) Enroll(req EnrollIPCRequest) (*EnrollIPCResponse, error) {
 	return &resp, nil
 }
 
+// BootstrapIPCRequest asks control to sign a bootstrap token for a device
+// public key (proof of possession included; challenge comes from the relay's
+// HELLO).
+type BootstrapIPCRequest struct {
+	PubKey    string `json:"pubkey"`
+	Ts        int64  `json:"ts"`
+	Nonce     string `json:"nonce"`
+	Proof     string `json:"proof"`
+	Challenge string `json:"challenge"`
+}
+
+func (c *IPCClient) Bootstrap(req BootstrapIPCRequest) (string, error) {
+	payload, _ := json.Marshal(req)
+	respMsg, err := c.request(IPCMessage{Type: "bootstrap", Payload: payload})
+	if err != nil {
+		return "", err
+	}
+	if respMsg.Type == "error" {
+		return "", fmt.Errorf("ipc error: %s", string(respMsg.Payload))
+	}
+	var resp struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(respMsg.Payload, &resp); err != nil {
+		return "", err
+	}
+	if resp.Token == "" {
+		return "", errors.New("empty bootstrap token")
+	}
+	return resp.Token, nil
+}
+
 func (c *IPCClient) Renew(req RenewIPCRequest) (string, error) {
 	// RenewIPCRequest is defined as local struct in handleRenew, need to create map
 	type renewIPCReq struct {
@@ -1030,4 +1110,65 @@ func readIPCFrame(conn net.Conn, reader *bufio.Reader, firstByteTimeout time.Dur
 	frame[0] = first
 	frame = append(frame, rest[:len(rest)-1]...)
 	return frame, nil
+}
+
+// RevokeSelfIPCRequest asks control to revoke the host owning a route after
+// verifying the host-key proof of possession.
+type RevokeSelfIPCRequest struct {
+	RouteId   string `json:"routeId"`
+	Ts        int64  `json:"ts"`
+	Nonce     string `json:"nonce"`
+	Proof     string `json:"proof"`
+	Challenge string `json:"challenge"`
+}
+
+func (c *IPCClient) RevokeSelf(req RevokeSelfIPCRequest) (string, error) {
+	payload, _ := json.Marshal(req)
+	respMsg, err := c.request(IPCMessage{Type: "revoke_self", Payload: payload})
+	if err != nil {
+		return "", err
+	}
+	if respMsg.Type == "error" {
+		return "", fmt.Errorf("ipc error: %s", string(respMsg.Payload))
+	}
+	var resp struct {
+		HostId string `json:"hostId"`
+	}
+	_ = json.Unmarshal(respMsg.Payload, &resp)
+	return resp.HostId, nil
+}
+
+func (s *IPCServer) handleRevokeSelf(conn net.Conn, payload json.RawMessage) {
+	var req RevokeSelfIPCRequest
+	if err := json.Unmarshal(payload, &req); err != nil {
+		s.sendIPCError(conn, "bad_request", "invalid revoke-self request")
+		return
+	}
+	routeID, err := base64.RawURLEncoding.DecodeString(req.RouteId)
+	if err != nil || len(routeID) != 16 {
+		s.sendIPCError(conn, "bad_request", "invalid routeId")
+		return
+	}
+	nonce, err := base64.RawURLEncoding.DecodeString(req.Nonce)
+	if err != nil || len(nonce) != 16 {
+		s.sendIPCError(conn, "bad_request", "invalid nonce")
+		return
+	}
+	proof, err := base64.RawURLEncoding.DecodeString(req.Proof)
+	if err != nil || len(proof) != 64 {
+		s.sendIPCError(conn, "bad_request", "invalid proof")
+		return
+	}
+	challenge, err := base64.RawURLEncoding.DecodeString(req.Challenge)
+	if err != nil || len(challenge) != 32 {
+		s.sendIPCError(conn, "bad_request", "invalid challenge")
+		return
+	}
+	hostID, err := s.control.RevokeSelf(routeID, req.Ts, nonce, challenge, proof)
+	if err != nil {
+		s.sendIPCError(conn, "unauthorized", err.Error())
+		return
+	}
+	resp, _ := json.Marshal(map[string]string{"hostId": hostID})
+	s.sendIPCResponse(conn, "revoke_self_resp", resp)
 }

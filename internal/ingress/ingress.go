@@ -25,6 +25,8 @@ import (
 // ControlAPI abstracts control operations needed by ingress.
 type ControlAPI interface {
 	Enroll(req *EnrollProxyRequest) (*EnrollProxyResponse, error)
+	Bootstrap(req *BootstrapProxyRequest) (string, error)
+	RevokeSelf(req *RevokeSelfProxyRequest) (string, error)
 	LookupHostByRoute(routeId []byte) (hostID string, generation uint64, pubKey []byte, maxStreams int, revoked bool, err error)
 	VerifyRouteMAC(req *RouteMACProxyRequest) error
 	VerifyCapability(cap string) (*cryptoutil.CapabilityPayload, error)
@@ -68,6 +70,27 @@ type EnrollProxyResponse struct {
 	RouteSecret []byte
 	Capability  string
 	Generation  uint64
+	HostId      string
+}
+
+// RevokeSelfProxyRequest carries a REVOKE_SELF frame to control; control
+// verifies the host-key proof and revokes the host.
+type RevokeSelfProxyRequest struct {
+	RouteId   []byte
+	Ts        int64
+	Nonce     []byte
+	Proof     []byte
+	Challenge []byte
+}
+
+// BootstrapProxyRequest carries a BOOTSTRAP frame to control for token
+// issuance.
+type BootstrapProxyRequest struct {
+	PubKey    []byte
+	Ts        int64
+	Nonce     []byte
+	Proof     []byte
+	Challenge []byte
 }
 
 type Ingress struct {
@@ -500,6 +523,10 @@ func (ing *Ingress) handleConn(rawConn net.Conn, isClient bool, remoteKey string
 		switch typ {
 		case protocol.TypeEnroll:
 			ing.handleEnroll(ctx, rawFrame)
+		case protocol.TypeBootstrap:
+			ing.handleBootstrap(ctx, rawFrame)
+		case protocol.TypeRevokeSelf:
+			ing.handleRevokeSelf(ctx, rawFrame)
 		case protocol.TypeRegister:
 			ing.handleRegister(ctx, rawFrame)
 		case protocol.TypeBind:
@@ -514,6 +541,89 @@ func (ing *Ingress) handleConn(rawConn net.Conn, isClient bool, remoteKey string
 // After success, this connection is expected to continue as REGISTER? Actually ENROLL is one-shot then agent should reconnect with REGISTER.
 // Spec: Agent sends ENROLL, gets ENROLLED, then can use REGISTER on same or new connection? Best to treat ENROLL as terminal: close after ENROLLED.
 // But we could keep connection open for subsequent REGISTER if client chooses.
+func (ing *Ingress) handleBootstrap(ctx *connContext, raw []byte) {
+	f, err := protocol.ValidateBootstrap(raw)
+	if err != nil {
+		ing.logger.Printf("bootstrap validation failed from %s: %v", logutil.Value(ctx.remoteIP), err)
+		sendError(ctx.conn, protocol.ErrBadRequest, err.Error())
+		return
+	}
+	if !ctx.frameLimiter.Allow() {
+		sendError(ctx.conn, protocol.ErrRateLimited, "frame limit reached")
+		return
+	}
+	// Bootstrap is the anonymous admission path: it shares the enrollment
+	// rate budget (per IP-prefix) plus the global pre-auth budget applied at
+	// accept time, so rotating IPv6 sources cannot mint tokens freely.
+	if !ing.enrollLimiter.Allow(ctx.remoteKey) {
+		sendError(ctx.conn, protocol.ErrRateLimited, "enrollment rate reached")
+		return
+	}
+	if _, ok := ctx.nonces[f.Nonce]; ok {
+		sendError(ctx.conn, protocol.ErrBadRequest, "nonce replay")
+		return
+	}
+	ctx.nonces[f.Nonce] = true
+	pub, _ := base64.RawURLEncoding.DecodeString(f.PubKey)
+	nonceRaw, _ := base64.RawURLEncoding.DecodeString(f.Nonce)
+	proof, _ := base64.RawURLEncoding.DecodeString(f.Proof)
+	token, err := ing.control.Bootstrap(&BootstrapProxyRequest{
+		PubKey: pub, Ts: f.Ts, Nonce: nonceRaw, Proof: proof, Challenge: ctx.challenge,
+	})
+	if err != nil {
+		// Reject unknown devices with the same generic failure as a bad
+		// invite so the public endpoint does not leak switch state.
+		ing.logger.Printf("bootstrap failed for %s: %v", logutil.Value(ctx.remoteIP), err)
+		sendError(ctx.conn, protocol.ErrAuthFailed, "bootstrap failed")
+		return
+	}
+	resp := protocol.BootstrappedFrame{Type: protocol.TypeBootstrapped, Token: token}
+	b, _ := json.Marshal(resp)
+	b = append(b, '\n')
+	_ = ctx.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	_, _ = ctx.conn.Write(b)
+	_ = ctx.conn.SetWriteDeadline(time.Time{})
+	ing.promoteConnection(ctx)
+	ing.logger.Printf("bootstrap token issued to %s", logutil.Value(ctx.remoteIP))
+}
+
+func (ing *Ingress) handleRevokeSelf(ctx *connContext, raw []byte) {
+	f, err := protocol.ValidateRevokeSelf(raw)
+	if err != nil {
+		ing.logger.Printf("revoke-self validation failed from %s: %v", logutil.Value(ctx.remoteIP), err)
+		sendError(ctx.conn, protocol.ErrBadRequest, err.Error())
+		return
+	}
+	if !ctx.frameLimiter.Allow() {
+		sendError(ctx.conn, protocol.ErrRateLimited, "frame limit reached")
+		return
+	}
+	if _, ok := ctx.nonces[f.Nonce]; ok {
+		sendError(ctx.conn, protocol.ErrBadRequest, "nonce replay")
+		return
+	}
+	ctx.nonces[f.Nonce] = true
+	routeRaw, _ := base64.RawURLEncoding.DecodeString(f.RouteId)
+	nonceRaw, _ := base64.RawURLEncoding.DecodeString(f.Nonce)
+	proof, _ := base64.RawURLEncoding.DecodeString(f.Proof)
+	hostID, err := ing.control.RevokeSelf(&RevokeSelfProxyRequest{
+		RouteId: routeRaw, Ts: f.Ts, Nonce: nonceRaw, Proof: proof, Challenge: ctx.challenge,
+	})
+	if err != nil {
+		ing.logger.Printf("revoke-self failed for %s: %v", logutil.Value(ctx.remoteIP), err)
+		sendError(ctx.conn, protocol.ErrAuthFailed, "revoke failed")
+		return
+	}
+	resp := protocol.RevokedFrame{Type: protocol.TypeRevoked}
+	b, _ := json.Marshal(resp)
+	b = append(b, '\n')
+	_ = ctx.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	_, _ = ctx.conn.Write(b)
+	_ = ctx.conn.SetWriteDeadline(time.Time{})
+	ing.promoteConnection(ctx)
+	ing.logger.Printf("host %s revoked itself", logutil.Value(hostID))
+}
+
 func (ing *Ingress) handleEnroll(ctx *connContext, raw []byte) {
 	enroll, err := protocol.ValidateEnroll(raw)
 	if err != nil {
@@ -557,20 +667,22 @@ func (ing *Ingress) handleEnroll(ctx *connContext, raw []byte) {
 		sendError(ctx.conn, protocol.ErrAuthFailed, "enroll failed")
 		return
 	}
-	enrolled := protocol.EnrolledFrame{
+	ing.logger.Printf("enroll resp hostid=%q route=%q", resp.HostId, base64.RawURLEncoding.EncodeToString(resp.RouteId))
+	enrolledFrame := protocol.EnrolledFrame{
 		Type:        protocol.TypeEnrolled,
 		RouteId:     base64.RawURLEncoding.EncodeToString(resp.RouteId),
 		RouteSecret: base64.RawURLEncoding.EncodeToString(resp.RouteSecret),
 		Capability:  resp.Capability,
 		Generation:  resp.Generation,
+		HostId:      resp.HostId,
 	}
-	b, _ := json.Marshal(enrolled)
+	b, _ := json.Marshal(enrolledFrame)
 	b = append(b, '\n')
 	_ = ctx.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	_, _ = ctx.conn.Write(b)
 	_ = ctx.conn.SetWriteDeadline(time.Time{})
 	ing.promoteConnection(ctx)
-	ing.logger.Printf("enroll success host=%s route=%s", logutil.Value(enroll.HostId), enrolled.RouteId[:8])
+	ing.logger.Printf("enroll success host=%s route=%s", logutil.Value(enroll.HostId), enrolledFrame.RouteId[:8])
 	// Close after enroll, agent will reconnect with REGISTER
 }
 

@@ -49,7 +49,6 @@ func VerifyMAC(routeSecret, transcript, mac []byte) bool {
 
 // ENROLL transcript:
 // ASCII("DLR/1\x00ENROLL\x00") || SHA256(inviteCode) || U16BE(len hostId) || hostId || hostPubKey(32) || BE64(ts) || nonce(16) || challenge(32)
-
 func BuildEnrollTranscript(inviteCode string, hostId string, hostPubKey []byte, ts int64, nonce, challenge []byte) []byte {
 	buf := make([]byte, 0, 256)
 	buf = append(buf, []byte("DLR/1")...)
@@ -65,6 +64,42 @@ func BuildEnrollTranscript(inviteCode string, hostId string, hostPubKey []byte, 
 	buf = append(buf, ln...)
 	buf = append(buf, hid...)
 	buf = append(buf, hostPubKey...)
+	tsB := make([]byte, 8)
+	binary.BigEndian.PutUint64(tsB, uint64(ts))
+	buf = append(buf, tsB...)
+	buf = append(buf, nonce...)
+	buf = append(buf, challenge...)
+	return buf
+}
+
+// BOOTSTRAP transcript:
+// ASCII("DLR/1\x00BOOTSTRAP\x00") || pubKey(32) || BE64(ts) || nonce(16) || challenge(32)
+
+func BuildBootstrapTranscript(pubKey []byte, ts int64, nonce, challenge []byte) []byte {
+	buf := make([]byte, 0, 128)
+	buf = append(buf, []byte("DLR/1")...)
+	buf = append(buf, 0x00)
+	buf = append(buf, []byte("BOOTSTRAP")...)
+	buf = append(buf, 0x00)
+	buf = append(buf, pubKey...)
+	tsB := make([]byte, 8)
+	binary.BigEndian.PutUint64(tsB, uint64(ts))
+	buf = append(buf, tsB...)
+	buf = append(buf, nonce...)
+	buf = append(buf, challenge...)
+	return buf
+}
+
+// REVOKE_SELF transcript:
+// ASCII("DLR/1\x00REVOKE_SELF\x00") || routeId(16) || BE64(ts) || nonce(16) || challenge(32)
+
+func BuildRevokeSelfTranscript(routeId []byte, ts int64, nonce, challenge []byte) []byte {
+	buf := make([]byte, 0, 96)
+	buf = append(buf, []byte("DLR/1")...)
+	buf = append(buf, 0x00)
+	buf = append(buf, []byte("REVOKE_SELF")...)
+	buf = append(buf, 0x00)
+	buf = append(buf, routeId...)
 	tsB := make([]byte, 8)
 	binary.BigEndian.PutUint64(tsB, uint64(ts))
 	buf = append(buf, tsB...)

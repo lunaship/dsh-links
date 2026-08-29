@@ -1,6 +1,8 @@
 package ingress
 
 import (
+	"crypto/ed25519"
+
 	"github.com/dsh-links/dsh-links-relay/internal/control"
 	"github.com/dsh-links/dsh-links-relay/internal/cryptoutil"
 )
@@ -32,16 +34,12 @@ func (c *InProcessControl) Enroll(req *EnrollProxyRequest) (*EnrollProxyResponse
 		RouteSecret: res.RouteSecret,
 		Capability:  res.Capability,
 		Generation:  res.Generation,
+		HostId:      res.HostId,
 	}, nil
 }
 
 func (c *InProcessControl) LookupHostByRoute(routeId []byte) (string, uint64, []byte, int, bool, error) {
-	h, err := c.ctrl.GetHostByRoute(routeId)
-	if err != nil {
-		return "", 0, nil, 0, false, err
-	}
-	revoked := h.RevokedAt != nil
-	return h.ID, uint64(h.Generation), h.HostPubKey, h.MaxStreams, revoked, nil
+	return c.ctrl.LookupRouteStatus(routeId)
 }
 
 func (c *InProcessControl) VerifyRouteMAC(req *RouteMACProxyRequest) error {
@@ -74,4 +72,12 @@ var _ ControlAPI = (*InProcessControl)(nil)
 
 func (c *InProcessControl) ReportUsage(routeID []byte, rx, tx int64, connects int) error {
 	return c.ctrl.ReportUsage(routeID, rx, tx, connects)
+}
+
+func (c *InProcessControl) Bootstrap(req *BootstrapProxyRequest) (string, error) {
+	return c.ctrl.Bootstrap(ed25519.PublicKey(req.PubKey), req.Ts, req.Nonce, req.Challenge, req.Proof)
+}
+
+func (c *InProcessControl) RevokeSelf(req *RevokeSelfProxyRequest) (string, error) {
+	return c.ctrl.RevokeSelf(req.RouteId, req.Ts, req.Nonce, req.Challenge, req.Proof)
 }

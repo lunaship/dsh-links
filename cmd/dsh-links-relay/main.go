@@ -112,6 +112,18 @@ func runControl(configPath string) {
 	if err != nil {
 		log.Fatalf("new control: %v", err)
 	}
+	// Phase 2 anonymous policy: config is the initial value; the runtime kill
+	// switch persisted in settings overrides it after the first admin toggle.
+	ctrl.ApplyAnonymousPolicy(control.AnonymousPolicy{
+		Enabled:    cfg.AnonymousEnroll,
+		MaxHosts:   cfg.AnonymousMaxHostsPerDevice,
+		MaxStreams: cfg.AnonymousMaxStreamsPerRoute,
+		DailyBytes: cfg.AnonymousDailyBytes,
+	})
+	ctrl.SetCapabilityTTL(cfg.CapabilityTTLDur)
+	if v, _ := st.GetSetting(control.SettingAnonymousEnroll); v != "" {
+		_ = ctrl.SetAnonymousEnabled(v == "1")
+	}
 
 	// Start IPC server (with auth token if configured)
 	ipcAuthToken, err := cfg.LoadIPCAuthToken()
@@ -427,4 +439,32 @@ func (a *ipcControlAdapter) Renew(req *ingress.RenewProxyRequest) (string, error
 
 func (a *ipcControlAdapter) ReportUsage(routeID []byte, rx, tx int64, connects int) error {
 	return a.client.ReportUsage(routeID, rx, tx, connects)
+}
+
+func (a *ipcControlAdapter) Bootstrap(req *ingress.BootstrapProxyRequest) (string, error) {
+	challenge := ""
+	if len(req.Challenge) == 32 {
+		challenge = base64.RawURLEncoding.EncodeToString(req.Challenge)
+	}
+	return a.client.Bootstrap(control.BootstrapIPCRequest{
+		PubKey:    base64.RawURLEncoding.EncodeToString(req.PubKey),
+		Ts:        req.Ts,
+		Nonce:     base64.RawURLEncoding.EncodeToString(req.Nonce),
+		Proof:     base64.RawURLEncoding.EncodeToString(req.Proof),
+		Challenge: challenge,
+	})
+}
+
+func (a *ipcControlAdapter) RevokeSelf(req *ingress.RevokeSelfProxyRequest) (string, error) {
+	challenge := ""
+	if len(req.Challenge) == 32 {
+		challenge = base64.RawURLEncoding.EncodeToString(req.Challenge)
+	}
+	return a.client.RevokeSelf(control.RevokeSelfIPCRequest{
+		RouteId:   base64.RawURLEncoding.EncodeToString(req.RouteId),
+		Ts:        req.Ts,
+		Nonce:     base64.RawURLEncoding.EncodeToString(req.Nonce),
+		Proof:     base64.RawURLEncoding.EncodeToString(req.Proof),
+		Challenge: challenge,
+	})
 }

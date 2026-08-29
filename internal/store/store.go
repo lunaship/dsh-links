@@ -95,7 +95,9 @@ CREATE TABLE IF NOT EXISTS hosts (
   version TEXT NOT NULL,
   last_seen_at INTEGER,
   revoked_at INTEGER,
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  device_id TEXT,
+  suspended_until INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS credentials (
@@ -123,12 +125,60 @@ CREATE TABLE IF NOT EXISTS stats_daily (
   error_count INTEGER NOT NULL,
   PRIMARY KEY (host_id, date)
 );
+CREATE TABLE IF NOT EXISTS devices (
+  id TEXT PRIMARY KEY,
+  public_key BLOB NOT NULL UNIQUE,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  max_hosts INTEGER NOT NULL DEFAULT 2,
+  created_at INTEGER NOT NULL,
+  disabled_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_invites_expires ON invites(expires_at);
 CREATE INDEX IF NOT EXISTS idx_hosts_route ON hosts(route_id);
 CREATE INDEX IF NOT EXISTS idx_hosts_pubkey ON hosts(host_pubkey);
 CREATE INDEX IF NOT EXISTS idx_renewal_replays_expires ON renewal_replays(expires_at);
 `
-	_, err := s.db.Exec(schema)
+	if _, err := s.db.Exec(schema); err != nil {
+		return err
+	}
+	// Phase 2: add device linkage + suspension columns to existing hosts.
+	if err := s.ensureColumn("hosts", "device_id", "TEXT"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("hosts", "suspended_until", "INTEGER"); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_hosts_device ON hosts(device_id)`); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ensureColumn adds a column to an existing table when it is not already
+// present (SQLite lacks IF NOT EXISTS for ALTER TABLE ADD COLUMN).
+func (s *Store) ensureColumn(table, column, decl string) error {
+	rows, err := s.db.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notnull, pk int
+		var dflt any
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return nil
+		}
+	}
+	_, err = s.db.Exec(`ALTER TABLE ` + table + ` ADD COLUMN ` + column + ` ` + decl)
 	return err
 }
 
