@@ -12,7 +12,6 @@ import { randomBytes } from "node:crypto"
 /** 本插件允许代调的 dsh RPC 方法闭集。新增方法：先加这里，再加调用点。 */
 export const RPC_METHOD_ALLOWLIST = Object.freeze([
   "agentPreset.list",
-  "llm.balance",
   "llm.models",
   "session.cancel",
   "session.create",

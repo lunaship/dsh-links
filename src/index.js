@@ -1245,21 +1245,6 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
       })
     }
 
-    if (req.method === "GET" && pathname === "/dsh-link/mobile/balance") {
-      try {
-        const value = await callLocalRpc(targetPort, "llm.balance", {})
-        return json(res, 200, {
-          version: 1,
-          balance: value.balance ?? 0,
-          used: value.used ?? 0,
-          remainder: value.remainder ?? 0,
-          currency: value.currency ?? "USD",
-        })
-      } catch (err) {
-        return json(res, 502, { error: "balance unavailable" })
-      }
-    }
-
     const modelMatch = pathname.match(/^\/dsh-link\/mobile\/sessions\/([^/]+)\/model$/)
     if (req.method === "POST" && modelMatch) {
       const sessionId = decodeURIComponent(modelMatch[1])
