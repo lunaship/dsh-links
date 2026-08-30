@@ -24,7 +24,12 @@ import {
 import { loadOrCreateTls } from "./tls.js"
 import { loadEventsAfter, sseMessageFrame } from "./stream-cursor.js"
 import { flushSeedQueue, respondQuestion, startMuxQuestionBridge } from "./question-bridge.js"
-import { callLocalRpc } from "./local-rpc.js"
+import { callLocalRpc, LocalRpcError } from "./local-rpc.js"
+import {
+  MobileWorkspaceCreateError,
+  ensureMobileWorkspaceDirectory,
+  planMobileWorkspaceCreate,
+} from "./workspace-create.js"
 import { deriveAddresses, generateHostKey, hostKeyFromSeed, resolveEnrollText, unb64u } from "./relay/crypto.js"
 import { enroll as enrollRelay, normalizeTlsFingerprint, RelayAgent } from "./relay/agent.js"
 
@@ -281,10 +286,16 @@ function pairInfo(config, state, certFingerprint, via = "lan") {
     info.relay = {
       v: 2,
       client: relay.clientAddress,
-      routeId: relay.routeId,
-      routeSecret: relay.routeSecret,
     }
     if (relay.tlsFingerprint) info.relay.tlsFingerprint = relay.tlsFingerprint
+    if (relay.qrMode === "anonymous") {
+      // 匿名模式：二维码不携带长期 routeSecret。App 用自己的设备身份
+      // 自助接入该中继（BOOTSTRAP + ENROLL），配对时复用其 route。
+      info.relay.mode = "anonymous"
+    } else {
+      info.relay.routeId = relay.routeId
+      info.relay.routeSecret = relay.routeSecret
+    }
   }
   info.requireConfirm = pairRequireConfirm(config, state)
   info.exposure = listenExposure(config, lan.infos)
@@ -1260,10 +1271,41 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
     if (req.method === "POST" && pathname === "/dsh-link/mobile/workspaces") {
       const body = await readAuthorizedJson(req, res, state, device)
   if (!body) return
-      const path = String(body.path ?? "").trim()
-      if (!path) return json(res, 400, { error: "缺少工作区路径" })
-      const value = await callLocalRpc(targetPort, "workspace.create", { path })
-      return json(res, 200, { ok: true, workspace: value.workspace ?? null, created: Boolean(value.created) })
+      try {
+        const list = await callLocalRpc(targetPort, "workspace.list", {})
+        if (!isDeviceAuthorized(state, device)) return json(res, 401, { error: "设备已被吊销" })
+        const plan = planMobileWorkspaceCreate({
+          input: body.input ?? body.path,
+          parentWorkspaceId: body.parentWorkspaceId,
+          workspaces: list.items ?? [],
+        })
+        const { directoryCreated } = await ensureMobileWorkspaceDirectory(plan)
+        const value = await callLocalRpc(targetPort, "workspace.create", { path: plan.path })
+        return json(res, 200, {
+          ok: true,
+          workspace: value.workspace ?? null,
+          created: Boolean(value.created),
+          directoryCreated,
+          inputKind: plan.inputKind,
+          resolvedPath: plan.path,
+        })
+      } catch (error) {
+        if (error instanceof MobileWorkspaceCreateError) {
+          return json(res, error.status, {
+            error: error.message,
+            code: error.code,
+            details: error.details,
+          })
+        }
+        if (error instanceof LocalRpcError && error.code === "workspace-invalid-path") {
+          return json(res, 400, {
+            error: error.message,
+            code: error.code,
+            details: error.details,
+          })
+        }
+        throw error
+      }
     }
 
     // 删除工作区（取消注册；会话日志不删除，DSH workspace.delete 语义）
@@ -1734,6 +1776,30 @@ export function apply(ctx, config) {
           insecureTls: Boolean(state.relay?.insecureTls),
           tlsFingerprint: state.relay?.tlsFingerprint ?? "",
           tlsPinTrusted: Boolean(state.relay?.tlsPinTrusted),
+          qrMode: state.relay?.qrMode ?? "route",
+        })
+      },
+    }),
+    web.register({
+      kind: "exact",
+      path: "/dsh-link/relay-qr-mode",
+      handler: (req, res) => {
+        if (!requireLoopbackSameOrigin(req, res)) return
+        if (!requireJsonWrite(req, res)) return
+        readJson(req, res).then((body) => {
+          if (!body) return
+          const mode = String(body.mode ?? "").trim()
+          if (mode !== "route" && mode !== "anonymous") {
+            return json(res, 400, { error: "mode 必须是 route 或 anonymous" })
+          }
+          if (!state.relay) return json(res, 400, { error: "尚未接入 Relay" })
+          state.relay.qrMode = mode
+          try {
+            saveState(stateFile, state)
+          } catch (err) {
+            return json(res, 500, { error: err?.message ?? "保存状态失败" })
+          }
+          json(res, 200, { ok: true, qrMode: mode })
         })
       },
     }),
@@ -1787,9 +1853,11 @@ export function apply(ctx, config) {
             insecureTls,
             tlsFingerprint,
           })
+          const qrMode = String(body.qrMode ?? "").trim() || "route"
           state.relay = {
             agentAddress: derived.agentAddress,
             clientAddress: derived.clientAddress,
+            qrMode,
             hostSeed: keys.seed.toString("base64url"),
             hostPublicKey: keys.publicKey.toString("base64url"),
             routeId: enrolled.routeId,

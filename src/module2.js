@@ -618,7 +618,19 @@ const createPanelModule = (require) => {
     })
   }
 
-  function RelayForm({ relay, onEnroll, onDisconnect }) {
+  function RelayForm({ relay, onEnroll, onDisconnect, setQrMode }) {
+    const [qrBusy, setQrBusy] = React.useState(false)
+    const toggleQrMode = async () => {
+      if (qrBusy) return
+      setQrBusy(true)
+      try {
+        await setQrMode(relay?.qrMode === 'anonymous' ? 'route' : 'anonymous')
+      } catch (err) {
+        setMessage(String(err?.message ?? err))
+      } finally {
+        setQrBusy(false)
+      }
+    }
     const [paste, setPaste] = React.useState('')
     const [busy, setBusy] = React.useState(false)
     const [message, setMessage] = React.useState('')
@@ -666,6 +678,13 @@ const createPanelModule = (require) => {
               jsxs('div', {
                 className: 'dshlink-relay-actions',
                 children: [
+                  jsx('button', {
+                    type: 'button',
+                    className: 'dshlink-secondary',
+                    onClick: toggleQrMode,
+                    disabled: qrBusy,
+                    children: relay?.qrMode === 'anonymous' ? '二维码匿名模式：开' : '二维码匿名模式：关',
+                  }),
                   jsx('button', {
                     type: 'button',
                     className: 'dshlink-secondary',
@@ -732,7 +751,7 @@ const createPanelModule = (require) => {
     return jsxs('div', {
       className: 'dshlink-remote',
       children: [
-        jsx(RelayForm, { relay, onEnroll, onDisconnect }),
+        jsx(RelayForm, { relay, onEnroll, onDisconnect, setQrMode }),
         online
           ? jsx(PairCard, { via: 'relay', code: pairingCode, label: '云端配对码' })
           : null,
@@ -885,8 +904,18 @@ const createPanelModule = (require) => {
       await fetch('/dsh-link/relay-disconnect', { method: 'POST' })
       await load()
     }
+    const setQrMode = async (mode2) => {
+      const res = await fetch('/dsh-link/relay-qr-mode', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ mode: mode2 }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
+      await load()
+    }
 
-    return { info, devices, err, revoke, approve, revokeAll, setRequireConfirm, relay, onEnroll, onDisconnect, load }
+    return { info, devices, err, revoke, approve, revokeAll, setRequireConfirm, relay, onEnroll, onDisconnect, setQrMode, load }
   }
 
   function LinkPanel() {

@@ -8,7 +8,7 @@ import { createServer } from "node:http"
 import { readFileSync, readdirSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
-import { RPC_METHOD_ALLOWLIST, callLocalRpc } from "../src/local-rpc.js"
+import { LocalRpcError, RPC_METHOD_ALLOWLIST, callLocalRpc } from "../src/local-rpc.js"
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 
@@ -75,6 +75,41 @@ test("白名单之外的方法在发出 HTTP 请求前即被拒绝", async () =>
       )
     }
     assert.equal(hit, 0, "拒绝必须发生在任何 HTTP 请求之前")
+  } finally {
+    srv.close()
+  }
+})
+
+test("typed RPC 错误保留 code、message 与 details", async () => {
+  const srv = createServer((req, res) => {
+    req.resume()
+    req.on("end", () => {
+      res.writeHead(200, { "content-type": "application/json" })
+      res.end(JSON.stringify({
+        result: {
+          ok: false,
+          error: {
+            code: "workspace-invalid-path",
+            message: "directory does not exist",
+            details: { path: "/missing" },
+          },
+        },
+      }))
+    })
+  })
+  await new Promise((resolve) => srv.listen(0, "127.0.0.1", resolve))
+  try {
+    await assert.rejects(
+      () => callLocalRpc(srv.address().port, "workspace.create", { path: "/missing" }),
+      (error) => {
+        assert.ok(error instanceof LocalRpcError)
+        assert.equal(error.method, "workspace.create")
+        assert.equal(error.code, "workspace-invalid-path")
+        assert.equal(error.message, "directory does not exist")
+        assert.deepEqual(error.details, { path: "/missing" })
+        return true
+      },
+    )
   } finally {
     srv.close()
   }

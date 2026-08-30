@@ -36,6 +36,17 @@ const ALLOWED_METHODS = new Set(RPC_METHOD_ALLOWLIST)
 
 const MAX_RPC_RESPONSE_BYTES = 8 * 1024 * 1024
 
+/** 保留 dsh typed RPC error，供 mobile HTTP 层映射为可操作的状态码与提示。 */
+export class LocalRpcError extends Error {
+  constructor(method, error) {
+    super(error?.message || (`RPC ${method} failed`))
+    this.name = "LocalRpcError"
+    this.method = method
+    this.code = typeof error?.code === "string" && error.code ? error.code : "internal"
+    this.details = error?.details && typeof error.details === "object" ? error.details : {}
+  }
+}
+
 export function callLocalRpc(targetPort, method, payload) {
   if (!ALLOWED_METHODS.has(method)) {
     return Promise.reject(new Error(`RPC method not allowlisted: ${method}`))
@@ -72,7 +83,7 @@ export function callLocalRpc(targetPort, method, payload) {
             const frame = JSON.parse(Buffer.concat(chunks).toString("utf8"))
             if (frame?.result?.ok) return resolve(frame.result.value)
             const error = frame?.result?.error
-            reject(new Error(error?.message || ("RPC " + method + " failed")))
+            reject(new LocalRpcError(method, error))
           } catch (error) {
             reject(error)
           }
