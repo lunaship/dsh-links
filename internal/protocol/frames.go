@@ -29,19 +29,23 @@ const (
 
 // Max frame bytes (JSON without LF)
 const (
-	MaxHello      = 768
-	MaxConnect    = 768
-	MaxBind       = 768
-	MaxReady      = 768
-	MaxError      = 768
-	MaxRegister   = 2048
-	MaxEnroll     = 2048
-	MaxRenew      = 2048
-	MaxOpen       = 768
-	MaxPingPong   = 768
-	MaxEnrolled   = 2048
-	MaxRegistered = 768
-	MaxRenewed    = 2048
+	MaxHello        = 768
+	MaxConnect      = 768
+	MaxBind         = 768
+	MaxReady        = 768
+	MaxError        = 768
+	MaxRegister     = 2048
+	MaxEnroll       = 2048
+	MaxRenew        = 2048
+	MaxOpen         = 768
+	MaxPingPong     = 768
+	MaxEnrolled     = 2048
+	MaxRegistered   = 768
+	MaxRenewed      = 2048
+	MaxBootstrap    = 1024
+	MaxBootstrapped = 8192
+	MaxRevokeSelf   = 2048
+	MaxRevoked      = 512
 )
 
 // Frames

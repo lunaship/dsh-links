@@ -542,6 +542,12 @@ func (ing *Ingress) handleConn(rawConn net.Conn, isClient bool, remoteKey string
 // Spec: Agent sends ENROLL, gets ENROLLED, then can use REGISTER on same or new connection? Best to treat ENROLL as terminal: close after ENROLLED.
 // But we could keep connection open for subsequent REGISTER if client chooses.
 func (ing *Ingress) handleBootstrap(ctx *connContext, raw []byte) {
+	// 帧尺寸上限显式化：读循环当前用统一的 2048 硬上限，这里按协议常量
+	// 再次收口，保证未来放宽读上限时 BOOTSTRAP 尺寸语义不变。
+	if len(raw) > protocol.MaxBootstrap {
+		sendError(ctx.conn, protocol.ErrBadRequest, "frame too large")
+		return
+	}
 	f, err := protocol.ValidateBootstrap(raw)
 	if err != nil {
 		ing.logger.Printf("bootstrap validation failed from %s: %v", logutil.Value(ctx.remoteIP), err)
@@ -588,6 +594,10 @@ func (ing *Ingress) handleBootstrap(ctx *connContext, raw []byte) {
 }
 
 func (ing *Ingress) handleRevokeSelf(ctx *connContext, raw []byte) {
+	if len(raw) > protocol.MaxRevokeSelf {
+		sendError(ctx.conn, protocol.ErrBadRequest, "frame too large")
+		return
+	}
 	f, err := protocol.ValidateRevokeSelf(raw)
 	if err != nil {
 		ing.logger.Printf("revoke-self validation failed from %s: %v", logutil.Value(ctx.remoteIP), err)
