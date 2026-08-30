@@ -248,11 +248,11 @@ func TestRevokeSelf(t *testing.T) {
 	if hostID != res.HostId {
 		t.Fatalf("revoked %q want %q", hostID, res.HostId)
 	}
-	h, _ := st.GetHostByID(res.HostId)
-	if h == nil || h.RevokedAt == nil {
-		t.Fatal("host not revoked after revoke-self")
+	// Self-revocation drops the record (cascade) so the pubkey can be reused.
+	if _, err := st.GetHostByID(res.HostId); err == nil {
+		t.Fatal("host record still present after revoke-self")
 	}
-	// idempotent
+	// idempotent: unknown route is a no-op success.
 	if _, err := ctrl.RevokeSelf(res.RouteId, ts, nonce4, challenge, goodProof); err != nil {
 		t.Fatalf("second revoke-self: %v", err)
 	}
@@ -319,5 +319,47 @@ func TestAnonymousDailyBudgetSuspends(t *testing.T) {
 	_, _, _, _, revoked, err = ctrl.LookupRouteStatus(inviteRes.RouteId)
 	if err != nil || revoked {
 		t.Fatalf("invite host budget-exempt revoked=%v err=%v", revoked, err)
+	}
+}
+
+// After REVOKE_SELF the device's pubkey is released: the same identity can
+// bootstrap and enroll a fresh host again.
+func TestRevokeSelfAllowsReenroll(t *testing.T) {
+	ctrl, st := newTestControlWithPolicy(t, AnonymousPolicy{Enabled: true, MaxHosts: 2, MaxStreams: 2, DailyBytes: 0}, 0)
+	defer st.Close()
+	hostPub, hostPriv, _ := ed25519.GenerateKey(rand.Reader)
+	nonce, _ := cryptoutil.GenerateNonce()
+	challenge, _ := cryptoutil.RandomBytes(32)
+	ts := time.Now().Unix()
+
+	join := func() *EnrollResult {
+		proof := ed25519.Sign(hostPriv, cryptoutil.BuildBootstrapTranscript(hostPub, ts, nonce, challenge))
+		token, err := ctrl.Bootstrap(hostPub, ts, nonce, challenge, proof)
+		if err != nil {
+			t.Fatal(err)
+		}
+		nonce2, _ := cryptoutil.GenerateNonce()
+		enrollProof := ed25519.Sign(hostPriv, cryptoutil.BuildEnrollTranscript(token, "h-rr", hostPub, ts, nonce2, challenge))
+		res, err := ctrl.Enroll(&EnrollRequest{InviteCode: token, HostId: "h-rr", HostPublicKey: hostPub, Ts: ts, Nonce: nonce2, Proof: enrollProof, Challenge: challenge})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	res1 := join()
+	nonce4, _ := cryptoutil.GenerateNonce()
+	proof4 := ed25519.Sign(hostPriv, cryptoutil.BuildRevokeSelfTranscript(res1.RouteId, ts, nonce4, challenge))
+	if _, err := ctrl.RevokeSelf(res1.RouteId, ts, nonce4, challenge, proof4); err != nil {
+		t.Fatal(err)
+	}
+	// Same keypair, fresh identity usage: must succeed now that the revoked
+	// row is gone (UNIQUE constraint released).
+	res2 := join()
+	if res2.HostId == "" || res2.HostId == res1.HostId {
+		t.Fatalf("re-enroll after revoke-self: %q vs %q", res1.HostId, res2.HostId)
+	}
+	n, _ := st.CountHostsForDevice(store.DeviceFingerprint(hostPub))
+	if n != 1 {
+		t.Fatalf("device host count = %d, want 1 (revoked row removed)", n)
 	}
 }

@@ -690,14 +690,18 @@ func (c *Control) RevokeSelf(routeId []byte, ts int64, nonce, challenge, proof [
 	if err != nil {
 		return "", nil // unknown route: nothing to revoke
 	}
-	if h.RevokedAt != nil {
-		return h.ID, nil // idempotent
-	}
 	transcript := cryptoutil.BuildRevokeSelfTranscript(routeId, ts, nonce, challenge)
 	if !ed25519.Verify(ed25519.PublicKey(h.HostPubKey), transcript, proof) {
 		return "", errors.New("revoke-self proof invalid")
 	}
 	if _, _, err := c.RevokeHost(h.ID); err != nil {
+		return "", err
+	}
+	// Self-revocation means "I no longer use this host": drop the record
+	// (cascade: credentials/renewal replays/stats) so the device can enroll a
+	// fresh host with the same key later — the host_pubkey UNIQUE constraint
+	// would otherwise pin a revoked row forever.
+	if err := c.store.DeleteHost(h.ID); err != nil {
 		return "", err
 	}
 	return h.ID, nil
