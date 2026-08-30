@@ -30,12 +30,12 @@ func (s *Store) AddRouteUsage(hostID, date string, rx, tx int64, connects int) e
 
 // DailyUsage is one host-day aggregate row.
 type DailyUsage struct {
-	HostID        string
-	Date          string
-	RXBytes       int64
-	TXBytes       int64
-	ConnectCount  int64
-	ErrorCount    int64
+	HostID       string
+	Date         string
+	RXBytes      int64
+	TXBytes      int64
+	ConnectCount int64
+	ErrorCount   int64
 }
 
 // GetDailyUsage returns the usage row for a host on a date (zero values when

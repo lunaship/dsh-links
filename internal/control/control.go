@@ -38,9 +38,9 @@ type Control struct {
 	// anonymous policy: anonymousMaxHosts caps hosts per device; anonymous-
 	// enrolled routes get anonymousDailyBytes daily budget (0 = unlimited);
 	// anonymousMaxStreams caps simultaneous streams per anonymous route.
-	anonymousMaxHosts    int
-	anonymousMaxStreams  int
-	anonymousDailyBytes  int64
+	anonymousMaxHosts   int
+	anonymousMaxStreams int
+	anonymousDailyBytes int64
 	// anonymousEnabled is the runtime anonymous-enrollment kill switch
 	// (initialized from config, toggleable via admin API, persisted in
 	// settings).

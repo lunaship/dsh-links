@@ -65,3 +65,15 @@
 ## 5. 验证方法
 - 模糊测试、竞态 (`go test -race`)、24h soak、无泄密扫描 (Marker 不应出现在日志/journal/SQLite/抓包)
 - 双 Host 各 8 路并发 10k 建连不串线；跨 Host/generation 串线拒绝；重放拒绝；吊销 1秒生效
+
+## 6. 匿名自助接入的新威胁面（阶段二）
+
+| 威胁 | 缓解 |
+|---|---|
+| 匿名洪水：轮换 IPv6 地址批量 bootstrap/enroll | 所有 IP 限流按 `/64` 前缀聚合（`ipv6_prefix_len`）；全局预认证速率预算 + 预认证连接池上限（maxConns/4） |
+| 匿名主体无责任：不注册、不交钱、用完即弃 | 设备即主体：公钥指纹身份、host 配额、日流量预算（超限即断）、REVOKE_SELF、管理面级联封禁；总开关可一键停止匿名发行 |
+| bootstrap token 泄漏（截图/日志） | 10 分钟 TTL + 一次性语义 + 与 host 公钥指纹绑定；泄漏窗口与二维码泄密窗口同量级 |
+| 匿名 host 与邀请制 host 混淆运营 | `device_id` 列区分；统计/配额/封禁只作用于 device 关联的 host |
+| 配额规避：一设备注册多 host | 服务端生成 hostId + 事务内 host 配额复核（SQLite 单写串行化） |
+| 撤销后仍可用 | 设备禁用即时体现于 route lookup（reg.Revoke 推播 + 连接期 lookup），REVOKE_SELF 幂等 |
+| IPv6 前缀聚合误伤多用户 NAT | /64 聚合对移动网络通常同前缀；确有需要可调 `ipv6_prefix_len`（0 回溯旧行为）并仅影响匿名侧上限大小，不改变邀请制主体语义 |

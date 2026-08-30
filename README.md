@@ -81,3 +81,21 @@ CGO_ENABLED=0 go test ./internal/ingress -run TestSequential -v
 ## License
 
 MIT — 见 `LICENSE`.
+
+## 阶段二：匿名自助接入（可选）
+
+默认 `anonymous_enroll = false`（保持邀请制）。开启后：
+
+```toml
+anonymous_enroll                 = true    # 匿名发行总开关（也可在控制台运行时切换）
+anonymous_max_hosts_per_device   = 2       # 每设备最多同时 Host 数
+anonymous_max_streams_per_route  = 2       # 匿名 route 并发流上限
+anonymous_daily_bytes            = 536870912  # 匿名 route 每日流量预算（0=不限制）
+capability_ttl                   = "168h"  # 新能力凭证有效期（7 天）
+ipv6_prefix_len                  = 64      # 按 IP 限流的 IPv6 聚合前缀（0=禁用）
+```
+
+- 设备本地生成 Ed25519 身份 → `BOOTSTRAP` 帧换 10 分钟 token → `ENROLL` 拿 route（hostId 服务端分配）。
+- 控制台「匿名设备」面板：列表 / 禁用（级联吊销）/ 启用 / 删除；「匿名自助接入」总开关持久化。
+- 插件配对二维码可切换「匿名模式」（不再携带 routeSecret），手机 App 用自助登记的路由完成配对。
+- 撤销：设备侧 `REVOKE_SELF`；运营侧设备禁用/删除。

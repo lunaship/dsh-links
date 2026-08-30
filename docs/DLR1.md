@@ -356,3 +356,47 @@ sequenceDiagram
 * JWS Header `v` 独立于 DLR 帧版本，用于 Capability 结构演进
 * `routeSecret` 派生 `info` 字符串固定为 `"DLR/1 route secret"`，不得随子版本改变
 * 任何对 transcript 顺序或字段长度的变更必须升级 DLR 主版本并通过新的 Golden Vectors
+
+## 6. 阶段二增补：匿名自助接入（DLR/1b）
+
+本增补不改动既有帧与向量；新增两类帧与一个扩展语义，全部向后兼容。
+
+### 6.1 新增帧
+
+| 帧 | 方向 | 请求负载 | 成功响应 |
+|---|---|---|---|
+| `BOOTSTRAP` | App→Relay 8444 | `pubkey`(b64u 32B) `ts` `nonce`(b64u 16B) `proof`(b64u 64B) | `BOOTSTRAPPED {token}` |
+| `REVOKE_SELF` | App→Relay 8444 | `routeId`(b64u 16B) `ts` `nonce` `proof` | `REVOKED {}` |
+
+- transcript 前缀 `DLR/1\x00BOOTSTRAP\x00` / `DLR/1\x00REVOKE_SELF\x00`，其余拼接规则与 ENROLL 一致（`BuildBootstrapTranscript` / `BuildRevokeSelfTranscript`）。
+- `BOOTSTRAP` 的 `proof` 证明公钥私钥持有；服务端校验 ts 窗口 ±60s、全局+按前缀限流（与 ENROLL 共用 enrollLimiter）、匿名总开关（`anonymous_enroll`）。成功后签发 JWS bootstrap token（10 分钟、`scope:bootstrap`、`sub`=公钥指纹）。
+- `REVOKE_SELF` 的 `proof` 用宿主 host 私钥签名 routeId；服务端核对 route 归属后吊销该 host（幂等）。
+- 两个 handler 均为每连接单帧（与 ENROLL 一致）。
+
+### 6.2 ENROLL 扩展语义
+
+`inviteCode` 字段现在接受两类凭证：
+
+1. 邀请码（现状，无变化）；
+2. **bootstrap token**（JWS compact，含两个点）。识别到 JWS 后服务端走匿名路径：
+   - 校验 token 签名/过期/`sub` 与 `hostPublicKey` 指纹一致；
+   - 设备不存在则自动登记（`devices` 表），`enabled=false` 拒绝；
+   - host 配额（`anonymous_max_hosts_per_device`）在事务内复核；
+   - **hostId 由服务端生成**（`h-` + 16 字节 hex），客户端提交的 hostId 仅作 proof 绑定占位；
+   - Capability 有效期取 `capability_ttl`（默认 168h），MaxStreams 取 `min(default, anonymous_max_streams_per_route)`。
+
+`ENROLLED` 响应新增 `hostId` 字段（服务端分配的实际 id），旧客户端忽略未知字段。
+
+### 6.3 配额与封禁
+
+- **日流量预算**：relay 每 30s 把 route 级字节/连接计数经 IPC 上报 control（`stats_report`），落入 `stats_daily`；匿名 host 当日累计（rx+tx）超过 `anonymous_daily_bytes` 后 `suspended_until` 置为次日 UTC 零点，route 立即以 revoked 语义拒绝/断开（`LookupRouteStatus`），零点后自动恢复。邀请制 host 不受此限。
+- **设备封禁**：`/v1/devices/{id}/disable` 级联吊销设备全部 host 并广播；`enable` 恢复身份（旧 host 保持吊销）；`delete` 移除身份。
+- **总开关**：`POST /v1/settings/anonymous` 持久化于 settings 表，重启不丢；关闭后 BOOTSTRAP 与匿名 ENROLL 一律拒绝。
+- 所有按 IP 限流在本阶段起按 IPv6 `/64`（`ipv6_prefix_len`）聚合；全局预认证速率预算 + 预认证连接池上限（maxConns/4）保证洪峰不能饿死已认证流量。
+
+### 6.4 安全不变量（增补）
+
+1. bootstrap token 是**一次性语义**凭证：10 分钟过期，仅授权一个匿名 ENROLL，且 `sub` 与 host 公钥指纹强绑定。
+2. 匿名 host 永远享有「设备级」主体责任：可封禁、可配额、可撤销、有日预算；`device_id` 空即邀请制，行为不变。
+3. REVOKE_SELF 只允许撤销**自己**的 route；伪造 proof 拿不到任何信息（错误码与 ENROLL 失败一致为 AUTH_FAILED）。
+4. 二维码安全模式（插件侧 `relay-qr-mode = anonymous`）使配对二维码不再携带长期 routeSecret，泄密面收敛为一次性凭据+内层配对码。

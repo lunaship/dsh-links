@@ -660,9 +660,9 @@ type IPCClient struct {
 	requestMu sync.Mutex
 	// writeMu serializes control-frame writes from the request path and the
 	// recvLoop's revoke ack, which can run concurrently.
-	writeMu   sync.Mutex
-	conn      net.Conn
-	reader    *bufio.Reader
+	writeMu sync.Mutex
+	conn    net.Conn
+	reader  *bufio.Reader
 	// closed is closed when the client is explicitly Closed; prevents reconnect after shutdown
 	closed chan struct{}
 	// revokeFn is called when control pushes a revoke_notify message.

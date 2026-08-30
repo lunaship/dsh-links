@@ -490,7 +490,6 @@ func TestDeleteAndPurgeInviteAPI(t *testing.T) {
 	}
 }
 
-
 func newAdminTestServer(t *testing.T) (*Server, *Control, *store.Store) {
 	t.Helper()
 	ctrl, st := newTestControl(t)

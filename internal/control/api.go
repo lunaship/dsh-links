@@ -469,7 +469,6 @@ func (s *Server) handleAnonymousSetting(w http.ResponseWriter, r *http.Request) 
 	writeJSONOK(w, map[string]any{"ok": true, "anonymousEnroll": body.Enabled})
 }
 
-
 // revokeTarget validates that a POST path is exactly /v1/<kind>/<id>/revoke
 // and returns the id. Requiring the literal /revoke suffix keeps the catch-all
 // routes below from treating an arbitrary trailing segment as a revoke trigger.
@@ -616,9 +615,9 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	}
 	if host := strings.TrimSpace(s.publicHost); host != "" {
 		out["publicHost"] = host
-	out["anonymousEnroll"] = s.control.AnonymousEnabled()
-	devs, _ := s.control.ListDevices()
-	out["deviceCount"] = len(devs)
+		out["anonymousEnroll"] = s.control.AnonymousEnabled()
+		devs, _ := s.control.ListDevices()
+		out["deviceCount"] = len(devs)
 	}
 	json.NewEncoder(w).Encode(out)
 }

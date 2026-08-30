@@ -29,3 +29,11 @@ bridge_max_lifetime = "30m"
 heartbeat_interval = "20s"
 agent_dead_after = "65s"
 bind_timeout = "10s"
+
+# ---- 阶段二：匿名自助接入（默认关闭，保持邀请制）----
+# anonymous_enroll = true
+# anonymous_max_hosts_per_device = 2
+# anonymous_max_streams_per_route = 2
+# anonymous_daily_bytes = 536870912
+# capability_ttl = "168h"
+# ipv6_prefix_len = 64

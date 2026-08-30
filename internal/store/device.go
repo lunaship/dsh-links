@@ -187,6 +187,7 @@ func (s *Store) SetSetting(key, value string) error {
 		 ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value)
 	return err
 }
+
 // EnrollAnonymousHost atomically enrolls a host for an anonymous device.
 // The device quota is enforced inside the same serialized transaction used by
 // invite enrollment, so concurrent self-service enrollments cannot overshoot

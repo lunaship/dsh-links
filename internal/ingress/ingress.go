@@ -153,8 +153,8 @@ type Ingress struct {
 	// the capacity reserved for authenticated traffic (the latter is only
 	// bounded by the global maxConns).
 	maxPreAuthConns int
-	preAuthConns     int
-	authConns        int
+	preAuthConns    int
+	authConns       int
 	// bridgeMaxLifetime is the maximum lifetime for a data-plane bridge.
 	bridgeMaxLifetime time.Duration
 
@@ -210,16 +210,16 @@ func New(clientListen, agentListen string, tlsConfig *tls.Config, reg *registry.
 		maxPreAuthConns:   maxPreAuth,
 		// The global pre-auth rate budget only needs to absorb floods; burst
 		// and refill are both calibrated against the connection budget.
-		globalPreAuth:    registry.NewTokenBucket(max(maxConns, 4), max(maxConns, 60)),
-		ipLimiter:        registry.NewRateLimiter(32, 30),
-		routeLimiter:     registry.NewRateLimiter(96, 60),
-		enrollLimiter:    registry.NewRateLimiter(6, 2),
-		admissionLimiter: registry.NewRateLimiter(120, 120),
-		connsByIP:        make(map[string]int),
-		maxConnsPerIP:    128,
-		plainMode:        tlsConfig == nil,
-		stopCh:           make(chan struct{}),
-		logger:           logger,
+		globalPreAuth:     registry.NewTokenBucket(max(maxConns, 4), max(maxConns, 60)),
+		ipLimiter:         registry.NewRateLimiter(32, 30),
+		routeLimiter:      registry.NewRateLimiter(96, 60),
+		enrollLimiter:     registry.NewRateLimiter(6, 2),
+		admissionLimiter:  registry.NewRateLimiter(120, 120),
+		connsByIP:         make(map[string]int),
+		maxConnsPerIP:     128,
+		plainMode:         tlsConfig == nil,
+		stopCh:            make(chan struct{}),
+		logger:            logger,
 		bridgeMaxLifetime: bridgeMaxLifetime,
 		routeStats:        make(map[string]*routeStat),
 		statsInterval:     30 * time.Second,

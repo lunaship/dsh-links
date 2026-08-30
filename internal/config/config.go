@@ -48,11 +48,11 @@ type Config struct {
 	BindTimeout               string `toml:"bind_timeout"`
 
 	// Phase 2 anonymous self-service enrollment.
-	AnonymousEnroll              bool   `toml:"anonymous_enroll"`
-	AnonymousMaxHostsPerDevice   int    `toml:"anonymous_max_hosts_per_device"`
-	AnonymousMaxStreamsPerRoute  int    `toml:"anonymous_max_streams_per_route"`
-	AnonymousDailyBytes          int64  `toml:"anonymous_daily_bytes"`
-	CapabilityTTL                string `toml:"capability_ttl"`
+	AnonymousEnroll             bool   `toml:"anonymous_enroll"`
+	AnonymousMaxHostsPerDevice  int    `toml:"anonymous_max_hosts_per_device"`
+	AnonymousMaxStreamsPerRoute int    `toml:"anonymous_max_streams_per_route"`
+	AnonymousDailyBytes         int64  `toml:"anonymous_daily_bytes"`
+	CapabilityTTL               string `toml:"capability_ttl"`
 
 	// Parsed durations
 	HeartbeatIntervalDur time.Duration `toml:"-"`
@@ -64,32 +64,32 @@ type Config struct {
 
 func DefaultConfig() *Config {
 	return &Config{
-		ClientListen:              "0.0.0.0:8443",
-		AgentListen:               "0.0.0.0:8444",
-		AdminListen:               "127.0.0.1:8080",
-		ControlSocket:             "/run/dsh-links-relay/control.sock",
-		TLSCert:                   "/etc/dsh-links-relay/relay.crt",
-		TLSKey:                    "/etc/dsh-links-relay/relay.key",
-		IssuerPrivateKey:          "/etc/dsh-links-relay/issuer.key",
-		IssuerPublicKey:           "/etc/dsh-links-relay/issuer.pub",
-		RouteMasterKey:            "/etc/dsh-links-relay/route-master.key",
-		AdminTokenFile:            "/etc/dsh-links-relay/admin.token",
-		AdminUser:                 "admin",
-		AdminPassword:             "", // required at control start; empty must fail
-		Database:                  "/var/lib/dsh-links-relay/control.db",
-		IPCAuthTokenFile:          "/etc/dsh-links-relay/ipc.auth",
-		MaxTotalStreams:           1000,
-		DefaultMaxStreamsPerRoute: 8,
-		MaxConns:                  2000,
-		IPv6PrefixLen:             64,
-		BridgeMaxLifetime:         "30m",
-		HeartbeatInterval:         "20s",
-		AgentDeadAfter:            "65s",
-		BindTimeout:               "10s",
-		AnonymousMaxHostsPerDevice:   2,
-		AnonymousMaxStreamsPerRoute:  2,
-		AnonymousDailyBytes:          512 << 20, // 512 MiB/day per route
-		CapabilityTTL:                "168h", // 7 days (ParseDuration has no "d" unit)
+		ClientListen:                "0.0.0.0:8443",
+		AgentListen:                 "0.0.0.0:8444",
+		AdminListen:                 "127.0.0.1:8080",
+		ControlSocket:               "/run/dsh-links-relay/control.sock",
+		TLSCert:                     "/etc/dsh-links-relay/relay.crt",
+		TLSKey:                      "/etc/dsh-links-relay/relay.key",
+		IssuerPrivateKey:            "/etc/dsh-links-relay/issuer.key",
+		IssuerPublicKey:             "/etc/dsh-links-relay/issuer.pub",
+		RouteMasterKey:              "/etc/dsh-links-relay/route-master.key",
+		AdminTokenFile:              "/etc/dsh-links-relay/admin.token",
+		AdminUser:                   "admin",
+		AdminPassword:               "", // required at control start; empty must fail
+		Database:                    "/var/lib/dsh-links-relay/control.db",
+		IPCAuthTokenFile:            "/etc/dsh-links-relay/ipc.auth",
+		MaxTotalStreams:             1000,
+		DefaultMaxStreamsPerRoute:   8,
+		MaxConns:                    2000,
+		IPv6PrefixLen:               64,
+		BridgeMaxLifetime:           "30m",
+		HeartbeatInterval:           "20s",
+		AgentDeadAfter:              "65s",
+		BindTimeout:                 "10s",
+		AnonymousMaxHostsPerDevice:  2,
+		AnonymousMaxStreamsPerRoute: 2,
+		AnonymousDailyBytes:         512 << 20, // 512 MiB/day per route
+		CapabilityTTL:               "168h",    // 7 days (ParseDuration has no "d" unit)
 	}
 }
 

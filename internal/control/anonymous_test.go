@@ -212,6 +212,7 @@ var _ = base64.RawURLEncoding
 var _ = json.Marshal
 var _ = protocol.TypeBootstrap
 var _ = sha256.Sum256
+
 // A host key can revoke its own route without the admin API (device
 // self-service revocation).
 func TestRevokeSelf(t *testing.T) {

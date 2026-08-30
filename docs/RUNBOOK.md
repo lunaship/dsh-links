@@ -139,3 +139,10 @@ SQLite、日志、请求体或凭据。不要把原始日志追加到该文件�
 - 备份 DB: `cp /var/lib/dsh-links-relay/control.db /var/lib/dsh-links-relay/control.db.bak.$(date +%s)`
 - 替换二进制, `systemctl restart`
 - 验证: 模拟 App/Agent 贯通, LAN 回归
+
+### 匿名自助接入的日常运维
+
+1. **开放发行**：控制台「匿名设备」面板点「开启匿名接入」（持久化，重启不丢）。
+2. **封禁**：设备列表「禁用」→ 该设备全部 Host 立即吊销并广播断开；「删除」→ 同时抹除身份。
+3. **流量超限**：`stats_daily` 当日累计超 `anonymous_daily_bytes` 的匿名 route 自动挂起至次日 UTC 零点；控制台 Host 列表会显示 revoked 状态，日志出现 `suspended` 相关记录（`ReportUsage` 路径）。
+4. **紧急停止**：一键关闭匿名总开关后，新 BOOTSTRAP/匿名 ENROLL 全部拒绝，现有匿名 host 不受影响（如需同时清场，批量禁用设备）。

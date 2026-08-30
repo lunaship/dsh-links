@@ -1184,7 +1184,7 @@ func TestBootstrapThenAnonymousEnrollOverWire(t *testing.T) {
 	ts := time.Now().Unix()
 	proof := ed25519.Sign(priv, cryptoutil.BuildBootstrapTranscript(pub, ts, nonce, challenge))
 	frame := protocol.BootstrapFrame{
-		Type: protocol.TypeBootstrap,
+		Type:   protocol.TypeBootstrap,
 		PubKey: base64.RawURLEncoding.EncodeToString(pub),
 		Ts:     ts,
 		Nonce:  base64.RawURLEncoding.EncodeToString(nonce),
