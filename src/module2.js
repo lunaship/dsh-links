@@ -589,7 +589,7 @@ const createPanelModule = (require) => {
           children: jsx('img', {
             className: 'dshlink-qr',
             key: code || '',
-            src: `/dsh-link/qr.png?via=${via}`,
+            src: `/dsh-link/qr.png?via=${via}&v=${encodeURIComponent(code || '')}`,
             alt: label,
           }),
         }),
