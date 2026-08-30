@@ -14,7 +14,7 @@ published.
 | Component | Source baseline | Published / released status | Verified compatibility status |
 |---|---|---|---|
 | DSH | `0.1.1-rc.2` | Upstream dependency; release status is not managed by this project | LAN smoke verification below; full phone end-to-end remains in the RC closed-beta scope |
-| Plugin `dsh-links` | package `0.1.0-beta.9`; source tag `v0.1.0-beta.9` | npm registry status is not asserted here; verify it with `npm view` in the release environment | LAN combination below is the current documented verification |
+| Plugin `dsh-links` | package `0.1.0-beta.12`; source tag `v0.1.0-beta.12` | npm registry status is not asserted here; verify it with `npm view` in the release environment | LAN combination below is the current documented verification |
 | Android `dsh-links-app` | `versionName 0.5.0-beta.14`; source tag `v0.5.0-beta.14` | APK release status is not asserted here; install only an official signed release whose version and SHA-256 are published with it | LAN combination below is the current documented verification |
 | Relay `dsh-links-relay` | Current `main` contains unpublished changes; no release tag | No public release or deployment status is asserted here | DLR/1 implementation is private, invite-only test scope only |
 
@@ -22,7 +22,7 @@ published.
 
 | DSH | Plugin | Android App | Relay | Verified path |
 |---|---|---|---|---|
-| `0.1.1-rc.2` | source `main` (post-`0.1.0-beta.9`) | `0.5.0-beta.14` | not required | Trusted LAN smoke, 2026-08-30: plugin load, `/dsh-link/*` routes, `session.list` / `session.history` / `llm.models` / `workspace.list` / `settings.describe` RPCs, `events.mux` WebSocket frames, and the settings panel slot all verified against `@deepseek-ai/dsh@0.1.1-rc.2`. Phone end-to-end (pairing, SSE push, approval) not yet rerun on this DSH version. |
+| `0.1.1-rc.2` | `0.1.0-beta.12` | `0.5.0-beta.14` | not required | Trusted LAN smoke, 2026-08-30: plugin load, `/dsh-link/*` routes, `session.list` / `session.history` / `llm.models` / `workspace.list` / `settings.describe` RPCs, `events.mux` WebSocket frames, and the settings panel slot all verified against `@deepseek-ai/dsh@0.1.1-rc.2`. Phone end-to-end (pairing, SSE push, approval) not yet rerun on this DSH version. |
 | `0.1.0-rc.8` | `0.1.0-beta.9` | `0.5.0-beta.14` | not required | Trusted LAN; the previously documented Beta combination |
 
 The row above is a LAN compatibility statement. It is not a claim that the

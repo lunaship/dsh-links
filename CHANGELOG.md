@@ -1,10 +1,11 @@
 # Changelog
 
-## Unreleased
+## dsh-links 0.1.0-beta.12 — 2026-08-30
 
 - 「手机连接」面板改为 Claude 风：暖象牙纸底 + 赤陶主色、衬线标题、下划线 Tab、设置/设备分组列表；暗色为暖炭黑（`prefers-color-scheme`）。
 - 布局收紧：配对区横向（二维码左、配对码与复制右），内容列约 452px 居中，避免宽设置面板被拉散。仅动 JSX 与 STYLE，接口与后端逻辑无变更。
 - 下线 `GET /dsh-link/mobile/balance`：`llm.balance` 并非 DSH 的 RPC 方法（rc.8 起即不存在），端点自上线即返回不可用；同从 `RPC_METHOD_ALLOWLIST` 移除。App 关于页余额入口已容错为不展示（`balance = null`），无需 App 改动；若未来要恢复，需实现真实的余额代查（如经插件读取 DeepSeek 平台 API）。
+- 兼容性：DSH 基线由 `0.1.0-rc.8` 升至 `0.1.1-rc.2`（npm latest）。已在本机对 rc.2 完成冒烟：插件加载、`/dsh-link/*` 路由、`session.list` / `session.history` / `llm.models` / `workspace.list` / `settings.describe` RPC、`events.mux` WebSocket 帧与设置面板 slot 均正常；真机端到端（扫码、SSE 推送、审批）尚未在 rc.2 重跑，详见 `docs/COMPATIBILITY.md`。
 
 ## dsh-links 0.1.0-beta.11 — 2026-08-28
 
