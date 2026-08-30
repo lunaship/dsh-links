@@ -30,6 +30,7 @@ import {
   ensureMobileWorkspaceDirectory,
   planMobileWorkspaceCreate,
 } from "./workspace-create.js"
+import { DeviceMutationGate } from "./device-mutation-gate.js"
 import { deriveAddresses, generateHostKey, hostKeyFromSeed, resolveEnrollText, unb64u } from "./relay/crypto.js"
 import { enroll as enrollRelay, normalizeTlsFingerprint, RelayAgent } from "./relay/agent.js"
 
@@ -286,16 +287,10 @@ function pairInfo(config, state, certFingerprint, via = "lan") {
     info.relay = {
       v: 2,
       client: relay.clientAddress,
+      routeId: relay.routeId,
+      routeSecret: relay.routeSecret,
     }
     if (relay.tlsFingerprint) info.relay.tlsFingerprint = relay.tlsFingerprint
-    if (relay.qrMode === "anonymous") {
-      // 匿名模式：二维码不携带长期 routeSecret。App 用自己的设备身份
-      // 自助接入该中继（BOOTSTRAP + ENROLL），配对时复用其 route。
-      info.relay.mode = "anonymous"
-    } else {
-      info.relay.routeId = relay.routeId
-      info.relay.routeSecret = relay.routeSecret
-    }
   }
   info.requireConfirm = pairRequireConfirm(config, state)
   info.exposure = listenExposure(config, lan.infos)
@@ -776,6 +771,7 @@ function createRuntime() {
     reasoningCache: new Map(),
     deviceRequests: new Map(),
     pairingRequests: new Map(),
+    deviceMutations: new DeviceMutationGate(),
   }
 }
 
@@ -833,8 +829,12 @@ function closeRequestsForDevice(rt, deviceId, exceptReq) {
   if (requests.size === 0) rt.deviceRequests.delete(deviceId)
 }
 
+const DEVICE_REVOKING = Symbol("deviceRevoking")
+
 function isDeviceAuthorized(state, device) {
-  return Boolean(device?.deviceId && (state.devices ?? []).some((item) => item === device || item.deviceId === device.deviceId))
+  if (!device?.deviceId) return false
+  const current = (state.devices ?? []).find((item) => item === device || item.deviceId === device.deviceId)
+  return Boolean(current && !current[DEVICE_REVOKING])
 }
 
 /** 设备是否对该会话存在活跃 SSE 订阅（审批只能由正在操作该会话的设备处理）。 */
@@ -1114,22 +1114,31 @@ function dropDevice(state, rt, device, exceptReq) {
   closeRequestsForDevice(rt, device.deviceId, exceptReq)
 }
 
-function revokeDeviceEntry(state, stateFile, rt, { name, deviceId }, exceptReq) {
+async function revokeDeviceEntry(state, stateFile, rt, { name, deviceId }, exceptReq) {
   const targetName = String(name ?? "").trim()
   const targetId = String(deviceId ?? "").trim()
   if (!targetName && !targetId) return { status: 400, body: { error: "缺少设备名或 deviceId" } }
   const target = (state.devices ?? []).find((d) => d.name === targetName || d.deviceId === targetId)
   if (!target) return { status: 404, body: { error: "设备不存在" } }
+  if (target[DEVICE_REVOKING]) return { status: 409, body: { error: "设备正在吊销" } }
+  target[DEVICE_REVOKING] = true
   state.devices = (state.devices ?? []).filter((d) => d.deviceId !== target.deviceId)
   dropDevice(state, rt, target, exceptReq)
+  // Linearization boundary: operations already registered finish before this
+  // revocation is acknowledged; removal above prevents any new operation.
+  await rt.deviceMutations.drain(target.deviceId)
   saveState(stateFile, state)
   return { status: 200, body: { ok: true, removed: 1, deviceId: target.deviceId } }
 }
 
-function revokeAllDevices(state, stateFile, rt) {
+async function revokeAllDevices(state, stateFile, rt) {
   const devices = [...(state.devices ?? [])]
+  for (const device of devices) device[DEVICE_REVOKING] = true
   state.devices = []
   for (const device of devices) dropDevice(state, rt, device)
+  // As with single-device revocation, success means all earlier registered
+  // mutations are settled and no later mutation can be admitted.
+  await Promise.all(devices.map((device) => rt.deviceMutations.drain(device.deviceId)))
   saveState(stateFile, state)
   return { status: 200, body: { ok: true, removed: devices.length } }
 }
@@ -1279,8 +1288,11 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
           parentWorkspaceId: body.parentWorkspaceId,
           workspaces: list.items ?? [],
         })
-        const { directoryCreated } = await ensureMobileWorkspaceDirectory(plan)
-        const value = await callLocalRpc(targetPort, "workspace.create", { path: plan.path })
+        const { directoryCreated, value } = await rt.deviceMutations.run(device.deviceId, async () => {
+          const { directoryCreated } = await ensureMobileWorkspaceDirectory(plan)
+          const value = await callLocalRpc(targetPort, "workspace.create", { path: plan.path })
+          return { directoryCreated, value }
+        })
         return json(res, 200, {
           ok: true,
           workspace: value.workspace ?? null,
@@ -1392,7 +1404,7 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
     if (req.method === "POST" && pathname === "/dsh-link/mobile/revoke") {
       const body = await readAuthorizedJson(req, res, state, device)
       if (!body) return
-      const result = revokeDeviceEntry(state, stateFile, rt, {
+      const result = await revokeDeviceEntry(state, stateFile, rt, {
         name: body.name,
         deviceId: body.deviceId,
       }, req)
@@ -1705,7 +1717,7 @@ export function apply(ctx, config) {
         const targetName = String(body.name ?? "").trim()
         const targetId = String(body.deviceId ?? "").trim()
         if (!targetName && !targetId) return json(res, 400, { error: "缺少设备名或 deviceId" })
-        const result = revokeDeviceEntry(state, stateFile, rt, { name: targetName, deviceId: targetId })
+        const result = await revokeDeviceEntry(state, stateFile, rt, { name: targetName, deviceId: targetId })
         json(res, result.status, result.body)
       },
     }),
@@ -1717,7 +1729,7 @@ export function apply(ctx, config) {
         if (!requireJsonWrite(req, res)) return
         const body = await readJson(req, res)
         if (!body) return
-        const result = revokeAllDevices(state, stateFile, rt)
+        const result = await revokeAllDevices(state, stateFile, rt)
         json(res, result.status, result.body)
       },
     }),
@@ -1776,30 +1788,6 @@ export function apply(ctx, config) {
           insecureTls: Boolean(state.relay?.insecureTls),
           tlsFingerprint: state.relay?.tlsFingerprint ?? "",
           tlsPinTrusted: Boolean(state.relay?.tlsPinTrusted),
-          qrMode: state.relay?.qrMode ?? "route",
-        })
-      },
-    }),
-    web.register({
-      kind: "exact",
-      path: "/dsh-link/relay-qr-mode",
-      handler: (req, res) => {
-        if (!requireLoopbackSameOrigin(req, res)) return
-        if (!requireJsonWrite(req, res)) return
-        readJson(req, res).then((body) => {
-          if (!body) return
-          const mode = String(body.mode ?? "").trim()
-          if (mode !== "route" && mode !== "anonymous") {
-            return json(res, 400, { error: "mode 必须是 route 或 anonymous" })
-          }
-          if (!state.relay) return json(res, 400, { error: "尚未接入 Relay" })
-          state.relay.qrMode = mode
-          try {
-            saveState(stateFile, state)
-          } catch (err) {
-            return json(res, 500, { error: err?.message ?? "保存状态失败" })
-          }
-          json(res, 200, { ok: true, qrMode: mode })
         })
       },
     }),
@@ -1853,11 +1841,9 @@ export function apply(ctx, config) {
             insecureTls,
             tlsFingerprint,
           })
-          const qrMode = String(body.qrMode ?? "").trim() || "route"
           state.relay = {
             agentAddress: derived.agentAddress,
             clientAddress: derived.clientAddress,
-            qrMode,
             hostSeed: keys.seed.toString("base64url"),
             hostPublicKey: keys.publicKey.toString("base64url"),
             routeId: enrolled.routeId,

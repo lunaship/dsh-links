@@ -46,6 +46,16 @@ test("名称模式拒绝路径穿越和多层相对路径", () => {
   }
 })
 
+test("名称模式拒绝控制字符", () => {
+  for (const input of ["bad\u0000name", "bad\u001fname", "bad\u007fname"]) {
+    assert.throws(
+      () => planMobileWorkspaceCreate({ input, parentWorkspaceId: "ws-current", workspaces: anchor("/tmp/current") }),
+      (error) => error instanceof MobileWorkspaceCreateError && error.code === "workspace-invalid-name",
+      JSON.stringify(input),
+    )
+  }
+})
+
 test("多个工作区时名称模式必须提供有效锚点", () => {
   const workspaces = [
     { workspaceId: "one", path: "/tmp/one" },
