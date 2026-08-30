@@ -87,369 +87,272 @@ const createPanelModule = (require) => {
 
   const STYLE = `
     .dshlink-root {
-      /* Hallmark · component: settings panel · genre: modern-minimal
-       * states: default · hover · focus-visible · active · disabled · busy
-       * radii: 8 / 12 / 18 · spacing: 4pt scale */
-      --dl-ink: var(--dsw-alias-label-primary, #16181d);
-      --dl-muted: var(--dsw-alias-label-secondary, #5d6470);
-      --dl-faint: var(--dsw-alias-label-tertiary, #9098a3);
-      --dl-line: var(--dsw-alias-border-l2, rgba(22, 24, 29, 0.09));
-      --dl-line-strong: rgba(22, 24, 29, 0.16);
-      --dl-soft: var(--dsw-alias-bg-layer-1, #f4f5f7);
-      --dl-softer: rgba(22, 24, 29, 0.035);
-      --dl-paper: var(--dsw-alias-bg-layer-2, #ffffff);
-      --dl-accent: #0f8f9c;
-      --dl-accent-deep: #0b6f7a;
-      --dl-accent-soft: rgba(15, 143, 156, 0.1);
-      --dl-accent-ring: rgba(15, 143, 156, 0.32);
-      --dl-danger: #b3261e;
-      --dl-danger-soft: #fdf1f0;
-      --dl-danger-line: rgba(179, 38, 30, 0.24);
-      --dl-ok: #22794a;
-      --dl-ok-soft: #edf7f0;
-      --dl-warn: #a9700f;
-      --dl-warn-soft: #fdf6ea;
-      --dl-warn-line: rgba(169, 112, 15, 0.26);
-      --dl-radius-s: 8px;
-      --dl-radius-m: 12px;
-      --dl-radius-l: 18px;
-      --dl-ease: cubic-bezier(0.22, 1, 0.36, 1);
-      font-family: "Plus Jakarta Sans", "Segoe UI", "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
-      color: var(--dl-ink);
+      /* Hallmark · component: settings panel · genre: editorial-warm · theme: custom "Claude"
+       *   macrostructure: grouped-settings-document (underline tabs · centered pair hero · hairline-divided lists)
+       *   paper: warm ivory · accent: clay/terracotta · display: serif-touch · spacing: 4pt
+       * states: default · hover · focus-visible · active · disabled · loading · error · success
+       * pre-emit critique: P5 H5 E5 S5 R5 V5 · contrast: pass */
+      --cl-bg: #faf9f5;
+      --cl-surface: #ffffff;
+      --cl-inset: #f5f3ec;
+      --cl-ink: #1f1e1d;
+      --cl-muted: #6b6a63;
+      --cl-faint: #9a978c;
+      --cl-line: #e7e3d8;
+      --cl-line-strong: #d8d3c4;
+      --cl-accent: #c96442;
+      --cl-accent-deep: #b0522f;
+      --cl-accent-bright: #d97757;
+      --cl-accent-soft: #f5e7df;
+      --cl-accent-line: #e6c9b9;
+      --cl-accent-text: var(--cl-accent-deep);
+      --cl-ok: #4f7a52; --cl-ok-soft: #e8efe4; --cl-ok-line: #cfe0cb;
+      --cl-danger: #b0432f; --cl-danger-soft: #f6e5df; --cl-danger-line: #e8cabf;
+      --cl-warn: #a5751f; --cl-warn-soft: #f5ecd6; --cl-warn-line: #e6d3a8;
+      --cl-radius-s: 9px; --cl-radius-m: 13px; --cl-radius-l: 16px;
+      --cl-ease: cubic-bezier(0.22, 1, 0.36, 1);
+      --cl-serif: "Tiempos Headline", "Copernicus", "Songti SC", "STSong", "Georgia", serif;
+      --cl-sans: ui-sans-serif, -apple-system, "Segoe UI", "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
+      font-family: var(--cl-sans);
+      color: var(--cl-ink);
       -webkit-font-smoothing: antialiased;
     }
+    @media (prefers-color-scheme: dark) {
+      .dshlink-root {
+        --cl-bg: #262624;
+        --cl-surface: #302f2d;
+        --cl-inset: #211f1e;
+        --cl-ink: #f4f2ea;
+        --cl-muted: #b7b3a7;
+        --cl-faint: #8a877c;
+        --cl-line: #403e39;
+        --cl-line-strong: #524f48;
+        --cl-accent: #dd8461;
+        --cl-accent-deep: #c96b48;
+        --cl-accent-bright: #e69675;
+        --cl-accent-soft: rgba(217, 119, 87, 0.15);
+        --cl-accent-line: rgba(217, 119, 87, 0.32);
+        --cl-accent-text: var(--cl-accent-bright);
+        --cl-ok: #86a986; --cl-ok-soft: rgba(134, 169, 134, 0.15); --cl-ok-line: rgba(134, 169, 134, 0.3);
+        --cl-danger: #d98a76; --cl-danger-soft: rgba(217, 138, 118, 0.14); --cl-danger-line: rgba(217, 138, 118, 0.3);
+        --cl-warn: #cba85e; --cl-warn-soft: rgba(203, 168, 94, 0.14); --cl-warn-line: rgba(203, 168, 94, 0.3);
+      }
+    }
 
+    /* modal shell (used by LinkPanel) */
     .dshlink-backdrop {
       position: fixed; inset: 0; z-index: 99995;
-      background: rgba(13, 17, 23, 0.5);
-      backdrop-filter: blur(4px);
-      -webkit-backdrop-filter: blur(4px);
-      display: flex; align-items: center; justify-content: center;
-      padding: 20px;
+      background: rgba(31, 30, 29, 0.44);
+      backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+      display: flex; align-items: center; justify-content: center; padding: 20px;
       animation: dshlink-fadein 0.2s ease;
     }
     @keyframes dshlink-fadein { from { opacity: 0 } to { opacity: 1 } }
     .dshlink-panel {
-      width: min(430px, 100%);
-      max-height: 86vh;
-      overflow: auto;
-      border-radius: 22px;
-      background: var(--dl-paper);
-      border: 1px solid var(--dl-line);
-      box-shadow:
-        0 1px 2px rgba(13, 17, 23, 0.06),
-        0 12px 32px rgba(13, 17, 23, 0.14),
-        0 32px 80px rgba(13, 17, 23, 0.18);
-      padding: 26px 24px 20px;
-      animation: dshlink-rise 0.3s var(--dl-ease);
+      width: min(440px, 100%); max-height: 86vh; overflow: auto;
+      border-radius: var(--cl-radius-l); background: var(--cl-bg);
+      border: 1px solid var(--cl-line); box-shadow: 0 12px 40px rgba(31, 30, 29, 0.18);
+      padding: 24px 22px; display: flex; flex-direction: column; gap: 18px;
+      animation: dshlink-rise 0.3s var(--cl-ease);
     }
     @keyframes dshlink-rise {
-      from { opacity: 0; transform: translateY(16px) scale(0.97) }
+      from { opacity: 0; transform: translateY(14px) scale(0.98) }
       to { opacity: 1; transform: none }
     }
     @media (prefers-reduced-motion: reduce) {
       .dshlink-backdrop, .dshlink-panel { animation-duration: 0.01s }
+      .dshlink-tab::after { transition: none }
       .dshlink-device-dot.is-pending::after { animation: none }
     }
 
-    .dshlink-settings {
-      display: flex; flex-direction: column; gap: 18px;
-      padding: 2px 0 18px;
-    }
+    .dshlink-settings { display: flex; flex-direction: column; gap: 18px; max-width: 452px; margin: 0 auto; }
 
-    .dshlink-brand {
-      display: flex; align-items: flex-end; justify-content: space-between; gap: 12px;
-      padding-bottom: 14px;
-      border-bottom: 1px solid var(--dl-line);
-    }
-    .dshlink-brand-copy { display: flex; flex-direction: column; gap: 3px }
-    .dshlink-brand-kicker {
-      font-size: 11px; font-weight: 700; letter-spacing: 0.16em;
-      text-transform: uppercase; color: var(--dl-accent);
-    }
-    .dshlink-brand-title {
-      font-size: 21px; font-weight: 700; letter-spacing: -0.02em;
-      line-height: 1.2; margin: 0;
-    }
+    /* ---- header ---- */
+    .dshlink-brand { display: flex; align-items: center; gap: 12px; }
     .dshlink-brand-mark {
-      flex: none; width: 34px; height: 34px; border-radius: 11px;
+      flex: none; width: 34px; height: 34px; border-radius: 10px;
       display: flex; align-items: center; justify-content: center;
-      background: linear-gradient(140deg, var(--dl-accent), var(--dl-accent-deep));
-      color: #fff; box-shadow: 0 4px 12px rgba(15, 143, 156, 0.28);
+      color: var(--cl-accent-text); background: var(--cl-accent-soft); border: 1px solid var(--cl-accent-line);
     }
-    .dshlink-brand-mark svg { display: block }
-    .dshlink-tabs {
-      display: flex; gap: 4px; padding: 4px; border-radius: var(--dl-radius-m);
-      background: var(--dl-soft); border: 1px solid var(--dl-line);
-    }
+    .dshlink-brand-mark svg { display: block; }
+    .dshlink-brand-copy { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
+    .dshlink-brand-title { font-family: var(--cl-serif); font-style: normal; font-size: 21px; font-weight: 600; letter-spacing: -0.01em; line-height: 1.2; color: var(--cl-ink); margin: 0; }
+    .dshlink-brand-sub { font-size: 12px; color: var(--cl-faint); }
+    .dshlink-status-pill { flex: none; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--cl-muted); white-space: nowrap; }
+    .dshlink-status-pill .d { width: 7px; height: 7px; border-radius: 50%; background: var(--cl-ok); }
+    .dshlink-status-pill[data-tone="accent"] .d { background: var(--cl-accent); }
+
+    /* ---- underline tabs ---- */
+    .dshlink-tabs { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid var(--cl-line); }
     .dshlink-tab {
-      flex: 1; appearance: none; cursor: pointer; border: 0; border-radius: 9px;
-      min-height: 34px; padding: 7px 10px; background: transparent; color: var(--dl-muted);
-      font: inherit; font-size: 13px; font-weight: 600; white-space: nowrap;
-      transition: background 0.18s var(--dl-ease), color 0.18s var(--dl-ease), box-shadow 0.18s var(--dl-ease);
+      position: relative; appearance: none; cursor: pointer; border: 0; background: transparent;
+      color: var(--cl-muted); font: inherit; font-size: 13.5px; font-weight: 600; padding: 10px 8px 12px; white-space: nowrap;
+      transition: color 0.18s var(--cl-ease);
     }
-    .dshlink-tab:hover { color: var(--dl-ink) }
-    .dshlink-tab.is-active {
-      color: var(--dl-accent-deep); background: var(--dl-paper);
-      box-shadow: 0 1px 2px rgba(13, 17, 23, 0.08), 0 0 0 1px var(--dl-line);
-    }
-    .dshlink-tab:focus-visible { outline: 2px solid var(--dl-accent); outline-offset: 2px }
-    .dshlink-connection { display: flex; flex-direction: column; gap: 16px }
+    .dshlink-tab::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; border-radius: 2px 2px 0 0; background: var(--cl-accent); transform: scaleX(0); transition: transform 0.2s var(--cl-ease); }
+    .dshlink-tab:hover { color: var(--cl-ink); }
+    .dshlink-tab.is-active { color: var(--cl-ink); }
+    .dshlink-tab.is-active::after { transform: scaleX(1); }
+    .dshlink-tab:focus-visible { outline: 2px solid var(--cl-accent); outline-offset: 2px; }
 
-    .dshlink-lan { display: flex; flex-direction: column; gap: 16px }
-    .dshlink-pair {
-      position: relative;
-      display: grid;
-      grid-template-columns: 140px minmax(0, 1fr);
-      gap: 22px;
-      align-items: center;
-      padding: 18px;
-      border-radius: var(--dl-radius-l);
-      background:
-        radial-gradient(120% 140% at 0% 0%, var(--dl-accent-soft), transparent 60%),
-        var(--dl-soft);
-      border: 1px solid var(--dl-line);
-      overflow: hidden;
-    }
-    .dshlink-pair::before {
-      content: ""; position: absolute; inset: 0 0 auto 0; height: 1px;
-      background: linear-gradient(90deg, transparent, var(--dl-accent-ring), transparent);
-      opacity: 0.6;
-    }
-    @media (max-width: 420px) {
-      .dshlink-pair { grid-template-columns: 1fr; justify-items: center; text-align: center }
-      .dshlink-pair-meta { align-items: center; padding-left: 0 }
-      .dshlink-code { letter-spacing: 0.24em }
-    }
-    .dshlink-qr-plate {
-      position: relative;
-      width: 140px; height: 140px; border-radius: var(--dl-radius-m);
-      background: #fff; padding: 9px;
-      box-shadow:
-        0 1px 2px rgba(13, 17, 23, 0.05),
-        0 10px 28px rgba(15, 143, 156, 0.16);
-      border: 1px solid var(--dl-line);
-    }
-    .dshlink-qr-plate::after {
-      content: ""; position: absolute; inset: 3px; border-radius: 10px;
-      border: 1px dashed var(--dl-accent-ring);
-      pointer-events: none; opacity: 0.5;
-    }
-    .dshlink-qr {
-      display: block; width: 100%; height: 100%;
-      border-radius: 6px; position: relative; z-index: 1;
-    }
-    .dshlink-pair-meta {
-      display: flex; flex-direction: column; gap: 7px; min-width: 0;
-      padding-left: 2px;
-    }
-    .dshlink-pair-label {
-      font-size: 11px; font-weight: 700; letter-spacing: 0.1em;
-      text-transform: uppercase; color: var(--dl-faint);
-    }
-    .dshlink-code {
-      font-size: 27px; font-weight: 700; letter-spacing: 0.2em;
-      font-variant-numeric: tabular-nums;
-      line-height: 1.15; color: var(--dl-ink);
-      margin: 0; overflow-wrap: anywhere;
-    }
-    .dshlink-pair-hint {
-      margin: 0; font-size: 12px; line-height: 1.5; color: var(--dl-muted);
-    }
+    .dshlink-connection { display: flex; flex-direction: column; gap: 18px; }
+    .dshlink-lan, .dshlink-remote { display: flex; flex-direction: column; gap: 18px; }
 
-    .dshlink-remote { display: flex; flex-direction: column; gap: 14px }
+    /* ---- pairing (horizontal) ---- */
+    .dshlink-pair { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 20px; align-items: center; padding: 18px; border-radius: var(--cl-radius-l); background: var(--cl-surface); border: 1px solid var(--cl-line); }
+    .dshlink-qr-plate { width: 120px; height: 120px; border-radius: var(--cl-radius-m); background: #fff; padding: 9px; border: 1px solid var(--cl-line); }
+    .dshlink-qr { display: block; width: 100%; height: 100%; border-radius: 4px; }
+    .dshlink-pair-meta { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+    .dshlink-pair-label { font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--cl-faint); }
+    .dshlink-pair-code-row { display: flex; align-items: baseline; gap: 12px; min-width: 0; flex-wrap: wrap; }
+    .dshlink-code { font-family: var(--cl-serif); font-size: 30px; font-weight: 600; letter-spacing: 0.14em; font-variant-numeric: tabular-nums; line-height: 1; color: var(--cl-ink); margin: 0; overflow-wrap: anywhere; }
+    .dshlink-copy { appearance: none; cursor: pointer; border: 0; background: transparent; color: var(--cl-accent-text); font: inherit; font-size: 12.5px; font-weight: 600; padding: 4px 7px; border-radius: 7px; align-self: center; display: inline-flex; align-items: center; gap: 5px; transition: background 0.15s ease, color 0.15s ease; }
+    .dshlink-copy:hover { background: var(--cl-accent-soft); }
+    .dshlink-copy.is-copied { color: var(--cl-ok); }
+    .dshlink-copy:focus-visible { outline: 2px solid var(--cl-accent); outline-offset: 2px; }
+    .dshlink-copy svg { display: block; }
+    .dshlink-pair-hint { margin: 2px 0 0; font-size: 12px; line-height: 1.5; color: var(--cl-muted); }
 
-    .dshlink-devices { display: flex; flex-direction: column; gap: 8px }
-    .dshlink-section-label {
-      display: flex; align-items: center; gap: 8px;
-      font-size: 12px; font-weight: 700; color: var(--dl-muted);
-      letter-spacing: 0.02em;
-    }
-    .dshlink-section-count {
-      min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px;
-      display: inline-flex; align-items: center; justify-content: center;
-      background: var(--dl-accent-soft); color: var(--dl-accent-deep);
-      font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums;
-    }
-    .dshlink-device {
-      display: flex; align-items: center; gap: 11px;
-      padding: 11px 13px; border-radius: var(--dl-radius-m);
-      background: var(--dl-paper); border: 1px solid var(--dl-line);
-      box-shadow: 0 1px 2px rgba(13, 17, 23, 0.04);
-      transition: background 0.15s ease, border-color 0.15s ease;
-    }
-    .dshlink-device:hover { background: var(--dl-softer); border-color: var(--dl-line-strong) }
-    .dshlink-device-dot {
-      position: relative;
-      width: 8px; height: 8px; flex: none; border-radius: 50%;
-      background: var(--dl-ok);
-      box-shadow: 0 0 0 3px rgba(34, 121, 74, 0.14);
-    }
-    .dshlink-device-copy { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px }
-    .dshlink-device-name {
-      font-size: 13px; font-weight: 600;
-      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    }
-    .dshlink-device-time { font-size: 11px; color: var(--dl-faint) }
-    .dshlink-revoke {
-      flex: none; appearance: none; cursor: pointer;
-      border: 1px solid var(--dl-danger-line);
-      background: var(--dl-danger-soft); color: var(--dl-danger);
-      border-radius: var(--dl-radius-s); padding: 5px 11px;
-      font: inherit; font-size: 12px; font-weight: 600;
-      transition: background 0.15s ease, border-color 0.15s ease, transform 0.12s ease;
-    }
-    .dshlink-revoke:hover { background: #fae3e1; border-color: rgba(179, 38, 30, 0.4) }
-    .dshlink-revoke:active { transform: scale(0.97) }
-    .dshlink-revoke:focus-visible { outline: 2px solid var(--dl-danger); outline-offset: 2px }
-    .dshlink-empty {
-      font-size: 12px; color: var(--dl-faint);
-      padding: 14px 12px; border-radius: var(--dl-radius-m);
-      border: 1px dashed var(--dl-line-strong); text-align: center;
-    }
-    .dshlink-expose {
-      display: flex; gap: 9px; align-items: flex-start;
-      margin: 0; font-size: 12px; line-height: 1.55;
-      padding: 11px 13px; border-radius: var(--dl-radius-m);
-      background: var(--dl-danger-soft);
-      border: 1px solid var(--dl-danger-line);
-      color: var(--dl-danger);
-      font-weight: 600;
-    }
-    .dshlink-expose-icon { flex: none; margin-top: 1px }
-    .dshlink-confirm {
-      display: flex; align-items: center; gap: 9px;
-      margin: 0; padding: 11px 13px;
-      font-size: 13px; line-height: 1.45; color: var(--dl-ink); font-weight: 500;
-      background: var(--dl-soft); border: 1px solid var(--dl-line);
-      border-radius: var(--dl-radius-m);
-      cursor: pointer;
-      transition: background 0.15s ease;
-    }
-    .dshlink-confirm:hover { background: var(--dl-softer) }
-    .dshlink-confirm input {
-      margin: 0; width: 16px; height: 16px; flex: none; accent-color: var(--dl-accent); cursor: pointer;
-    }
-    .dshlink-confirm input:focus-visible { outline: 2px solid var(--dl-accent); outline-offset: 2px }
-    .dshlink-device.is-pending {
-      border-color: var(--dl-warn-line);
-      background: var(--dl-warn-soft);
-    }
-    .dshlink-device-dot.is-pending {
-      background: var(--dl-warn);
-      box-shadow: 0 0 0 3px rgba(169, 112, 15, 0.16);
-    }
-    .dshlink-device-dot.is-pending::after {
-      content: ""; position: absolute; inset: -3px; border-radius: 50%;
-      border: 2px solid var(--dl-warn); opacity: 0;
-      animation: dshlink-ping 1.6s ease-out infinite;
-    }
-    @keyframes dshlink-ping {
-      0% { transform: scale(0.6); opacity: 0.7 }
-      70%, 100% { transform: scale(1.5); opacity: 0 }
-    }
+    /* ---- grouped section ---- */
+    .dshlink-section { display: flex; flex-direction: column; gap: 10px; }
+    .dshlink-section-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; padding: 0 2px; }
+    .dshlink-section-label { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; letter-spacing: 0.02em; color: var(--cl-muted); }
+    .dshlink-section-count { min-width: 19px; height: 19px; padding: 0 6px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; background: var(--cl-accent-soft); color: var(--cl-accent-text); font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .dshlink-revoke-all { appearance: none; cursor: pointer; border: 0; background: transparent; color: var(--cl-danger); padding: 4px 8px; border-radius: 8px; font: inherit; font-size: 12px; font-weight: 600; transition: background 0.15s ease; }
+    .dshlink-revoke-all:hover { background: var(--cl-danger-soft); }
+    .dshlink-revoke-all:focus-visible { outline: 2px solid var(--cl-danger); outline-offset: 2px; }
+
+    /* ---- group container + rows ---- */
+    .dshlink-group { background: var(--cl-surface); border: 1px solid var(--cl-line); border-radius: var(--cl-radius-l); overflow: hidden; }
+    .dshlink-row { display: flex; align-items: center; gap: 12px; padding: 14px 16px; }
+    .dshlink-row + .dshlink-row, .dshlink-device + .dshlink-device { border-top: 1px solid var(--cl-line); }
+
+    /* ---- confirm row ---- */
+    .dshlink-confirm-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+    .dshlink-confirm-title { font-size: 13.5px; font-weight: 600; color: var(--cl-ink); }
+    .dshlink-confirm-sub { font-size: 11.5px; color: var(--cl-faint); line-height: 1.45; }
+    .dshlink-switch { display: inline-flex; align-items: center; cursor: pointer; user-select: none; flex: none; }
+    .dshlink-switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+    .dshlink-switch-track { position: relative; width: 40px; height: 23px; flex: none; border-radius: 999px; background: var(--cl-line-strong); transition: background 0.18s var(--cl-ease); }
+    .dshlink-switch-track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 19px; height: 19px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.28); transition: transform 0.2s var(--cl-ease); }
+    .dshlink-switch input:checked + .dshlink-switch-track { background: var(--cl-accent); }
+    .dshlink-switch input:checked + .dshlink-switch-track::after { transform: translateX(17px); }
+    .dshlink-switch input:focus-visible + .dshlink-switch-track { outline: 2px solid var(--cl-accent); outline-offset: 2px; }
+
+    /* ---- device rows (inside group) ---- */
+    .dshlink-device { display: flex; align-items: center; gap: 12px; padding: 13px 16px; }
+    .dshlink-device.is-pending { background: var(--cl-warn-soft); }
+    .dshlink-device-dot { position: relative; flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--cl-ok); }
+    .dshlink-device-dot.is-pending { background: var(--cl-warn); }
+    .dshlink-device-dot.is-pending::after { content: ""; position: absolute; inset: -4px; border-radius: 50%; border: 2px solid var(--cl-warn); opacity: 0; animation: dshlink-ping 1.6s ease-out infinite; }
+    @keyframes dshlink-ping { 0% { transform: scale(0.5); opacity: 0.6 } 70%, 100% { transform: scale(1.5); opacity: 0 } }
+    .dshlink-device-copy { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
+    .dshlink-device-name-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .dshlink-device-name { font-size: 13.5px; font-weight: 600; color: var(--cl-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dshlink-device-badge { flex: none; font-size: 10px; font-weight: 700; line-height: 1; color: var(--cl-warn); background: var(--cl-warn-soft); border: 1px solid var(--cl-warn-line); padding: 2px 7px; border-radius: 999px; }
+    .dshlink-device-time { font-size: 11.5px; color: var(--cl-faint); }
     .dshlink-device-actions { display: flex; gap: 6px; flex: none; }
-    .dshlink-approve {
-      flex: none; appearance: none; cursor: pointer;
-      border: 1px solid rgba(34, 121, 74, 0.3);
-      background: var(--dl-ok-soft); color: var(--dl-ok);
-      border-radius: var(--dl-radius-s); padding: 5px 11px;
-      font: inherit; font-size: 12px; font-weight: 600;
-      transition: background 0.15s ease, border-color 0.15s ease, transform 0.12s ease;
-    }
-    .dshlink-approve:hover { background: #ddf0e4; border-color: rgba(34, 121, 74, 0.45) }
-    .dshlink-approve:active { transform: scale(0.97) }
-    .dshlink-approve:focus-visible { outline: 2px solid var(--dl-ok); outline-offset: 2px }
-    .dshlink-revoke-all {
-      appearance: none; cursor: pointer; align-self: flex-start;
-      border: 0; background: transparent; color: var(--dl-danger);
-      padding: 0; font: inherit; font-size: 12px; font-weight: 600;
-    }
-    .dshlink-revoke-all:hover { opacity: 0.72; text-decoration: underline }
-    .dshlink-revoke-all:focus-visible { outline: 2px solid var(--dl-danger); outline-offset: 2px }
+    .dshlink-approve, .dshlink-revoke { flex: none; appearance: none; cursor: pointer; border-radius: 8px; padding: 5px 11px; font: inherit; font-size: 12px; font-weight: 600; transition: background 0.15s ease, border-color 0.15s ease, transform 0.12s ease; }
+    .dshlink-approve { border: 1px solid var(--cl-ok-line); background: var(--cl-ok-soft); color: var(--cl-ok); }
+    .dshlink-approve:active { transform: scale(0.97); }
+    .dshlink-revoke { border: 1px solid var(--cl-danger-line); background: var(--cl-danger-soft); color: var(--cl-danger); }
+    .dshlink-revoke:active { transform: scale(0.97); }
+    .dshlink-approve:focus-visible, .dshlink-revoke:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
 
-    .dshlink-field {
-      width: 100%; box-sizing: border-box;
-      border: 1px solid var(--dl-line-strong); border-radius: var(--dl-radius-m);
-      padding: 10px 12px; font: inherit; font-size: 13px;
-      background: var(--dl-paper); color: var(--dl-ink);
-      transition: border-color 0.15s ease, box-shadow 0.15s ease;
-    }
-    .dshlink-field::placeholder { color: var(--dl-faint) }
-    .dshlink-field:hover { border-color: rgba(22, 24, 29, 0.26) }
-    .dshlink-field:focus {
-      outline: none;
-      border-color: var(--dl-accent);
-      box-shadow: 0 0 0 3px var(--dl-accent-soft);
-    }
-    .dshlink-relay-form { display: flex; flex-direction: column; gap: 10px; margin: 0 }
-    .dshlink-relay-row { display: flex; flex-direction: column; gap: 6px }
-    .dshlink-relay-row label { font-size: 12px; font-weight: 600; color: var(--dl-muted) }
-    .dshlink-relay-actions { display: flex; gap: 8px; flex-wrap: wrap }
-    .dshlink-relay-status { font-size: 12px; color: var(--dl-muted); margin: 0 }
-    .dshlink-relay-status.is-ok { color: var(--dl-ok); font-weight: 600 }
-    .dshlink-relay-status.is-error { color: var(--dl-danger); font-weight: 600 }
-    .dshlink-relay-online {
-      display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
-      padding: 12px 13px; border-radius: var(--dl-radius-m);
-      background: var(--dl-ok-soft); border: 1px solid rgba(34, 121, 74, 0.22);
-    }
-    .dshlink-primary {
-      appearance: none; cursor: pointer; border: 0; border-radius: 10px;
-      padding: 9px 16px; background: var(--dl-accent-deep); color: #fff;
-      font: inherit; font-size: 13px; font-weight: 650;
-      box-shadow: 0 2px 8px rgba(11, 111, 122, 0.28);
-      transition: background 0.15s ease, transform 0.12s ease, box-shadow 0.15s ease;
-    }
-    .dshlink-primary:hover:not(:disabled) { background: var(--dl-accent); box-shadow: 0 3px 12px rgba(15, 143, 156, 0.34) }
-    .dshlink-primary:active:not(:disabled) { transform: translateY(1px); box-shadow: 0 1px 4px rgba(11, 111, 122, 0.24) }
-    .dshlink-primary:disabled { opacity: 0.45; cursor: not-allowed; box-shadow: none }
-    .dshlink-primary:focus-visible { outline: 2px solid var(--dl-accent-deep); outline-offset: 2px }
-    .dshlink-secondary {
-      appearance: none; cursor: pointer; border: 1px solid var(--dl-line-strong);
-      border-radius: 10px; padding: 9px 16px; background: var(--dl-paper);
-      font: inherit; font-size: 13px; font-weight: 600; color: var(--dl-ink);
-      transition: background 0.15s ease, border-color 0.15s ease, transform 0.12s ease;
-    }
-    .dshlink-secondary:hover { background: var(--dl-soft); border-color: rgba(22, 24, 29, 0.26) }
-    .dshlink-secondary:active { transform: translateY(1px) }
-    .dshlink-secondary:focus-visible { outline: 2px solid var(--dl-accent); outline-offset: 2px }
+    /* ---- empty ---- */
+    .dshlink-empty { font-size: 12.5px; color: var(--cl-faint); padding: 26px 16px; border-radius: var(--cl-radius-l); border: 1px dashed var(--cl-line-strong); text-align: center; display: flex; flex-direction: column; align-items: center; gap: 8px; background: var(--cl-inset); }
+    .dshlink-empty svg { display: block; opacity: 0.75; }
 
-    .dshlink-status { font-size: 12px; color: var(--dl-muted); padding: 4px 0 }
-    .dshlink-status.is-error { color: var(--dl-danger) }
+    /* ---- exposure banner ---- */
+    .dshlink-expose { display: flex; gap: 10px; align-items: flex-start; margin: 0; font-size: 12px; line-height: 1.55; font-weight: 600; padding: 12px 14px; border-radius: var(--cl-radius-m); background: var(--cl-danger-soft); border: 1px solid var(--cl-danger-line); color: var(--cl-danger); }
+    .dshlink-expose-icon { flex: none; margin-top: 1px; }
 
-    .dshlink-close {
-      margin-top: 18px; width: 100%; appearance: none; cursor: pointer;
-      border: 1px solid var(--dl-line-strong); border-radius: var(--dl-radius-m); padding: 11px 14px;
-      background: var(--dl-soft); color: var(--dl-ink);
-      font: inherit; font-size: 14px; font-weight: 600;
-      transition: background 0.15s ease, transform 0.12s ease;
+    /* ---- relay ---- */
+    .dshlink-relay-form { display: flex; flex-direction: column; gap: 12px; margin: 0; }
+    .dshlink-relay-row { display: flex; flex-direction: column; gap: 7px; }
+    .dshlink-relay-row label { font-size: 12px; font-weight: 600; color: var(--cl-muted); }
+    .dshlink-field { width: 100%; box-sizing: border-box; border: 1px solid var(--cl-line-strong); border-radius: var(--cl-radius-m); padding: 11px 13px; font: inherit; font-size: 13px; background: var(--cl-surface); color: var(--cl-ink); transition: border-color 0.15s ease, box-shadow 0.15s ease; }
+    .dshlink-field::placeholder { color: var(--cl-faint); }
+    .dshlink-field:hover { border-color: var(--cl-accent-line); }
+    .dshlink-field:focus { outline: none; border-color: var(--cl-accent); box-shadow: 0 0 0 3px var(--cl-accent-soft); }
+    .dshlink-relay-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .dshlink-relay-status { font-size: 12.5px; color: var(--cl-muted); margin: 0; }
+    .dshlink-relay-status.is-ok { color: var(--cl-ok); font-weight: 600; }
+    .dshlink-relay-status.is-error { color: var(--cl-danger); font-weight: 600; }
+    .dshlink-relay-online { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 13px 16px; border-radius: var(--cl-radius-m); background: var(--cl-ok-soft); border: 1px solid var(--cl-ok-line); }
+    .dshlink-relay-online .dshlink-relay-status { flex: 1; min-width: 120px; display: flex; align-items: center; gap: 9px; }
+    .dshlink-relay-online .rdot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--cl-ok); }
+    .dshlink-primary { appearance: none; cursor: pointer; border: 0; border-radius: 11px; padding: 10px 18px; color: #fff; font: inherit; font-size: 13px; font-weight: 600; background: var(--cl-accent); transition: background 0.15s ease, transform 0.12s ease; }
+    .dshlink-primary:hover:not(:disabled) { background: var(--cl-accent-deep); }
+    .dshlink-primary:active:not(:disabled) { transform: translateY(1px); }
+    .dshlink-primary:disabled { opacity: 0.45; cursor: not-allowed; }
+    .dshlink-primary:focus-visible { outline: 2px solid var(--cl-accent-deep); outline-offset: 2px; }
+    .dshlink-secondary { appearance: none; cursor: pointer; border: 1px solid var(--cl-line-strong); border-radius: 10px; padding: 8px 14px; background: var(--cl-surface); font: inherit; font-size: 13px; font-weight: 600; color: var(--cl-ink); transition: background 0.15s ease, border-color 0.15s ease, transform 0.12s ease; }
+    .dshlink-secondary:hover { background: var(--cl-inset); border-color: var(--cl-accent-line); }
+    .dshlink-secondary:active { transform: translateY(1px); }
+    .dshlink-secondary:focus-visible { outline: 2px solid var(--cl-accent); outline-offset: 2px; }
+
+    .dshlink-status { font-size: 12.5px; color: var(--cl-muted); padding: 4px 0; }
+    .dshlink-status.is-error { color: var(--cl-danger); }
+
+    .dshlink-close { margin-top: 4px; width: 100%; appearance: none; cursor: pointer; border: 1px solid var(--cl-line-strong); border-radius: var(--cl-radius-m); padding: 11px 14px; background: var(--cl-inset); color: var(--cl-ink); font: inherit; font-size: 14px; font-weight: 600; transition: background 0.15s ease, transform 0.12s ease; }
+    .dshlink-close:hover { background: var(--cl-line); }
+    .dshlink-close:active { transform: scale(0.985); }
+    .dshlink-close:focus-visible { outline: 2px solid var(--cl-accent); outline-offset: 2px; }
+
+    @media (pointer: coarse) {
+      .dshlink-tab { padding-top: 13px; padding-bottom: 15px; }
+      .dshlink-field { min-height: 44px; }
     }
-    .dshlink-close:hover { background: var(--dl-softer) }
-    .dshlink-close:active { transform: scale(0.985) }
-    .dshlink-close:focus-visible { outline: 2px solid var(--dl-accent); outline-offset: 2px }
+    @media (max-width: 400px) {
+      .dshlink-pair { grid-template-columns: 1fr; justify-items: center; text-align: center; }
+      .dshlink-pair-meta { align-items: center; }
+      .dshlink-pair-code-row { justify-content: center; }
+    }
   `
 
-  function BrandHeader() {
+  const LINK_GLYPH = jsx('svg', {
+    width: 17, height: 17, viewBox: '0 0 24 24', fill: 'none',
+    stroke: 'currentColor', strokeWidth: 2.1, strokeLinecap: 'round', strokeLinejoin: 'round',
+    children: jsx('path', { d: 'M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71' }),
+  })
+
+  const COPY_GLYPH = jsxs('svg', {
+    width: 13, height: 13, viewBox: '0 0 24 24', fill: 'none',
+    stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
+    'aria-hidden': true,
+    children: [
+      jsx('rect', { x: 9, y: 9, width: 11, height: 11, rx: 2 }),
+      jsx('path', { d: 'M5 15V5a2 2 0 0 1 2-2h10' }),
+    ],
+  })
+
+  function connectionStatus(info, relay) {
+    if (relay?.status === 'online') return { tone: 'accent', text: '云端已连接' }
+    if (info) return { tone: 'ok', text: '局域网就绪' }
+    return null
+  }
+
+  function BrandHeader({ status }) {
     return jsxs('div', {
       className: 'dshlink-brand',
       children: [
+        jsx('div', { className: 'dshlink-brand-mark', 'aria-hidden': true, children: LINK_GLYPH }),
         jsxs('div', {
           className: 'dshlink-brand-copy',
           children: [
-            jsx('div', { className: 'dshlink-brand-kicker', children: 'DSH Links' }),
             jsx('div', { className: 'dshlink-brand-title', children: '手机连接' }),
+            jsx('div', { className: 'dshlink-brand-sub', children: '扫码把手机接入这台电脑' }),
           ],
         }),
-        jsx('div', {
-          className: 'dshlink-brand-mark',
-          'aria-hidden': true,
-          children: jsx('svg', {
-            width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none',
-            stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round', strokeLinejoin: 'round',
-            children: jsx('path', { d: 'M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71' }),
-          }),
-        }),
+        status
+          ? jsxs('span', {
+              className: 'dshlink-status-pill',
+              'data-tone': status.tone,
+              role: 'status',
+              children: [jsx('span', { className: 'd', 'aria-hidden': true }), status.text],
+            })
+          : null,
       ],
     })
   }
@@ -485,102 +388,152 @@ const createPanelModule = (require) => {
     })
   }
 
-  function ConfirmToggle({ requireConfirm, onChange }) {
-    return jsxs('label', {
-      className: 'dshlink-confirm',
-      children: [
-        jsx('input', {
-          type: 'checkbox',
-          checked: Boolean(requireConfirm),
-          onChange: (event) => onChange(event.target.checked),
-        }),
-        '配对需本机确认',
-      ],
-    })
-  }
-
-  function DeviceList({ devices, revoke }) {
-    if (!devices.length) return null
+  function ConfirmSection({ value, onChange }) {
     return jsxs('div', {
-      className: 'dshlink-devices',
+      className: 'dshlink-section',
       children: [
-        jsxs('div', {
-          className: 'dshlink-section-label',
-          children: ['已配对设备', jsx('span', { className: 'dshlink-section-count', children: devices.length })],
+        jsx('div', {
+          className: 'dshlink-section-head',
+          children: jsx('div', { className: 'dshlink-section-label', children: '设置' }),
         }),
-        ...devices.map((d) =>
-          jsxs('div', {
-            className: 'dshlink-device',
-            key: d.deviceId || d.name,
+        jsx('div', {
+          className: 'dshlink-group',
+          children: jsxs('div', {
+            className: 'dshlink-row',
             children: [
-              jsx('span', { className: 'dshlink-device-dot', 'aria-hidden': true }),
               jsxs('div', {
-                className: 'dshlink-device-copy',
+                className: 'dshlink-confirm-copy',
                 children: [
-                  jsx('div', { className: 'dshlink-device-name', children: d.name }),
-                  jsx('div', { className: 'dshlink-device-time', children: deviceSeenLabel(d.lastSeenAt) }),
+                  jsx('div', { className: 'dshlink-confirm-title', children: '配对需本机确认' }),
+                  jsx('div', { className: 'dshlink-confirm-sub', children: '开启后，新设备扫码需在本机点「批准」才放行。' }),
                 ],
               }),
-              jsx('button', {
-                type: 'button',
-                className: 'dshlink-revoke',
-                onClick: () => revoke(d.deviceId ? { deviceId: d.deviceId } : { name: d.name }),
-                children: '吊销',
-              }),
-            ],
-          }),
-        ),
-      ],
-    })
-  }
-
-  function PendingList({ devices, approve, revoke }) {
-    if (!devices.length) return null
-    return jsxs('div', {
-      className: 'dshlink-devices',
-      children: [
-        jsxs('div', {
-          className: 'dshlink-section-label',
-          children: ['待本机确认', jsx('span', { className: 'dshlink-section-count', children: devices.length })],
-        }),
-        ...devices.map((d) =>
-          jsxs('div', {
-            className: 'dshlink-device is-pending',
-            key: d.deviceId || d.name,
-            children: [
-              jsx('span', { className: 'dshlink-device-dot is-pending', 'aria-hidden': true }),
-              jsxs('div', {
-                className: 'dshlink-device-copy',
+              jsxs('label', {
+                className: 'dshlink-switch',
                 children: [
-                  jsx('div', { className: 'dshlink-device-name', children: d.name }),
-                  jsx('div', { className: 'dshlink-device-time', children: pendingLabel(d) }),
-                ],
-              }),
-              jsxs('div', {
-                className: 'dshlink-device-actions',
-                children: [
-                  jsx('button', {
-                    type: 'button',
-                    className: 'dshlink-approve',
-                    onClick: () => approve(d.deviceId),
-                    children: '批准',
+                  jsx('input', {
+                    type: 'checkbox',
+                    checked: Boolean(value),
+                    onChange: (event) => onChange(event.target.checked),
                   }),
-                  jsx('button', {
-                    type: 'button',
-                    className: 'dshlink-revoke',
-                    onClick: () => revoke(d.deviceId ? { deviceId: d.deviceId } : { name: d.name }),
-                    children: '拒绝',
-                  }),
+                  jsx('span', { className: 'dshlink-switch-track', 'aria-hidden': true }),
                 ],
               }),
             ],
           }),
-        ),
+        }),
+      ],
+    })
+  }
+
+  function DeviceRow({ device, isPending, approve, revoke }) {
+    return jsxs('div', {
+      className: 'dshlink-device' + (isPending ? ' is-pending' : ''),
+      children: [
+        jsx('span', { className: 'dshlink-device-dot' + (isPending ? ' is-pending' : ''), 'aria-hidden': true }),
+        jsxs('div', {
+          className: 'dshlink-device-copy',
+          children: [
+            jsxs('div', {
+              className: 'dshlink-device-name-row',
+              children: [
+                jsx('div', { className: 'dshlink-device-name', children: device.name }),
+                isPending ? jsx('span', { className: 'dshlink-device-badge', children: '待确认' }) : null,
+              ],
+            }),
+            jsx('div', { className: 'dshlink-device-time', children: isPending ? pendingLabel(device) : deviceSeenLabel(device.lastSeenAt) }),
+          ],
+        }),
+        jsxs('div', {
+          className: 'dshlink-device-actions',
+          children: [
+            isPending
+              ? jsx('button', {
+                  type: 'button',
+                  className: 'dshlink-approve',
+                  onClick: () => approve(device.deviceId),
+                  children: '批准',
+                })
+              : null,
+            jsx('button', {
+              type: 'button',
+              className: 'dshlink-revoke',
+              onClick: () => revoke(device.deviceId ? { deviceId: device.deviceId } : { name: device.name }),
+              children: isPending ? '拒绝' : '吊销',
+            }),
+          ],
+        }),
+      ],
+    })
+  }
+
+  function EmptyDevices() {
+    return jsxs('div', {
+      className: 'dshlink-empty',
+      children: [
+        jsxs('svg', {
+          width: 26, height: 26, viewBox: '0 0 24 24', fill: 'none',
+          stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round', strokeLinejoin: 'round',
+          'aria-hidden': true,
+          children: [
+            jsx('rect', { x: 5, y: 2, width: 14, height: 20, rx: 3 }),
+            jsx('path', { d: 'M11 18h2' }),
+          ],
+        }),
+        '还没有配对设备 · 用手机扫码即可接入',
+      ],
+    })
+  }
+
+  function DeviceSection({ devices, approve, revoke, revokeAll }) {
+    const pending = (devices ?? []).filter(isPendingDevice)
+    const paired = (devices ?? []).filter((d) => !isPendingDevice(d))
+    const total = pending.length + paired.length
+    if (!total) return jsx(EmptyDevices, {})
+    return jsxs('div', {
+      className: 'dshlink-section',
+      children: [
+        jsxs('div', {
+          className: 'dshlink-section-head',
+          children: [
+            jsxs('div', {
+              className: 'dshlink-section-label',
+              children: ['设备', jsx('span', { className: 'dshlink-section-count', children: total })],
+            }),
+            total > 1
+              ? jsx('button', { type: 'button', className: 'dshlink-revoke-all', onClick: revokeAll, children: '吊销全部' })
+              : null,
+          ],
+        }),
+        jsx('div', {
+          className: 'dshlink-group',
+          children: [...pending.map((d) => ({ device: d, isPending: true })), ...paired.map((d) => ({ device: d, isPending: false }))].map(({ device, isPending }) =>
+            jsx(DeviceRow, {
+              device,
+              isPending,
+              approve,
+              revoke,
+              key: device.deviceId || device.name,
+            }),
+          ),
+        }),
       ],
     })
   }
 
   function PairCard({ via, code, label }) {
+    const [copied, setCopied] = React.useState(false)
+    const copyTimer = React.useRef(0)
+    React.useEffect(() => () => clearTimeout(copyTimer.current), [])
+    const copyCode = async () => {
+      if (!code) return
+      try {
+        await navigator.clipboard.writeText(code)
+        setCopied(true)
+        clearTimeout(copyTimer.current)
+        copyTimer.current = setTimeout(() => setCopied(false), 2000)
+      } catch {}
+    }
     return jsxs('div', {
       className: 'dshlink-pair',
       children: [
@@ -597,7 +550,20 @@ const createPanelModule = (require) => {
           className: 'dshlink-pair-meta',
           children: [
             jsx('div', { className: 'dshlink-pair-label', children: label }),
-            jsx('p', { className: 'dshlink-code', children: code || '—' }),
+            jsxs('div', {
+              className: 'dshlink-pair-code-row',
+              children: [
+                jsx('div', { className: 'dshlink-code', children: code || '—' }),
+                code
+                  ? jsxs('button', {
+                      type: 'button',
+                      className: 'dshlink-copy' + (copied ? ' is-copied' : ''),
+                      onClick: copyCode,
+                      children: copied ? ['已复制 ✓'] : [COPY_GLYPH, '复制'],
+                    })
+                  : null,
+              ],
+            }),
             jsx('p', { className: 'dshlink-pair-hint', children: '用手机 App 扫码，或手动输入配对码。' }),
           ],
         }),
@@ -605,15 +571,13 @@ const createPanelModule = (require) => {
     })
   }
 
-  function LanBody({ info, devices, revoke }) {
+  function LanBody({ info, devices, approve, revoke, revokeAll, setRequireConfirm }) {
     return jsxs('div', {
       className: 'dshlink-lan',
       children: [
         jsx(PairCard, { via: 'lan', code: info.pairingCode, label: '配对码' }),
-        jsx(DeviceList, {
-          devices: devicesVia(devices, 'lan').filter((d) => !isPendingDevice(d)),
-          revoke,
-        }),
+        jsx(ConfirmSection, { value: info.requireConfirm, onChange: setRequireConfirm }),
+        jsx(DeviceSection, { devices: devicesVia(devices, 'lan'), approve, revoke, revokeAll }),
       ],
     })
   }
@@ -651,38 +615,39 @@ const createPanelModule = (require) => {
       }
     }
     if (enrolled && !replace) {
-      return jsxs('div', {
+      return jsx('div', {
         className: 'dshlink-relay-form',
-        children: [
-          jsxs('div', {
-            className: 'dshlink-relay-online',
-            children: [
-              jsx('p', {
-                className: 'dshlink-relay-status' + (relay?.status === 'error' ? ' is-error' : online ? ' is-ok' : ''),
-                children: online
-                  ? connectedHost
-                  : (relay?.error || `正在连接 ${connectedHost}`),
-              }),
-              jsxs('div', {
-                className: 'dshlink-relay-actions',
-                children: [
-                  jsx('button', {
-                    type: 'button',
-                    className: 'dshlink-secondary',
-                    onClick: onDisconnect,
-                    children: '断开',
-                  }),
-                  jsx('button', {
-                    type: 'button',
-                    className: 'dshlink-secondary',
-                    onClick: () => { setReplace(true); setMessage('') },
-                    children: '更换',
-                  }),
-                ],
-              }),
-            ],
-          }),
-        ],
+        children: jsxs('div', {
+          className: 'dshlink-relay-online',
+          children: [
+            online
+              ? jsxs('p', {
+                  className: 'dshlink-relay-status is-ok',
+                  children: [jsx('span', { className: 'rdot', 'aria-hidden': true }), connectedHost],
+                })
+              : jsx('p', {
+                  className: 'dshlink-relay-status' + (relay?.status === 'error' ? ' is-error' : ''),
+                  children: relay?.error || `正在连接 ${connectedHost}`,
+                }),
+            jsxs('div', {
+              className: 'dshlink-relay-actions',
+              children: [
+                jsx('button', {
+                  type: 'button',
+                  className: 'dshlink-secondary',
+                  onClick: onDisconnect,
+                  children: '断开',
+                }),
+                jsx('button', {
+                  type: 'button',
+                  className: 'dshlink-secondary',
+                  onClick: () => { setReplace(true); setMessage('') },
+                  children: '更换',
+                }),
+              ],
+            }),
+          ],
+        }),
       })
     }
     return jsxs('form', {
@@ -726,7 +691,7 @@ const createPanelModule = (require) => {
     })
   }
 
-  function RemoteBody({ info, devices, revoke, relay, onEnroll, onDisconnect }) {
+  function RemoteBody({ info, devices, approve, revoke, revokeAll, relay, onEnroll, onDisconnect }) {
     const pairingCode = info?.pairingCode || ''
     const online = relay?.status === 'online'
     return jsxs('div', {
@@ -736,10 +701,7 @@ const createPanelModule = (require) => {
         online
           ? jsx(PairCard, { via: 'relay', code: pairingCode, label: '云端配对码' })
           : null,
-        jsx(DeviceList, {
-          devices: devicesVia(devices, 'relay').filter((d) => !isPendingDevice(d)),
-          revoke,
-        }),
+        jsx(DeviceSection, { devices: devicesVia(devices, 'relay'), approve, revoke, revokeAll }),
       ],
     })
   }
@@ -769,23 +731,14 @@ const createPanelModule = (require) => {
     React.useEffect(() => { load?.() }, [active, load])
     if (err) return jsx('div', { className: 'dshlink-status is-error', children: `加载失败：${err}` })
     if (!info) return jsx('div', { className: 'dshlink-status', children: '加载中…' })
-    const pending = (devices ?? []).filter(isPendingDevice)
     return jsxs('div', {
       className: 'dshlink-connection',
       children: [
         jsx(ConnectionTabs, { active, onChange: setActive }),
         jsx(ExposureBanner, { exposure: info.exposure }),
-        jsx(ConfirmToggle, { requireConfirm: info.requireConfirm, onChange: setRequireConfirm }),
-        jsx(PendingList, { devices: pending, approve, revoke }),
-        active === 'lan' ? jsx(LanBody, { info, devices, revoke }) : jsx(RemoteBody, { info, devices, revoke, relay, onEnroll, onDisconnect }),
-        devices.length > 1
-          ? jsx('button', {
-              type: 'button',
-              className: 'dshlink-revoke-all',
-              onClick: revokeAll,
-              children: '吊销全部',
-            })
-          : null,
+        active === 'lan'
+          ? jsx(LanBody, { info, devices, approve, revoke, revokeAll, setRequireConfirm })
+          : jsx(RemoteBody, { info, devices, approve, revoke, revokeAll, relay, onEnroll, onDisconnect }),
       ],
     })
   }
@@ -919,7 +872,7 @@ const createPanelModule = (require) => {
                 className: 'dshlink-panel dshlink-root',
                 onClick: (e) => e.stopPropagation(),
                 children: [
-                  jsx(BrandHeader, {}),
+                  jsx(BrandHeader, { status: connectionStatus(info, relay) }),
                   jsx(ConnectionBody, { info, devices, err, revoke, approve, revokeAll, setRequireConfirm, relay, onEnroll, onDisconnect, load }),
                   jsx('button', {
                     type: 'button',
@@ -944,7 +897,7 @@ const createPanelModule = (require) => {
         jsxs('div', {
           className: 'dshlink-settings dshlink-root',
           children: [
-            jsx(BrandHeader, {}),
+            jsx(BrandHeader, { status: connectionStatus(info, relay) }),
             jsx(ConnectionBody, { info, devices, err, revoke, approve, revokeAll, setRequireConfirm, relay, onEnroll, onDisconnect, load }),
           ],
         }),
