@@ -82,7 +82,7 @@ CGO_ENABLED=0 go test ./internal/ingress -run TestSequential -v
 
 MIT — 见 `LICENSE`.
 
-## 阶段二：匿名自助接入（可选）
+## 阶段二：匿名自助接入（仅服务端实验能力）
 
 默认 `anonymous_enroll = false`（保持邀请制）。开启后：
 
@@ -97,5 +97,5 @@ ipv6_prefix_len                  = 64      # 按 IP 限流的 IPv6 聚合前缀�
 
 - 设备本地生成 Ed25519 身份 → `BOOTSTRAP` 帧换 10 分钟 token → `ENROLL` 拿 route（hostId 服务端分配）。
 - 控制台「匿名设备」面板：列表 / 禁用（级联吊销）/ 启用 / 删除；「匿名自助接入」总开关持久化。
-- 插件配对二维码可切换「匿名模式」（不再携带 routeSecret），手机 App 用自助登记的路由完成配对。
+- 当前 Plugin/App 不暴露匿名扫码入口：匿名设备 route 不能标识目标 Plugin，无法完成 App → Relay → Plugin 路由。对外服务必须保持邀请制；恢复匿名扫码前需先定义并验证目标 Host 绑定的一次性配对能力。
 - 撤销：设备侧 `REVOKE_SELF`；运营侧设备禁用/删除。

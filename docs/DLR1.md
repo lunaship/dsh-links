@@ -399,4 +399,4 @@ sequenceDiagram
 1. bootstrap token 是**一次性语义**凭证：10 分钟过期，仅授权一个匿名 ENROLL，且 `sub` 与 host 公钥指纹强绑定。
 2. 匿名 host 永远享有「设备级」主体责任：可封禁、可配额、可撤销、有日预算；`device_id` 空即邀请制，行为不变。
 3. REVOKE_SELF 只允许撤销**自己**的 route；伪造 proof 拿不到任何信息（错误码与 ENROLL 失败一致为 AUTH_FAILED）。
-4. 二维码安全模式（插件侧 `relay-qr-mode = anonymous`）使配对二维码不再携带长期 routeSecret，泄密面收敛为一次性凭据+内层配对码。
+4. 当前客户端不得从匿名设备 route 推断目标 Plugin route。匿名扫码恢复前，协议必须增加与目标 Host 绑定、短时且一次性的配对能力，并完成 App → Relay → Plugin 端到端验证。
