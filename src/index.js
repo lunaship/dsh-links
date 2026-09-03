@@ -24,7 +24,7 @@ import {
 import { loadOrCreateTls } from "./tls.js"
 import { loadEventsAfter, sseMessageFrame } from "./stream-cursor.js"
 import { flushSeedQueue, respondQuestion, startMuxQuestionBridge } from "./question-bridge.js"
-import { callLocalRpc, LocalRpcError } from "./local-rpc.js"
+import { bindLocalRpcRuntime, callLocalRpc, LocalRpcError, unbindLocalRpcRuntime } from "./local-rpc.js"
 import {
   MobileWorkspaceCreateError,
   ensureMobileWorkspaceDirectory,
@@ -35,7 +35,7 @@ import { deriveAddresses, generateHostKey, hostKeyFromSeed, resolveEnrollText, u
 import { enroll as enrollRelay, normalizeTlsFingerprint, RelayAgent } from "./relay/agent.js"
 
 export const name = "dsh-links"
-export const inject = ["webServer"]
+export const inject = ["webServer", "typertGateway"]
 
 export const Config = z.object({
   /** 手机接入代理端口（0.0.0.0） */
@@ -768,6 +768,7 @@ function createRuntime() {
     // sessionId → { at, timer }，给 mux 补洞请求限流
     gapPolls: new Map(),
     pendingApprovals: new Map(),
+    pendingQuestions: new Map(),
     reasoningCache: new Map(),
     deviceRequests: new Map(),
     pairingRequests: new Map(),
@@ -862,6 +863,12 @@ function settleOrphanApprovals(rt) {
     const writers = rec.sessionId ? rt.sessionStreams.get(rec.sessionId) : null
     if (!writers || writers.size === 0) {
       try { rec.settle("cancelled") } catch {}
+    }
+  }
+  for (const rec of [...rt.pendingQuestions.values()]) {
+    const writers = rec.sessionId ? rt.sessionStreams.get(rec.sessionId) : null
+    if (!writers || writers.size === 0) {
+      try { rec.settle(null, "cancelled") } catch {}
     }
   }
 }
@@ -1459,6 +1466,14 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
         return json(res, 400, { error: "缺少 rpcId 或 answer.answers" })
       }
       try {
+        const pending = rt.pendingQuestions.get(rpcId)
+        if (pending) {
+          if (pending.sessionId !== sessionId) {
+            return json(res, 409, { ok: false, accepted: false, error: "澄清会话不匹配" })
+          }
+          pending.settle(answer)
+          return json(res, 200, { ok: true, accepted: true, handledBy: "plugin" })
+        }
         const result = await respondQuestion(targetPort, rpcId, sessionId, answer)
         const accepted = result?.accepted === true
         return json(res, accepted ? 200 : 409, { ok: accepted, accepted, result })
@@ -1542,6 +1557,7 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
       if (text) content.push({ type: "text", text })
       const resVal = await callLocalRpc(targetPort, "session.prompt", {
         sessionId,
+        requestId: "mobile-" + randomBytes(12).toString("hex"),
         mode: body.mode || "queue",
         content,
       })
@@ -1578,18 +1594,26 @@ const PANEL_ONLY_PATHS = new Set([
 const APPROVAL_OUTCOMES = new Set(["allowed-once", "rejected", "cancelled", "unavailable"])
 const APPROVAL_TIMEOUT_MS = 5 * 60 * 1000
 
+function sessionEvents(session) {
+  if (typeof session?.snapshotEvents === "function") {
+    try {
+      const events = session.snapshotEvents()
+      if (Array.isArray(events)) return events
+    } catch {}
+  }
+  return Array.isArray(session?.events) ? session.events : []
+}
+
 function findApprovalId(req) {
-  const events = req?.agent?.session?.events
-  if (Array.isArray(events)) {
-    const decided = new Set()
-    for (let i = events.length - 1; i >= 0; i--) {
-      const event = events[i]
-      if (event?.type === "approval/decided") decided.add(event.data?.id)
-      else if (event?.type === "approval/asked") {
-        if (decided.has(event.data?.id)) continue
-        if ((req.callId ?? null) !== (event.data?.callId ?? null)) continue
-        return event.data.id
-      }
+  const events = sessionEvents(req?.agent?.session)
+  const decided = new Set()
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i]
+    if (event?.type === "approval/decided") decided.add(event.data?.id)
+    else if (event?.type === "approval/asked") {
+      if (decided.has(event.data?.id)) continue
+      if ((req.callId ?? null) !== (event.data?.callId ?? null)) continue
+      return event.data.id
     }
   }
   return req?.id ?? req?.approvalId ?? req?.payload?.id ?? null
@@ -1598,6 +1622,13 @@ function findApprovalId(req) {
 export function apply(ctx, config) {
   const rt = createRuntime()
   const web = ctx.get("webServer")
+  const gateway = ctx.get("typertGateway") ?? ctx.typertGateway
+  if (gateway && typeof gateway.invoke === "function") {
+    bindLocalRpcRuntime({
+      invoke: (request) => gateway.invoke(request),
+      stream: typeof gateway.stream === "function" ? (request) => gateway.stream(request) : undefined,
+    })
+  }
   const targetPort = web.port
   const stateFile = statePathOf(config)
   const state = loadState(stateFile)
@@ -1898,6 +1929,42 @@ export function apply(ctx, config) {
     })
   })
 
+  /**
+   * 0.1.2 起澄清卡走 `user-questions/request` waterfall，不再经 /api/events.mux。
+   * 有手机 SSE 时由插件代答；否则 next() 把问题交给网页 UI。
+   */
+  ctx.on("user-questions/request", (req, next) => {
+    if (req?.signal?.aborted === true) return next()
+    const sessionId = req?.agent?.session?.id
+    const writers = sessionId ? rt.sessionStreams.get(sessionId) : null
+    if (!writers || writers.size === 0) return next()
+    const rpcId = "q-" + randomBytes(12).toString("hex")
+    return new Promise((resolve, reject) => {
+      let settled = false
+      const settle = (answer) => {
+        if (settled) return
+        settled = true
+        const rec = rt.pendingQuestions.get(rpcId)
+        rt.pendingQuestions.delete(rpcId)
+        if (rec?.timer) clearTimeout(rec.timer)
+        try { req.signal?.removeEventListener("abort", rec?.onAbort) } catch {}
+        if (answer && Array.isArray(answer.answers)) resolve(answer)
+        else Promise.resolve().then(() => next()).then(resolve, reject)
+      }
+      const onAbort = () => settle(null)
+      const timer = setTimeout(() => settle(null), APPROVAL_TIMEOUT_MS)
+      rt.pendingQuestions.set(rpcId, { settle, timer, onAbort, sessionId })
+      req.signal?.addEventListener("abort", onAbort, { once: true })
+      const body = JSON.stringify({
+        rpcId,
+        sessionId,
+        questions: req.questions ?? [],
+      })
+      writeSse(writers, `event: question\ndata: ${body}\n\n`)
+      ctx.logger.info(`dsh-links: question → mobile session=${String(sessionId).slice(0, 8)} rpc=${rpcId.slice(0, 8)}`)
+    })
+  })
+
   // ---------- 手机接入代理（0.0.0.0:<port> HTTPS）：仅 health / pair / mobile/* ----------
   const requestHandler = async (req, res) => {
     try {
@@ -2036,6 +2103,11 @@ export function apply(ctx, config) {
         try { rec.settle("cancelled") } catch {}
       }
       rt.pendingApprovals.clear()
+      for (const rec of [...rt.pendingQuestions.values()]) {
+        try { rec.settle(null) } catch {}
+      }
+      rt.pendingQuestions.clear()
+      unbindLocalRpcRuntime()
       try { proxy?.closeAllConnections?.() } catch {}
       try { proxy?.close() } catch {}
     },

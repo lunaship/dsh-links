@@ -2,10 +2,10 @@
  * 把本机 apiproxy 的 mux 帧转发给手机 SSE：
  * - `question/requested|resolved`：澄清卡不在 session.history 事件流里，只能走 mux。
  * - `session/event`：与 web 同源的实时推送，绕开"轮询 session.history"的秒级延迟。
- * 并用 /api/respond 回传答案。
+ * 并把 /api/$events/result 回传答案（host 面优先走 user-questions waterfall）。
  *
- * 传输：新版 apiproxy 的 /api/events.mux 只接受 WebSocket 升级（SSE GET 返回 426），
- * 旧版只有 SSE。两条都实现，首次连接失败就换另一条，之后固定用能通的那条。
+ * 传输：0.1.2 起 mux 在 /api/remote.mux（逻辑流 $events）；旧版 /api/events.mux
+ * 只接受 WebSocket 升级（SSE GET 返回 426）。两条都实现，首次连接失败就换另一条。
  */
 import { request as httpRequest } from "node:http"
 import { randomBytes } from "node:crypto"
@@ -166,6 +166,13 @@ export function handleMuxFrame(frame, rt, logger, requestPoll) {
   }
 }
 
+/** 0.1.2 `/api/remote.mux` 逻辑流帧。澄清卡已由 host waterfall 接管，这里只识别旧式 payload。 */
+export function handleRemoteEventItem(value, rt, logger, requestPoll) {
+  if (!value || typeof value !== "object") return
+  if (value.type === "item" && value.value) return handleRemoteEventItem(value.value, rt, logger, requestPoll)
+  if (value.payload?.type) return handleMuxFrame(value, rt, logger, requestPoll)
+}
+
 /** POST /api/respond（client-response），回答 ask_user_question。 */
 export function respondQuestion(targetPort, rpcId, sessionId, answer) {
   return new Promise((resolve, reject) => {
@@ -217,14 +224,15 @@ export function startMuxQuestionBridge({ targetPort, rt, logger, requestPoll }) 
   let stopped = false
   let activeReq = null
   let activeWs = null
-  // 新版主机走 WebSocket，旧版走 SSE；首连失败会翻到另一条
+  // 0.1.2 走 /api/remote.mux；旧版 /api/events.mux。首连失败会翻到另一条
+  let muxPath = "/api/remote.mux"
   let useWs = typeof globalThis.WebSocket === "function"
 
   function connectWs() {
     return new Promise((resolve, reject) => {
       let ws
       try {
-        ws = new globalThis.WebSocket(`ws://127.0.0.1:${targetPort}/api/events.mux`)
+        ws = new globalThis.WebSocket(`ws://127.0.0.1:${targetPort}${muxPath}`)
       } catch (err) {
         reject(err)
         return
@@ -232,8 +240,6 @@ export function startMuxQuestionBridge({ targetPort, rt, logger, requestPoll }) 
       activeWs = ws
       let opened = false
       let done = false
-      // 插件先于主机 API 就绪时，升级请求会一直悬着：不设超时这个 Promise 永不落地，
-      // 重连循环就死在这里。超时后主动放弃，交给下一轮重试。
       const handshakeTimer = setTimeout(() => {
         if (opened || done) return
         done = true
@@ -250,10 +256,19 @@ export function startMuxQuestionBridge({ targetPort, rt, logger, requestPoll }) 
       ws.addEventListener("open", () => {
         opened = true
         clearTimeout(handshakeTimer)
-        logger?.info?.("dsh-links: mux 桥已连接（WebSocket）")
+        logger?.info?.(`dsh-links: mux 桥已连接（WebSocket ${muxPath}）`)
+        if (muxPath === "/api/remote.mux") {
+          try {
+            ws.send(JSON.stringify({
+              type: "open",
+              streamId: "events",
+              endpoint: "$events",
+              payload: { args: {} },
+            }))
+          } catch {}
+        }
       })
       ws.addEventListener("message", (ev) => {
-        // 超时后被放弃的旧连接不得继续喂帧
         if (done && !opened) return
         if (typeof ev.data !== "string") return
         let frame
@@ -262,9 +277,12 @@ export function startMuxQuestionBridge({ targetPort, rt, logger, requestPoll }) 
         } catch {
           return
         }
+        if (frame?.type === "item" && frame.value) {
+          handleRemoteEventItem(frame.value, rt, logger, requestPoll)
+          return
+        }
         handleMuxFrame(frame, rt, logger, requestPoll)
       })
-      // undici 的 error 后必定跟 close，统一在 close 里收尾
       ws.addEventListener("error", () => {})
       ws.addEventListener("close", (ev) => {
         if (opened) settle(resolve)
@@ -327,9 +345,11 @@ export function startMuxQuestionBridge({ targetPort, rt, logger, requestPoll }) 
         everConnected = true
       } catch (err) {
         if (!stopped) {
-          logger?.warn?.(`dsh-links: mux 桥（${useWs ? "ws" : "sse"}）：${err?.message ?? err}`)
-          // 首连就失败：可能是主机传输与预期相反，翻到另一条再试
-          if (!everConnected && typeof globalThis.WebSocket === "function") useWs = !useWs
+          logger?.warn?.(`dsh-links: mux 桥（${useWs ? "ws " + muxPath : "sse"}）：${err?.message ?? err}`)
+          if (!everConnected) {
+            if (useWs && muxPath === "/api/remote.mux") muxPath = "/api/events.mux"
+            else if (typeof globalThis.WebSocket === "function") useWs = !useWs
+          }
         }
       }
       activeReq = null

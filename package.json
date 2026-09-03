@@ -1,6 +1,6 @@
 {
   "name": "dsh-links",
-  "version": "0.1.0-beta.12",
+  "version": "0.1.0-beta.13",
   "description": "DSH 手机插件：局域网配对 + 设备管理 + 18640 接入代理 + 手机 API（纯后端，无页面布局注入）",
   "type": "module",
   "main": "./src/index.js",
@@ -43,7 +43,7 @@
     "selfsigned": "5.5.0"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.0.1"
+    "@deepseek-ai/cordis": "^4.0.2"
   },
   "dsh": {
     "bundle": {
@@ -52,8 +52,8 @@
     "client": {
       "platform": "web",
       "inject": [
-        "@deepseek-ai/dsh-client-runtime",
-        "@deepseek-ai/dsh-client-ui-layout"
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-settings"
       ]
     }
   },

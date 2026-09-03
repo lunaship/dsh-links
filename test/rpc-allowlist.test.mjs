@@ -8,7 +8,7 @@ import { createServer } from "node:http"
 import { readFileSync, readdirSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
-import { LocalRpcError, RPC_METHOD_ALLOWLIST, callLocalRpc } from "../src/local-rpc.js"
+import { LocalRpcError, RPC_METHOD_ALLOWLIST, bindLocalRpcRuntime, callLocalRpc, unbindLocalRpcRuntime, wireEndpoint } from "../src/local-rpc.js"
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 
@@ -37,12 +37,14 @@ test("白名单是预期闭集（增删方法需同步本测试）", () => {
 
 test("白名单方法正常转发到 127.0.0.1 目标端口", async () => {
   const hits = []
+  const bodies = []
   const srv = createServer((req, res) => {
     hits.push(req.url)
     let body = ""
     req.on("data", (c) => { body += c })
     req.on("end", () => {
       const frame = JSON.parse(body)
+      bodies.push(frame)
       res.writeHead(200, { "content-type": "application/json" })
       res.end(JSON.stringify({ result: { ok: true, value: { echo: frame.method } } }))
     })
@@ -50,9 +52,78 @@ test("白名单方法正常转发到 127.0.0.1 目标端口", async () => {
   await new Promise((resolve) => srv.listen(0, "127.0.0.1", resolve))
   try {
     const value = await callLocalRpc(srv.address().port, "session.list", {})
-    assert.deepEqual(value, { echo: "session.list" })
-    assert.deepEqual(hits, ["/api/session.list"])
+    assert.deepEqual(value, { echo: "session/list" })
+    assert.deepEqual(hits, ["/api/session/list"])
+    assert.equal(bodies[0].method, "session/list")
+    assert.deepEqual(bodies[0].payload, { args: { _request: {} } })
+    assert.equal(wireEndpoint("session.list"), "session/list")
   } finally {
+    srv.close()
+  }
+})
+
+test("session.history 经 session/list + session/page，并把 records 投影为 events", async () => {
+  const hits = []
+  const srv = createServer((req, res) => {
+    hits.push(req.url)
+    let body = ""
+    req.on("data", (c) => { body += c })
+    req.on("end", () => {
+      const frame = JSON.parse(body)
+      let value = {}
+      if (frame.method === "session/list") {
+        value = {
+          items: [{
+            sessionId: "s1",
+            projections: { asOfSeq: 3, values: { title: "hi" } },
+          }],
+        }
+      } else if (frame.method === "session/page") {
+        assert.equal(frame.payload.args.request.throughSeq, 3)
+        assert.equal(frame.payload.args.request.address.sessionId, "s1")
+        value = {
+          records: [{ type: "event", event: { seq: 3, type: "user/message", time: 1, data: {} } }],
+          hasMore: false,
+        }
+      }
+      res.writeHead(200, { "content-type": "application/json" })
+      res.end(JSON.stringify({ result: { ok: true, value } }))
+    })
+  })
+  await new Promise((resolve) => srv.listen(0, "127.0.0.1", resolve))
+  try {
+    const value = await callLocalRpc(srv.address().port, "session.history", { sessionId: "s1", maxMessages: 50 })
+    assert.equal(value.hasMore, false)
+    assert.equal(value.events[0].event.seq, 3)
+    assert.equal(value.projections.asOfSeq, 3)
+    assert.deepEqual(hits, ["/api/session/list", "/api/session/page"])
+  } finally {
+    srv.close()
+  }
+})
+
+test("in-process typertGateway 优先于 HTTP，避免 /api cookie 401", async () => {
+  let httpHits = 0
+  const srv = createServer((_req, res) => {
+    httpHits++
+    res.writeHead(401)
+    res.end("unauthorized")
+  })
+  await new Promise((resolve) => srv.listen(0, "127.0.0.1", resolve))
+  bindLocalRpcRuntime({
+    invoke: async ({ namespace, method, args }) => {
+      assert.equal(namespace, "session")
+      assert.equal(method, "list")
+      assert.deepEqual(args, { _request: {} })
+      return { items: [{ sessionId: "gw" }] }
+    },
+  })
+  try {
+    const value = await callLocalRpc(srv.address().port, "session.list", {})
+    assert.deepEqual(value, { items: [{ sessionId: "gw" }] })
+    assert.equal(httpHits, 0)
+  } finally {
+    unbindLocalRpcRuntime()
     srv.close()
   }
 })
