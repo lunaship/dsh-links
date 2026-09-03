@@ -102,6 +102,98 @@ test("session.history 经 session/list + session/page，并把 records 投影为
   }
 })
 
+test("带 maxMessages 的 history 不走 follow（SSE 轮询路径）", async () => {
+  let streamHits = 0
+  const invokes = []
+  bindLocalRpcRuntime({
+    invoke: async ({ namespace, method, args }) => {
+      invokes.push(`${namespace}/${method}`)
+      if (method === "list") {
+        return { items: [{ sessionId: "s1", projections: { asOfSeq: 4 } }] }
+      }
+      if (method === "page") {
+        assert.equal(args.request.throughSeq, 4)
+        return {
+          records: [{ event: { seq: 4, type: "user/message", time: 1, data: {} } }],
+          hasMore: false,
+        }
+      }
+      throw new Error(`unexpected invoke ${namespace}/${method}`)
+    },
+    stream: async () => {
+      streamHits++
+      throw new Error("poll path must not open follow")
+    },
+  })
+  try {
+    const value = await callLocalRpc(1, "session.history", { sessionId: "s1", maxMessages: 50 })
+    assert.equal(value.events[0].event.seq, 4)
+    assert.deepEqual(invokes, ["session/list", "session/page"])
+    assert.equal(streamHits, 0)
+  } finally {
+    unbindLocalRpcRuntime()
+  }
+})
+
+test("无 maxMessages 的 history 尾页走 follow 快照", async () => {
+  let invokeHits = 0
+  bindLocalRpcRuntime({
+    invoke: async () => {
+      invokeHits++
+      throw new Error("unbounded tail should not invoke list/page")
+    },
+    stream: async ({ namespace, method }) => {
+      assert.equal(namespace, "session")
+      assert.equal(method, "follow")
+      return {
+        next: async () => ({
+          value: {
+            type: "snapshot",
+            records: [{ event: { seq: 9, type: "user/message", time: 1, data: {} } }],
+            hasMore: false,
+            projections: { asOfSeq: 9 },
+          },
+        }),
+      }
+    },
+  })
+  try {
+    const value = await callLocalRpc(1, "session.history", { sessionId: "s1" })
+    assert.equal(value.events[0].event.seq, 9)
+    assert.equal(value.projections.asOfSeq, 9)
+    assert.equal(invokeHits, 0)
+  } finally {
+    unbindLocalRpcRuntime()
+  }
+})
+
+test("list 没有 asOfSeq 时 history 回退 follow，避免 page(-1) 空页", async () => {
+  const invokes = []
+  bindLocalRpcRuntime({
+    invoke: async ({ namespace, method }) => {
+      invokes.push(`${namespace}/${method}`)
+      if (method === "list") return { items: [{ sessionId: "other" }] }
+      throw new Error(`unexpected invoke ${namespace}/${method}`)
+    },
+    stream: async () => ({
+      next: async () => ({
+        value: {
+          type: "snapshot",
+          records: [{ event: { seq: 2, type: "user/message", time: 1, data: {} } }],
+          hasMore: false,
+        },
+      }),
+    }),
+  })
+  try {
+    const value = await callLocalRpc(1, "session.history", { sessionId: "s1", maxMessages: 50 })
+    assert.equal(value.events[0].event.seq, 2)
+    assert.deepEqual(invokes, ["session/list"])
+  } finally {
+    unbindLocalRpcRuntime()
+  }
+})
+
 test("in-process typertGateway 优先于 HTTP，避免 /api cookie 401", async () => {
   let httpHits = 0
   const srv = createServer((_req, res) => {

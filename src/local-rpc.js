@@ -260,6 +260,25 @@ async function sessionThroughSeq(targetPort, sessionId) {
   }
 }
 
+async function followHistorySnapshot(sessionId, maxMessages) {
+  const snapshot = await firstStreamValue({
+    namespace: "session",
+    method: "follow",
+    args: {
+      request: {
+        address: { kind: "session", sessionId },
+        ...(maxMessages !== undefined ? { maxMessages } : {}),
+      },
+    },
+  })
+  if (snapshot?.type !== "snapshot") return null
+  return {
+    events: historyRecordsToEvents(snapshot.records),
+    hasMore: Boolean(snapshot.hasMore),
+    projections: snapshot.projections ?? null,
+  }
+}
+
 async function adaptSessionHistory(targetPort, payload) {
   const src = asObject(payload)
   const sessionId = src.sessionId
@@ -268,27 +287,14 @@ async function adaptSessionHistory(targetPort, payload) {
   }
   const maxMessages = Number.isInteger(src.maxMessages) ? src.maxMessages : undefined
   const beforeSeq = Number.isInteger(src.beforeSeq) ? src.beforeSeq : undefined
-  const isTail = beforeSeq === undefined
+  // 手机打开历史尾页（无 beforeSeq / maxMessages）才走 follow 快照。
+  // SSE 轮询与补洞都会带 maxMessages，必须走 page，否则每秒都会开一条 follow 再 abort。
+  const isUnboundedTail = beforeSeq === undefined && maxMessages === undefined
 
-  if (isTail && typeof runtime?.stream === "function") {
+  if (isUnboundedTail && typeof runtime?.stream === "function") {
     try {
-      const snapshot = await firstStreamValue({
-        namespace: "session",
-        method: "follow",
-        args: {
-          request: {
-            address: { kind: "session", sessionId },
-            ...(maxMessages !== undefined ? { maxMessages } : {}),
-          },
-        },
-      })
-      if (snapshot?.type === "snapshot") {
-        return {
-          events: historyRecordsToEvents(snapshot.records),
-          hasMore: Boolean(snapshot.hasMore),
-          projections: snapshot.projections ?? null,
-        }
-      }
+      const snapshot = await followHistorySnapshot(sessionId, maxMessages)
+      if (snapshot) return snapshot
     } catch {
       // follow 失败时回退 page（例如 AbortError 竞态）；list+page 仍能给出一页
     }
@@ -297,6 +303,16 @@ async function adaptSessionHistory(targetPort, payload) {
   const hint = Number.isInteger(src.throughSeq)
     ? { throughSeq: src.throughSeq, projections: null }
     : await sessionThroughSeq(targetPort, sessionId)
+
+  // list 没有 asOfSeq 时 page(throughSeq=-1) 是空页；冷会话或未入列表时再试一次 follow。
+  if (hint.throughSeq < 0 && typeof runtime?.stream === "function") {
+    try {
+      const snapshot = await followHistorySnapshot(sessionId, maxMessages)
+      if (snapshot) return snapshot
+    } catch {
+      // 仍回退 page；空页比抛错更接近旧 session.history 语义
+    }
+  }
 
   const page = await (async () => {
     const args = {

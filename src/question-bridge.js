@@ -2,7 +2,7 @@
  * 把本机 apiproxy 的 mux 帧转发给手机 SSE：
  * - `question/requested|resolved`：澄清卡不在 session.history 事件流里，只能走 mux。
  * - `session/event`：与 web 同源的实时推送，绕开"轮询 session.history"的秒级延迟。
- * 并把 /api/$events/result 回传答案（host 面优先走 user-questions waterfall）。
+ * 答案由 host 面 `user-questions/request` waterfall 代回，不再 POST 已删除的 `/api/respond`。
  *
  * 传输：0.1.2 起 mux 在 /api/remote.mux（逻辑流 $events）；旧版 /api/events.mux
  * 只接受 WebSocket 升级（SSE GET 返回 426）。两条都实现，首次连接失败就换另一条。
@@ -171,49 +171,6 @@ export function handleRemoteEventItem(value, rt, logger, requestPoll) {
   if (!value || typeof value !== "object") return
   if (value.type === "item" && value.value) return handleRemoteEventItem(value.value, rt, logger, requestPoll)
   if (value.payload?.type) return handleMuxFrame(value, rt, logger, requestPoll)
-}
-
-/** POST /api/respond（client-response），回答 ask_user_question。 */
-export function respondQuestion(targetPort, rpcId, sessionId, answer) {
-  return new Promise((resolve, reject) => {
-    const body = Buffer.from(JSON.stringify({
-      type: "client-response",
-      rpcId,
-      result: {
-        ok: true,
-        value: { sessionId, answer },
-      },
-    }))
-    const request = httpRequest(
-      {
-        host: "127.0.0.1",
-        port: targetPort,
-        method: "POST",
-        path: "/api/respond",
-        headers: {
-          host: "127.0.0.1:" + targetPort,
-          origin: "http://127.0.0.1:" + targetPort,
-          "content-type": "application/json",
-          "content-length": String(body.length),
-        },
-      },
-      (response) => {
-        const chunks = []
-        response.on("data", (c) => chunks.push(c))
-        response.on("end", () => {
-          try {
-            const frame = JSON.parse(Buffer.concat(chunks).toString("utf8"))
-            resolve(frame)
-          } catch (err) {
-            reject(err)
-          }
-        })
-      },
-    )
-    request.setTimeout(15_000, () => request.destroy(new Error("respond timed out")))
-    request.on("error", reject)
-    request.end(body)
-  })
 }
 
 /**

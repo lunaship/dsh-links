@@ -23,7 +23,7 @@ import {
 } from "./auth.js"
 import { loadOrCreateTls } from "./tls.js"
 import { loadEventsAfter, sseMessageFrame } from "./stream-cursor.js"
-import { flushSeedQueue, respondQuestion, startMuxQuestionBridge } from "./question-bridge.js"
+import { flushSeedQueue, startMuxQuestionBridge } from "./question-bridge.js"
 import { bindLocalRpcRuntime, callLocalRpc, LocalRpcError, unbindLocalRpcRuntime } from "./local-rpc.js"
 import {
   MobileWorkspaceCreateError,
@@ -868,7 +868,7 @@ function settleOrphanApprovals(rt) {
   for (const rec of [...rt.pendingQuestions.values()]) {
     const writers = rec.sessionId ? rt.sessionStreams.get(rec.sessionId) : null
     if (!writers || writers.size === 0) {
-      try { rec.settle(null, "cancelled") } catch {}
+      try { rec.settle(null) } catch {}
     }
   }
 }
@@ -1465,21 +1465,18 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
       if (!rpcId || !answer || !Array.isArray(answer.answers)) {
         return json(res, 400, { error: "缺少 rpcId 或 answer.answers" })
       }
-      try {
-        const pending = rt.pendingQuestions.get(rpcId)
-        if (pending) {
-          if (pending.sessionId !== sessionId) {
-            return json(res, 409, { ok: false, accepted: false, error: "澄清会话不匹配" })
-          }
-          pending.settle(answer)
-          return json(res, 200, { ok: true, accepted: true, handledBy: "plugin" })
-        }
-        const result = await respondQuestion(targetPort, rpcId, sessionId, answer)
-        const accepted = result?.accepted === true
-        return json(res, accepted ? 200 : 409, { ok: accepted, accepted, result })
-      } catch (err) {
-        return json(res, 502, { error: err?.message ?? "question respond failed" })
+      const pending = rt.pendingQuestions.get(rpcId)
+      if (!pending) {
+        return json(res, 409, { ok: false, accepted: false, error: "澄清已结束或不存在" })
       }
+      if (pending.sessionId !== sessionId) {
+        return json(res, 409, { ok: false, accepted: false, error: "澄清会话不匹配" })
+      }
+      if (!isDeviceSubscribedToSession(rt, pending.sessionId, device.deviceId)) {
+        return json(res, 403, { ok: false, accepted: false, error: "仅该会话的当前连接设备可回答澄清" })
+      }
+      pending.settle(answer)
+      return json(res, 200, { ok: true, accepted: true, handledBy: "plugin" })
     }
 
     const historyMatch = pathname.match(/^\/dsh-link\/mobile\/sessions\/([^/]+)\/history$/)
