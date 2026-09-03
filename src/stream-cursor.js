@@ -18,7 +18,7 @@ export async function loadEventsAfter(afterSeq, fetchPage, {
     const payload = { maxMessages: pageSize }
     if (Number.isInteger(beforeSeq) && beforeSeq > 0) payload.beforeSeq = beforeSeq
     const page = await fetchPage(payload)
-    const events = page?.events ?? []
+    const events = page?.events ?? page?.records ?? []
     if (page?.projections?.values) projections = page.projections.values
     const room = maxEvents - collected.length
     if (room <= 0) break

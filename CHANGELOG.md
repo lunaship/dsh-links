@@ -1,5 +1,13 @@
 # Changelog
 
+## dsh-links 0.1.0-beta.13 — 2026-09-02
+
+- 适配 DSH `0.1.2-alpha.5`：ApiProxy 移除后，本机调用改走 Typert Gateway（`session/list`、`session/page`、`session/modelCatalog`、`settings/describe|update`、`agentPresets/list`）；`session.history` 与 `workspace.list` 分别适配为 `session/page`（或 `session/follow` 快照）与 `workspace/follow` 基线。
+- `session.prompt` 补上必填 `requestId`；审批从 `Session.snapshotEvents()` 反查 `approval/asked`；澄清卡改接 `user-questions/request` waterfall（不再依赖已删除的 `/api/events.mux` / `/api/respond`）。
+- 客户端注入去掉已下线的 `@deepseek-ai/dsh-client-runtime`，改为 `dsh-client-ui-layout` + `dsh-client-ui-settings`。
+- 轮询/补洞的 `session.history` 带 `maxMessages` 时走 `session/page`，不再每秒开一条 `session/follow`；仅手机打开无参尾页、或 list 没有 `asOfSeq` 时才 follow。澄清卡答题与审批一样要求该会话当前 SSE 订阅。peer `@deepseek-ai/cordis` 锁到 `^4.0.2`。
+- 兼容性：DSH 基线由 `0.1.1-rc.2` 升至 `0.1.2-alpha.5`（npm `alpha`）。npm `latest` 仍为 `0.1.1-rc.2`。详见 `docs/COMPATIBILITY.md`。
+
 ## dsh-links 0.1.0-beta.12 — 2026-08-30
 
 - 「手机连接」面板改为 Claude 风：暖象牙纸底 + 赤陶主色、衬线标题、下划线 Tab、设置/设备分组列表；暗色为暖炭黑（`prefers-color-scheme`）。
