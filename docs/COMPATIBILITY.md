@@ -14,15 +14,15 @@ published.
 | Component | Source baseline | Published / released status | Verified compatibility status |
 |---|---|---|---|
 | DSH | `0.1.2-alpha.5` | Upstream dependency; npm dist-tag `alpha` as of 2026-09-02. `latest` remains `0.1.1-rc.2` | LAN smoke verification below; full phone end-to-end remains in the closed-beta scope |
-| Plugin `dsh-links` | package `0.1.0-beta.14`; source snapshot for this sync/request-state work | npm registry status is not asserted here; verify it with `npm view` in the release environment | Unit tests below; LAN phone end-to-end not rerun in this round |
-| Android `dsh-links-app` | `versionName 0.5.0-beta.16`; source snapshot for this sync/request-state work | APK release status is not asserted here; install only an official signed release whose version and SHA-256 are published with it | Unit/lint/debug assemble below; phone end-to-end remains in the closed-beta scope |
-| Relay (`relay/` in this repo) | Current `main` contains unpublished changes; no release tag | No public Relay deployment status is asserted here | DLR/1 remains invite-only test scope; source is now public in this repository |
+| Plugin `dsh-links` | package `0.1.0-beta.14`; GitHub tag `v0.1.0-beta.14` | npm dist-tag `beta` is `0.1.0-beta.14` as of 2026-09-07 (`npm view` in the release environment). `latest` remains `0.1.0-beta.1` | Unit tests in the release workflow; LAN phone end-to-end not rerun in this round |
+| Android `dsh-links-app` | `versionName 0.5.0-beta.16`; GitHub tag `v0.5.0-beta.16` | Official signed APK on the private App GitHub Release; SHA-256 `83a84b30236e586621721fb343ed7ef1800e902b4347f190242f9dd49c16556e` | Unit/lint/debug assemble plus this signed Release build; phone end-to-end remains in the closed-beta scope |
+| Relay (`relay/` in this repo) | Same GitHub tag as the plugin (`v0.1.0-beta.14`) | No separate Relay package or public deployment is asserted here | DLR/1 remains invite-only test scope; source is public in this repository |
 
 ## Verified combination and scope
 
 | DSH | Plugin | Android App | Relay | Verified path |
 |---|---|---|---|---|
-| `0.1.2-alpha.5` | `0.1.0-beta.14` | `0.5.0-beta.16` | Relay idle fix in current source; no new public release | 2026-09-06 source work: plugin/App/Relay unit gates for catchup integrity, multi-question validation, approval grace/idempotency, history terminal state, and unidirectional Bridge idle. Trusted LAN smoke and Android→Relay→Plugin were **not** rerun. Previous LAN smoke remains the last phone-path evidence and used App `0.5.0-beta.14` with plugin `0.1.0-beta.13`. |
+| `0.1.2-alpha.5` | `0.1.0-beta.14` | `0.5.0-beta.16` | `v0.1.0-beta.14` `relay/` | 2026-09-07 published source: plugin npm `beta` + GitHub Release, App signed APK `v0.5.0-beta.16`. Unit gates for catchup integrity, multi-question validation, approval grace/idempotency, history terminal state, and unidirectional Bridge idle. Trusted LAN smoke and Android→Relay→Plugin were **not** rerun. Previous LAN smoke remains the last phone-path evidence and used App `0.5.0-beta.14` with plugin `0.1.0-beta.13`. |
 | `0.1.1-rc.2` | `0.1.0-beta.12` | `0.5.0-beta.14` | not required | Trusted LAN smoke, 2026-08-30: plugin load, `/dsh-link/*` routes, `session.list` / `session.history` / `llm.models` / `workspace.list` / `settings.describe` RPCs, `events.mux` WebSocket frames, and the settings panel slot all verified against `@deepseek-ai/dsh@0.1.1-rc.2`. Phone end-to-end (pairing, SSE push, approval) not yet rerun on this DSH version. |
 | `0.1.0-rc.8` | `0.1.0-beta.9` | `0.5.0-beta.14` | not required | Trusted LAN; the previously documented Beta combination |
 
