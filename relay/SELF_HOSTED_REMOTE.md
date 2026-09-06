@@ -82,5 +82,5 @@ Cloudflare 边缘向手机提供受系统 CA 信任的证书；插件仍然用�
 
 `local-relay` 从电脑主动连向 Relay，Relay 无法主动打开电脑端口。手机通过 Relay 请求指定的已配对主机；Relay 只承载经过远端认证和设备 Token 校验的会话。设备吊销会同时切断后续远端请求。
 
-原生 Relay 实现位于本仓库，但当前仅限维护者发放接入码的私测，不是公开自助服务，也不是本指南中两条实验性自管路径的默认替代。公开支持仍是可信局域网；三仓版本基线、发布状态和已验证组合见
-[`dsh-links/docs/COMPATIBILITY.md`](https://github.com/lunaship/dsh-links/blob/main/docs/COMPATIBILITY.md)。
+原生 Relay 实现位于本仓库 `relay/`，但当前仅限维护者发放接入码的私测，不是公开自助服务，也不是本指南中两条实验性自管路径的默认替代。公开支持仍是可信局域网；版本基线、发布状态和已验证组合见
+[`docs/COMPATIBILITY.md`](../docs/COMPATIBILITY.md)。

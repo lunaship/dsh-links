@@ -29,7 +29,7 @@ test("单层名称解析为当前工作区的同级目录", () => {
   const plan = planMobileWorkspaceCreate({
     input: " space ",
     parentWorkspaceId: "ws-current",
-    workspaces: anchor("/Volumes/Space/Dev/dsh-links-relay"),
+    workspaces: anchor("/Volumes/Space/Dev/dsh-links"),
   })
   assert.equal(plan.path, "/Volumes/Space/Dev/space")
   assert.equal(plan.inputKind, "name")

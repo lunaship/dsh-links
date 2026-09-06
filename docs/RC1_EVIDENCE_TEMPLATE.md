@@ -1,14 +1,14 @@
 # RC1 版本与验收证据记录
 
-每次 RC1 验收先在三仓各自工作树锁定 revision，再执行
+每次 RC1 验收先在公开仓（插件 + `relay/`）和私有 App 工作树锁定 revision，再执行
 `node scripts/collect-rc1-evidence.mjs`。生成的 JSON 是一次性证据，不应提交到
 长期兼容矩阵；矩阵只记录版本、发布状态和验证范围，不写 moving `main` hash
 或 ahead count。
 
 ## 记录规则
 
-- 记录三仓完整 commit SHA、分支/标签、工作树是否干净、DSH 实际版本、APK
-  版本与 SHA-256；不要只写 `main`。
+- 记录插件与 App 的完整 commit SHA、分支/标签、工作树是否干净、DSH 实际版本、APK
+  版本与 SHA-256；不要只写 `main`。Relay 与插件同仓，记录 `relay/` 所在 revision。
 - 记录每条命令、开始/结束时间、退出码、测试计数和原始输出保存位置。
 - 若出现加载器/工具链边界（例如此前 macOS `missing LC_UUID`），先记录执行环境，不能把未能运行的隔离程序写成业务已验证。
 - 单元测试、主机集成、真实 Android→Relay→Plugin、真实公网 CA/TLS、24h
@@ -31,7 +31,7 @@ Relay revision：
 |---|---|---|---|---|
 | 插件单元/主机测试 | `pnpm test` | PASS/FAIL | | 不是 Android E2E |
 | Android JVM/lint/build | `./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug` | PASS/FAIL | | 不代表真机网络 |
-| Relay race/vet/build | `CGO_ENABLED=0 go test ./... -race ...` | PASS/FAIL | | 不代表公网运行 |
+| Relay race/vet/build | `cd relay && go test ./... -race -count=1 -timeout 120s` | PASS/FAIL | | 不代表公网运行 |
 | Android→Relay→Plugin | 真机、固定 revision、真实请求 | PASS/FAIL/未验证 | | 必须单独记录 |
 | 公网 CA/DNS/TLS | 真实域名和证书检查 | PASS/FAIL/未验证 | | 本地自签不等价 |
 | 24h soak | `deploy/soak-single-instance.sh` | PASS/FAIL/未验证 | | 未满 24h 不得标 PASS |
