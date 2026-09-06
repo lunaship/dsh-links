@@ -1,0 +1,31 @@
+[Unit]
+Description=DSH Links Relay Control Plane
+After=network.target
+
+[Service]
+Type=simple
+# Control owns the crown jewels (issuer private key, admin credentials) and
+# must not share a UID with the internet-facing relay. Expects the user/group
+# and file layout from deploy/README.md (split-users layout).
+User=dsh-ctl
+Group=dsh-ctl
+SupplementaryGroups=dsh-shared
+ExecStart=/usr/local/bin/dsh-links-relay control --config /etc/dsh-links-relay/control.toml
+Restart=on-failure
+RestartSec=3s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateDevices=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# Control is the sole database owner; group-readable SQLite sidecars are no
+# longer necessary.
+UMask=0077
+LimitNOFILE=65535
+LimitCORE=0
+ReadWritePaths=/var/lib/dsh-links-relay /run/dsh-links-relay
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

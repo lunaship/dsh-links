@@ -8,7 +8,7 @@ const root = resolve(process.argv[2] ?? fileURLToPath(new URL("../", import.meta
 const repos = {
   plugin: root,
   app: resolve(root, "../dsh-links-app"),
-  relay: resolve(root, "../dsh-links-relay"),
+  relay: resolve(root, "relay"),
 }
 
 function git(dir, args) {

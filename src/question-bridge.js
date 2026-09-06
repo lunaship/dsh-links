@@ -70,6 +70,7 @@ function handleSessionEvent(payload, rt, requestPoll) {
       conn.missedWhileSeeding = true
       if (!Array.isArray(conn.seedQueue)) conn.seedQueue = []
       if (conn.seedQueue.length < SEED_QUEUE_MAX) conn.seedQueue.push(event)
+      else conn.seedOverflow = true
       continue
     }
     if (event.seq <= conn.lastSeq) continue
@@ -117,6 +118,8 @@ export function flushSeedQueue(conn, sessionId, requestPoll) {
   conn.seedQueue = []
   conn.seeded = true
   queued.sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0))
+  const overflow = Boolean(conn.seedOverflow)
+  conn.seedOverflow = false
   for (const event of queued) {
     if (typeof event?.seq !== "number" || event.seq <= conn.lastSeq) continue
     if (event.seq > conn.lastSeq + 1) {
@@ -136,6 +139,7 @@ export function flushSeedQueue(conn, sessionId, requestPoll) {
       return
     }
   }
+  if (overflow) requestPoll?.(sessionId)
 }
 
 export function handleMuxFrame(frame, rt, logger, requestPoll) {

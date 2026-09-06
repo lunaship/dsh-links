@@ -1,6 +1,6 @@
 # Beta 发布核对
 
-GitHub `lunaship/dsh-links` = **仅插件源码与文档**。Android App 保持私有，只发布官方签名 APK。DSH Links Relay 为维护者内测：文档可以说明流程，但不得提交接入码、Relay 主机凭据或 `state.json`。
+GitHub `lunaship/dsh-links` = **插件源码、Relay 源码（`relay/`）与文档**。Android App 保持私有，只发布官方签名 APK。Relay 为维护者内测：文档可以说明流程，但不得提交接入码、Relay 主机凭据或 `state.json`。npm 包仍只包含插件文件，不含 `relay/`。
 
 ## 发布前
 

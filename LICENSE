@@ -25,4 +25,4 @@ Related projects (not part of this repository)
 -------------------------------------------------------------------------------
 
 - `dsh-links-app` — Android client (private; signed APK only)
-- `dsh-links-relay` — future self-hosted relay (separate tree)
+- Relay source lives in `relay/` of this repository

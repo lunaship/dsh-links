@@ -3,6 +3,18 @@ import { isContextInjectionText } from "./context-injection.js"
 /** session.history 单页消息数上限（客户端 maxMessages 不得突破）。 */
 export const MAX_HISTORY_MESSAGES = 200
 
+function approvalOutcomeOf(event) {
+  return event?.data?.outcome ?? event?.data?.decision ?? event?.data?.result ?? null
+}
+
+export function approvalUiStatus(outcome) {
+  if (!outcome) return "pending"
+  if (outcome === "allowed-once" || outcome === "rejected") return "resolved"
+  if (outcome === "cancelled") return "cancelled"
+  if (outcome === "unavailable") return "expired"
+  return "unknown"
+}
+
 export function clampHistoryMaxMessages(raw) {
   const n = Number(raw)
   if (!Number.isInteger(n) || n <= 0) return undefined
@@ -67,6 +79,13 @@ export function projectHistoryPage({ events, reasoningBySeq = new Map(), hasMore
   // tool/result 耗时：同 callId 的 tool/call 到 result 时差
   const toolCalls = new Map()
   let lastTurnEndReason = null
+  const decidedById = new Map()
+  const askedIds = new Set()
+  for (const item of events) {
+    const ev = item?.event
+    if (ev?.type === "approval/decided" && ev.data?.id) decidedById.set(ev.data.id, ev)
+    if (ev?.type === "approval/asked" && ev.data?.id) askedIds.add(ev.data.id)
+  }
 
   for (const item of events) {
     const e = item?.event
@@ -136,14 +155,37 @@ export function projectHistoryPage({ events, reasoningBySeq = new Map(), hasMore
       }
     } else if (e.type === "approval/asked") {
       flushReasoning(e.time)
+      const approvalId = e.data?.id ?? ""
+      const decided = approvalId ? decidedById.get(approvalId) : null
+      const outcome = decided ? approvalOutcomeOf(decided) : null
       push({
-        id: `approval-${e.seq}`,
+        id: `approval-${approvalId || e.seq}`,
         seq: e.seq,
         role: "approval",
         text: e.data?.reason || `请求授权执行 ${e.data?.toolName || "工具"}`,
         toolName: e.data?.toolName || "tool",
-        approvalId: e.data?.id ?? "",
+        approvalId,
         callId: e.data?.callId ?? "",
+        requestStatus: decided ? approvalUiStatus(outcome) : "pending",
+        outcome,
+        time: e.time,
+        type: "approval",
+      })
+    } else if (e.type === "approval/decided") {
+      flushReasoning(e.time)
+      const approvalId = e.data?.id ?? ""
+      if (approvalId && askedIds.has(approvalId)) continue
+      const outcome = approvalOutcomeOf(e)
+      push({
+        id: `approval-${approvalId || e.seq}`,
+        seq: e.seq,
+        role: "approval",
+        text: e.data?.reason || `请求授权执行 ${e.data?.toolName || "工具"}`,
+        toolName: e.data?.toolName || "tool",
+        approvalId,
+        callId: e.data?.callId ?? "",
+        requestStatus: approvalUiStatus(outcome),
+        outcome,
         time: e.time,
         type: "approval",
       })

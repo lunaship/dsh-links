@@ -19,16 +19,16 @@
 
 | 组成 | 作用 | 发布方式 |
 |---|---|---|
-| **本仓库 `dsh-links`** | DSH 插件、手机 HTTPS 接入代理、电脑端配对与设备管理面板 | 开源 npm 插件 |
+| **本仓库 `dsh-links`** | DSH 插件、手机 HTTPS 接入代理、电脑端配对与设备管理面板；Relay 源码在 [`relay/`](relay/) | 开源 npm 插件；Relay 源码同仓公开，使用仍需维护者接入码 |
 | **DSH Links Android App** | 扫码/手动配对、设备入口、原生会话工作台、实时流与审批 | 私有源码；仅发布官方签名 APK |
-| **DSH Links Relay** | 跨网络中继：电脑与手机均主动连接 Relay，电脑不接受公网入站 | 维护者内测中。接入码只由维护者发放；本仓库、Release 和 npm 包都不含接入码 |
 
 ## Android App 能做什么
 
 - 扫描电脑端二维码，或手动输入地址和一次性配对码添加 DSH。
 - 保存多个已配对设备，显示连接状态，并可随时移除本机记录。
 - 在原生工作台中浏览会话与历史、继续对话、查看工具/思考事件，并通过 SSE 接收实时更新。
-- 在手机上处理 DSH 的审批请求；手机在线但超过 5 分钟未处理的审批会按「不可用」结束，该次工具调用失败，可重试。丢失设备时，可从电脑端立即吊销该设备。
+- 在手机上处理 DSH 的审批请求；短暂断线（默认 30 秒内重连，且不超过原 5 分钟期限）仍可继续处理。超时未处理按「不可用」结束，该次工具调用失败，可重试。丢失设备时，可从电脑端立即吊销该设备。
+- 系统通知只覆盖 App 仍能收到当前会话 SSE 时的本地提醒；进程被杀、锁屏推送和全会话后台通知尚未交付（渠道待定）。完整说明见 [`PRIVACY.md`](PRIVACY.md) 与 [`docs/MOBILE_SYNC_CONTRACT.md`](docs/MOBILE_SYNC_CONTRACT.md)。
 - 使用手机本地加密保存配对 Token 与 TLS 证书指纹；App 禁用云备份和明文 HTTP。完整说明见 [`PRIVACY.md`](PRIVACY.md)。
 
 Android App 当前最低支持 Android 8.0（API 26）。源码不在本仓库；请只安装 GitHub Release 随版本号和 SHA-256 发布的官方签名 APK。
@@ -78,7 +78,7 @@ This release is an **Android Beta**. The supported public path remains a trusted
 - **Experimental, at your own risk:** a Tailscale or Cloudflare Tunnel path you operate yourself. It is not a supported Beta path and is not covered by the security or compatibility promise.
 - **Not supported:** exposing port `18640` directly to the public Internet or using frp. Public self-serve Relay enrollment is not available.
 
-The Android APK is distributed only as an official signed release. Verify the version and SHA-256 published with that release; do not install repackaged APKs. This repository contains the plugin and its documentation only; the Android source and Relay server are not included here.
+The Android APK is distributed only as an official signed release. Verify the version and SHA-256 published with that release; do not install repackaged APKs. This repository contains the plugin, Relay source under [`relay/`](relay/), and documentation. Android source stays in a private repository.
 
 ## 安装
 

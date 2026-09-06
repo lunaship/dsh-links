@@ -1,0 +1,9 @@
+{
+  "framework": "go",
+  "packageManager": "go",
+  "composePath": "docker-compose.openship.yml",
+  "runtime": "docker",
+  "productionMode": "host",
+  "workload": "worker",
+  "port": 8443
+}
