@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <title>DSH Links Relay — Control</title>
+  <link rel="stylesheet" href="app.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#mainContent">跳到主要内容</a>
+  <div id="appStatus" class="sr-only" aria-live="polite"></div>
+
+  <section id="loginPanel" class="auth-shell hidden" aria-labelledby="loginTitle">
+    <div class="auth-panel">
+      <div class="brand-lockup">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-name">dsh-links-relay<span class="brand-subtitle">DLR/1 · loopback only</span></span>
+      </div>
+      <form id="loginForm" class="auth-form">
+        <div class="auth-heading">
+          <h1 id="loginTitle">登录控制台</h1>
+          <p>管理邀请与 Host。</p>
+        </div>
+        <div class="field-group">
+          <label for="inpUser">管理账号</label>
+          <input class="field" id="inpUser" name="username" autocomplete="username" placeholder="admin" required>
+        </div>
+        <div class="field-group">
+          <label for="inpPass">管理密码</label>
+          <input class="field" id="inpPass" name="password" type="password" autocomplete="current-password" placeholder="config.toml 中的 admin_password" required>
+        </div>
+        <button class="button button--primary" id="btnLogin" type="submit">登录</button>
+        <p id="loginErr" class="form-error" role="alert"></p>
+        <p class="form-help">默认账号为 <code>admin</code>。控制台应仅通过本机或 SSH 隧道访问。</p>
+      </form>
+    </div>
+  </section>
+
+  <div id="mainPanel" class="app-shell hidden">
+    <header class="masthead">
+      <pre class="term-line"><span class="term-prompt" aria-hidden="true">❯</span> <span class="term-cmd">dsh-relay</span> <a class="rail-link term-flag" href="#overviewSection" aria-current="page">--概览</a> <a class="rail-link term-flag" href="#hostsSection">--host</a> <a class="rail-link term-flag" href="#invitesSection">--邀请</a><span class="term-caret" aria-hidden="true">▮</span></pre>
+      <div class="masthead-actions">
+        <div class="connection-pill" id="connectionState" data-state="online" role="status">
+          <span class="connection-dot" aria-hidden="true"></span>
+          <span id="connectionLabel">控制面已响应</span>
+        </div>
+        <button class="button button--quiet" id="btnLogout" type="button">退出</button>
+      </div>
+    </header>
+
+    <main class="workspace" id="mainContent">
+      <section class="stat-band" id="overviewSection" aria-label="Relay 概览">
+        <div class="stat-head">
+          <p class="page-context">DSH LINKS RELAY / CONTROL</p>
+          <h1>中继控制台</h1>
+          <p class="stat-copy">一次性邀请码与已登记的 Host，每 5 秒自动刷新。</p>
+        </div>
+        <div class="stat-strip">
+          <article class="stat-item">
+            <span class="stat-label">Host 总数</span>
+            <strong class="stat-value tnum" id="statHosts">—</strong>
+            <span class="stat-note">含已吊销</span>
+          </article>
+          <article class="stat-item">
+            <span class="stat-label">邀请总数</span>
+            <strong class="stat-value tnum" id="statInvites">—</strong>
+            <span class="stat-note">含历史记录</span>
+          </article>
+          <article class="stat-item">
+            <span class="stat-label">控制面</span>
+            <strong class="stat-value" id="statControl">正常</strong>
+            <span class="stat-note" id="statUpdated">等待首次刷新</span>
+          </article>
+        </div>
+      </section>
+
+      <section class="forge" id="inviteCreateSection" aria-labelledby="forgeTitle">
+        <header class="forge-header">
+          <h2 id="forgeTitle">签发邀请码</h2>
+          <p>30 分钟有效 · 一次性 · 仅显示一次</p>
+        </header>
+        <p class="banner-warn" id="publicHostMissing" hidden role="alert">未配置 <code>public_host</code> / <code>RELAY_HOST</code>：接入串与二维码不可用，只能签发裸邀请码。请在 config 中填写公网域名后重启 control。</p>
+        <div class="forge-body">
+          <div class="forge-action">
+            <button class="button button--primary" id="btnInvite" type="button">创建邀请码</button>
+            <p class="inline-message" id="inviteMessage" role="alert"></p>
+          </div>
+          <div class="invite-result" id="inviteResult" hidden>
+            <div class="field-group">
+              <span class="stat-label">接入码</span>
+              <div class="invite-code-row">
+                <code class="invite-code" id="inviteCode"></code>
+                <button class="button button--primary" id="btnCopyInvite" type="button">复制</button>
+              </div>
+              <span class="stat-note">仅显示这一次，关闭页面后无法找回。</span>
+            </div>
+            <div id="enrollBlock" hidden>
+              <div class="invite-qr">
+                <canvas id="inviteQr" width="220" height="220" aria-label="接入串二维码" role="img"></canvas>
+                <p class="stat-note">手机任意扫码器扫这张图，把解码出的接入串发到电脑，粘贴进插件「远端」面板即可完成接入。</p>
+              </div>
+              <details class="invite-advanced">
+                <summary>自托管完整接入串</summary>
+                <div class="invite-code-row">
+                  <code class="invite-code" id="enrollURI"></code>
+                  <button class="button" id="btnCopyEnroll" type="button">复制</button>
+                </div>
+              </details>
+            </div>
+          </div>
+          <div class="tls-pin" id="tlsFingerprintBlock" hidden>
+            <span class="stat-label">TLS SHA-256 指纹</span>
+            <div class="invite-code-row">
+              <code class="invite-code" id="tlsFingerprint"></code>
+              <button class="button" id="btnCopyFingerprint" type="button">复制</button>
+            </div>
+          </div>
+          <p class="stat-note" id="tlsFingerprintMissing" hidden></p>
+        </div>
+      </section>
+
+      <section class="ledger" id="hostsSection" aria-labelledby="hostsTitle">
+        <header class="ledger-header">
+          <div class="ledger-heading">
+            <h2 id="hostsTitle">Host 路由</h2>
+            <p>已登记的电脑。删除后需重新接入。</p>
+          </div>
+          <button class="button button--quiet" id="btnPurgeHosts" type="button">清理已吊销</button>
+        </header>
+        <div class="table-wrap" id="hosts"></div>
+        <p class="panel-message" id="hostsMessage" role="alert" hidden></p>
+      </section>
+
+      <section class="ledger" id="invitesSection" aria-labelledby="invitesTitle">
+        <header class="ledger-header">
+          <div class="ledger-heading">
+            <h2 id="invitesTitle">邀请记录</h2>
+            <p>有效、已用、过期与已吊销。</p>
+          </div>
+          <button class="button button--quiet" id="btnPurgeInvites" type="button">清理失效</button>
+        </header>
+        <div class="table-wrap" id="invites"></div>
+        <p class="panel-message" id="invitesMessage" role="alert" hidden></p>
+      </section>
+
+      <section class="ledger" id="devicesSection" aria-labelledby="devicesTitle">
+        <header class="ledger-header">
+          <div class="ledger-heading">
+            <h2 id="devicesTitle">匿名设备</h2>
+            <p>自助接入的设备（公钥指纹为身份）。禁用即级联吊销其全部 Host。</p>
+          </div>
+          <div class="ledger-actions">
+            <span class="switch-label" id="anonymousEnrollLabel" hidden></span>
+            <button class="button button--quiet" id="btnToggleAnonymous" type="button" hidden>停止匿名接入</button>
+          </div>
+        </header>
+        <div class="table-wrap" id="devices"></div>
+        <p class="panel-message" id="devicesMessage" role="alert" hidden></p>
+      </section>
+
+      <footer class="foot-stmt">
+        <p class="foot-stmt-line"><span aria-hidden="true"># </span>秘密不经过这个页面。</p>
+        <div class="foot-stmt-meta">
+          <span>dsh-links-relay · control</span>
+          <code>DLR/1 · routeSecret 与 Token 永不显示</code>
+        </div>
+      </footer>
+    </main>
+  </div>
+</body>
+</html>

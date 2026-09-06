@@ -1,0 +1,13 @@
+.git
+.github
+.local
+.docker-secrets
+.env
+*.db
+*.db-shm
+*.db-wal
+*.key
+*.token
+*.auth
+*.crt
+dsh-links-relay

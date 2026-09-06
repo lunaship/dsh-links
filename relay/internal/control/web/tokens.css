@@ -1,0 +1,67 @@
+/* Hallmark · theme: Terminal · axes: dark paper (L≈16%) / mono display / phosphor accent (~152°)
+ * previous build: studied-DNA light paper / sans display / cool-blue 255 — differs on all three axes
+ */
+:root {
+  color-scheme: dark;
+
+  /* surfaces — dark canvas; elevation rises with lightness */
+  --color-paper: oklch(15.5% 0.010 165);
+  --color-paper-2: oklch(18.5% 0.011 165);
+  --color-surface: oklch(21% 0.012 165);
+
+  /* ink — muted/quiet cleared for 4.5:1 against --color-paper at small sizes */
+  --color-ink: oklch(93% 0.006 165);
+  --color-ink-soft: oklch(82% 0.008 165);
+  --color-neutral: oklch(67% 0.010 165);
+  --color-muted: oklch(63% 0.012 165);
+
+  /* rules */
+  --color-rule: oklch(27% 0.012 165);
+  --color-rule-strong: oklch(36% 0.014 165);
+
+  /* phosphor accent + states */
+  --color-accent: oklch(80% 0.17 152);
+  --color-accent-strong: oklch(85% 0.15 151);
+  --color-accent-ink: oklch(17% 0.03 155);
+  --color-focus: oklch(87% 0.14 150);
+  --color-success: oklch(76% 0.15 155);
+  --color-success-soft: oklch(24% 0.045 158);
+  --color-warning: oklch(78% 0.13 85);
+  --color-warning-soft: oklch(25% 0.04 88);
+  --color-danger: oklch(70% 0.16 28);
+  --color-danger-soft: oklch(25% 0.05 28);
+
+  --color-action: var(--color-accent);
+  --color-action-ink: var(--color-accent-ink);
+
+  /* one monospace family IS the design (true terminal aesthetic; CSP forbids remote fonts anyway) */
+  --font-display: ui-monospace, "SFMono-Regular", "Cascadia Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --font-body: var(--font-display);
+  --font-mono: var(--font-display);
+
+  --text-xs: 0.8125rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-md: 1.25rem;
+  --text-lg: 1.5625rem;
+  --text-xl: 1.953rem;
+  --text-2xl: 2.441rem;
+
+  --space-3xs: 0.125rem;
+  --space-2xs: 0.25rem;
+  --space-xs: 0.5rem;
+  --space-sm: 0.75rem;
+  --space-md: 1rem;
+  --space-lg: 1.5rem;
+  --space-xl: 2.5rem;
+  --space-2xl: 4rem;
+  --space-3xl: 6rem;
+
+  --radius-ctrl: 0.25rem;
+  --rule-thin: 1px;
+  --rule-focus: 2px;
+  --size-control: 2.75rem;
+
+  --z-raised: 10;
+  --z-sticky: 200;
+}
