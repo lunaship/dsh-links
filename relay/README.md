@@ -59,10 +59,12 @@ VPS 推荐使用加固双容器部署，见 `deploy/docker/README.md`；systemd 
 ## 测试
 
 ```bash
-CGO_ENABLED=0 go test ./... -race -count=1 -timeout 60s
-CGO_ENABLED=0 go test ./internal/ingress -run TestIntegration -v
-CGO_ENABLED=0 go test ./internal/ingress -run TestSequential -v
+go test ./... -race -count=1 -timeout 60s
+go test ./internal/ingress -run TestIntegration -v
+go test ./internal/ingress -run TestSequential -v
 ```
+
+`-race` 需要 cgo（GitHub CI 的 race 门禁也不再设 `CGO_ENABLED=0`）。无 race 的冒烟可用 `CGO_ENABLED=0 go test ./... -count=1`；发布构建仍是 `CGO_ENABLED=0 go build`。
 
 需覆盖: 双 Host 各 8 路并发 10k 建连不串线、跨 Host、旧 generation、重放、吊销、边界帧 (0,767,768,769,2047,2048,2049)、慢首帧、半开、取消、BIND 超时、`go test -race`、fuzz、24h soak。
 
@@ -80,7 +82,7 @@ CGO_ENABLED=0 go test ./internal/ingress -run TestSequential -v
 [`docs/COMPATIBILITY.md`](../docs/COMPATIBILITY.md)。
 本目录不再维护另一份版本表；Relay 的私测不等于公开生产支持。
 
-OpenShip / 旧私有仓部署请把源码根改为本目录（`lunaship/dsh-links` 的 `relay/`），不要再跟踪已归档的 `dsh-links-relay` 仓库。
+OpenShip 请以 `lunaship/dsh-links` 的 `relay/` 为源码根（本目录的 `openship.json`）。旧私有仓 `lunaship/dsh-links-relay` 已删除，不要再跟踪。未获维护者确认前不要改生产 OpenShip 指向。
 
 ## License
 

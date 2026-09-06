@@ -14,6 +14,11 @@ import {
 } from "../src/relay/crypto.js"
 
 const vectors = JSON.parse(await readFile(new URL("../testdata/dlr1-vectors.json", import.meta.url), "utf8"))
+const relayVectors = JSON.parse(await readFile(new URL("../relay/testdata/dlr1-vectors.json", import.meta.url), "utf8"))
+
+test("插件 testdata 与 relay testdata 的 DLR/1 向量镜像一致", () => {
+  assert.deepEqual(vectors, relayVectors)
+})
 
 test("ENROLL proof matches DLR/1 vectors", () => {
   const e = vectors.enroll

@@ -35,7 +35,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Verify DLR/1 vectors
-        run: node scripts/check-dlr1-vectors.mjs
+        run: node scripts/check-dlr1-vectors.mjs testdata/dlr1-vectors.json relay/testdata/dlr1-vectors.json
 
       - name: Generate client and verify clean tree
         run: pnpm build:client && git diff --exit-code -- src/client.js

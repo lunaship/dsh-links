@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- 移动端同步合同写明：`GET .../requests` 快照须带 pending 澄清题目与审批元数据；App 历史刷新 / 重同步后不得丢掉仍 pending 的澄清与审批卡。
+- Relay README 不再把已删除的旧私有仓写成「已归档」；race 测试命令与 CI 一致，不再把 `CGO_ENABLED=0` 和 `-race` 写在一起。
+- CI 比对插件 `testdata/dlr1-vectors.json` 与同仓 `relay/testdata` 镜像；RC1 证据脚本的 Relay 命令与门禁对齐。
+- README 截图标明仍来自 App `0.5.0-beta.14`；SECURITY 写明公开仓含 `relay/` 源码、npm 包不含。
+
 ## dsh-links 0.1.0-beta.14 — 2026-09-07
 
 - 补发历史超过 500 事件时不再静默跳号：无法证明连续覆盖则发重同步信号，游标不越过缺口。

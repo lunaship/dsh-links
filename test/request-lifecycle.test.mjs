@@ -107,3 +107,35 @@ test("插件退出立即失效，不能把内存回调假装可恢复", () => {
   assert.equal(getOutcome(), "cancelled")
   assert.equal(registry.getApproval("a1"), null)
 })
+
+test("snapshot 含 pending 澄清题目与审批元数据", () => {
+  const registry = createRequestRegistry({ now: () => 1_000, setTimeoutFn: () => ({}), clearTimeoutFn: () => {} })
+  registry.addApproval({
+    id: "ap-1",
+    sessionId: "s1",
+    type: "approval",
+    createdAt: 1_000,
+    deadlineAt: 1_000 + APPROVAL_TIMEOUT_MS,
+    eligibleDeviceIds: new Set(),
+    settled: false,
+    settle() {},
+    callId: "c-1",
+    toolName: "bash",
+  })
+  registry.addQuestion({
+    id: "q-1",
+    sessionId: "s1",
+    type: "question",
+    createdAt: 1_000,
+    deadlineAt: 1_000 + APPROVAL_TIMEOUT_MS,
+    eligibleDeviceIds: new Set(),
+    settled: false,
+    settle() {},
+    questions: [{ id: "q1", question: "选一个", options: [{ id: "a", label: "A" }] }],
+  })
+  const snap = registry.snapshot("s1")
+  assert.equal(snap.approvals[0].toolName, "bash")
+  assert.equal(snap.approvals[0].callId, "c-1")
+  assert.equal(snap.questions[0].questions[0].id, "q1")
+  assert.equal(snap.questions[0].questions[0].question, "选一个")
+})

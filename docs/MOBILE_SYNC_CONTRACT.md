@@ -45,7 +45,10 @@
 DSH 结果映射：`allowed-once`/`rejected` → `resolved`；`cancelled` → `cancelled`；`unavailable` → `expired`。
 
 - 同页 `approval/asked` 与 `approval/decided` 投影为一张终态卡。
+- 同 `approvalId` 的审批卡、同 `rpcId` 的澄清卡在客户端各归并为一张；终态不得被 pending 回滚。
 - 实时流、重连快照、`GET .../requests`、提交响应走同一归并：终态不得被 pending 回滚。
+- `GET .../requests` 的 pending 澄清带原始 `questions` 数组，pending 审批带 `toolName` / `callId`；空白 id 忽略。
+- 澄清卡不进 history 投影。App 历史刷新与 `resync-required` 后必须保留仍 pending 的 `question` / `approval` 气泡，并用快照补回进程重启或列表被清空后缺失的 pending 卡。
 - 审批重复提交若已有终态，返回 `alreadySettled` 且不再次 settle。
 - SSE 断开后有不超过 30 秒且不超过原审批剩余期限的重连宽限；重连不重置 5 分钟总超时。
 - 设备吊销、DSH abort、插件退出立即结束，不能借宽限恢复权限。

@@ -10,13 +10,13 @@
 ## 0. 跨仓一致性与 Golden Vectors
 
 `testdata/dlr1-vectors.json` 是 DLR/1 的唯一权威、机器可读 Golden Vector
-来源。插件仓库的 `testdata/dlr1-vectors.json` 与 Android App 测试资源是由该
-文件同步得到的镜像，不得手工维护另一套向量。三个仓库的门禁都对解析后的
-JSON 做确定性 SHA-256 校验，期望值为
+来源。公开仓插件根目录的 `testdata/dlr1-vectors.json` 与 Android App 测试资源是由该
+文件同步得到的镜像，不得手工维护另一套向量。插件仓（含 `relay/`）与私有 App
+仓的门禁都对解析后的 JSON 做确定性 SHA-256 校验，期望值为
 `e46ddf3ebe091b544376d70cd81b0489d621d2f232fcb705e90b8e49312f7467`；在同一
 工作区执行插件或 App 的检查脚本时，额外传入 Relay 文件路径即可检查跨仓
-内容一致性。修改协议时必须先更新 Relay 权威文件，再同步镜像、更新哈希并
-让三仓 CI 同时变绿。该向量只含合成测试凭据，不能用于接入任何 Relay。
+内容一致性。修改协议时必须先更新 `relay/testdata/dlr1-vectors.json`，再同步镜像、更新哈希并
+让插件仓与 App 仓 CI 同时变绿。该向量只含合成测试凭据，不能用于接入任何 Relay。
 
 ---
 

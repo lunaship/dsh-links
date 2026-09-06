@@ -38,12 +38,12 @@ const evidence = {
   components: {
     plugin: { version: packageJson.version, ...revision(repos.plugin) },
     app: { version: appVersion, apkPath, apkSha256, ...revision(repos.app) },
-    relay: revision(repos.relay),
+    relay: { path: "relay/", ...revision(repos.plugin) },
   },
   commands: {
     plugin: "pnpm install --frozen-lockfile && pnpm build:client && pnpm test && pnpm audit --prod",
     app: "./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug",
-    relay: "CGO_ENABLED=0 go test ./... -race -count=1 -timeout 120s && CGO_ENABLED=0 go vet ./...",
+    relay: "go test ./... -race -count=1 -timeout 120s && CGO_ENABLED=0 go vet ./...",
   },
   boundaries: {
     verified: ["source-level tests and local build gates only"],
