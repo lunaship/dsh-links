@@ -81,6 +81,16 @@ curl -H "Authorization: Bearer $(cat /etc/dsh-links-relay/admin.token)" -H "Cont
 
 插件完成 ENROLL 后会在 Control UI 看到 Host, Relay 日志显示 `agent registered`.
 
+## 3.5 Bridge 空闲与最大寿命
+
+Bridge 按**整条连接**判断空闲：任一方向成功读写都会刷新活动时间。默认 idle 5 分钟，与 `bridge_max_lifetime`（默认 30 分钟）不是同一件事。
+
+- 手机 SSE 长时间只有下行字节时，不再因为上行方向没有应用层数据而单独被 5 分钟读超时切断。
+- 双向都无数据时仍按 idle 回收；单次写仍有 30 秒慢写保护。
+- 最大寿命到期、Host 吊销、对端关闭时照常拆桥。
+- 回滚：换回本修复前的 Relay 二进制即可；DLR/1 帧格式未改。
+- 本轮验证：`go test ./internal/bridge` 覆盖单向下行/上行与真正空闲回收。授权环境中真实 SSE 至少 10 分钟、以及最大寿命附近的恢复仍待单独记录，不能用单测替代。
+
 ## 4. 监控
 
 ### 4.1 指标

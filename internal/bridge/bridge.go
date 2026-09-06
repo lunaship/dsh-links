@@ -4,19 +4,31 @@ import (
 	"io"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
-// Bridge copies bidirectional between a and b with idle timeout and buffered limits.
-// 32 KiB buffer, 5 minute idle, max lifetime enforced via done channel.
 const (
-	bufSize     = 32 * 1024
-	idleTimeout = 5 * time.Minute
+	bufSize      = 32 * 1024
+	idleTimeout  = 5 * time.Minute
+	writeTimeout = 30 * time.Second
 )
 
-// Bridge runs until one side closes or idle/max-lifetime timeout.
-// It counts bytes via callbacks.
+// Bridge copies bidirectional between a and b. Idle is measured on the whole
+// connection: a successful read or write on either direction refreshes activity.
+// Max lifetime is still enforced independently of idle.
 func Bridge(a, b net.Conn, onRx func(int64), onTx func(int64), maxLifetime time.Duration) error {
+	return BridgeWithTimeouts(a, b, onRx, onTx, maxLifetime, idleTimeout, writeTimeout)
+}
+
+func BridgeWithTimeouts(a, b net.Conn, onRx func(int64), onTx func(int64), maxLifetime, idle, writeWait time.Duration) error {
+	if idle <= 0 {
+		idle = idleTimeout
+	}
+	if writeWait <= 0 {
+		writeWait = writeTimeout
+	}
+
 	var lifetimeTimer *time.Timer
 	if maxLifetime > 0 {
 		lifetimeTimer = time.AfterFunc(maxLifetime, func() {
@@ -25,8 +37,37 @@ func Bridge(a, b net.Conn, onRx func(int64), onTx func(int64), maxLifetime time.
 		})
 		defer lifetimeTimer.Stop()
 	}
-	// Set initial deadline for idle? We'll use per-copy timeout handling.
-	// Use goroutines with copy.
+
+	var lastUnix atomic.Int64
+	lastUnix.Store(time.Now().UnixNano())
+	bump := func() { lastUnix.Store(time.Now().UnixNano()) }
+
+	stopWatch := make(chan struct{})
+	var watchOnce sync.Once
+	stopWatcher := func() { watchOnce.Do(func() { close(stopWatch) }) }
+	defer stopWatcher()
+
+	go func() {
+		ticker := time.NewTicker(idle / 10)
+		if idle/10 < 10*time.Millisecond {
+			ticker.Reset(10 * time.Millisecond)
+		}
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopWatch:
+				return
+			case <-ticker.C:
+				last := time.Unix(0, lastUnix.Load())
+				if time.Since(last) > idle {
+					_ = a.Close()
+					_ = b.Close()
+					return
+				}
+			}
+		}
+	}()
+
 	errCh := make(chan error, 2)
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -35,26 +76,21 @@ func Bridge(a, b net.Conn, onRx func(int64), onTx func(int64), maxLifetime time.
 		defer wg.Done()
 		buf := make([]byte, bufSize)
 		for {
-			// Set read deadline for idle
-			_ = src.SetReadDeadline(time.Now().Add(idleTimeout))
 			n, err := src.Read(buf)
 			if n > 0 {
-				// clear deadline for write? set write deadline
-				_ = dst.SetWriteDeadline(time.Now().Add(30 * time.Second))
+				bump()
+				_ = dst.SetWriteDeadline(time.Now().Add(writeWait))
 				if werr := writeAll(dst, buf[:n]); werr != nil {
 					errCh <- werr
 					return
 				}
+				bump()
 				if cb != nil {
 					cb(int64(n))
 				}
-				// reset deadlines
-				_ = src.SetReadDeadline(time.Now().Add(idleTimeout))
 			}
 			if err != nil {
 				if err != io.EOF {
-					// Check if timeout due to idle vs closed
-					// Propagate
 					errCh <- err
 				} else {
 					errCh <- nil
@@ -67,13 +103,9 @@ func Bridge(a, b net.Conn, onRx func(int64), onTx func(int64), maxLifetime time.
 	go copyFn(b, a, onRx)
 	go copyFn(a, b, onTx)
 
-	// Wait for one side to finish, then close both
-	// First error
 	err := <-errCh
-	// Close both to unblock other
 	_ = a.Close()
 	_ = b.Close()
-	// Drain the second copier before returning so no goroutine or send remains.
 	<-errCh
 	wg.Wait()
 	return err
