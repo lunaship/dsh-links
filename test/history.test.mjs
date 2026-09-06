@@ -238,6 +238,41 @@ test("缺少可选字段时响应仍稳定（无 sourceEventSeqs / 空 events / 
   assert.deepEqual(m3.map((m) => m.id), ["msg-911"])
 })
 
+test("同页 asked 与 decided 投影为带终态的一张审批卡", () => {
+  const events = [
+    ev(10, "approval/asked", { id: "ap-1", toolName: "bash", reason: "运行命令", callId: "c1" }),
+    ev(11, "approval/decided", { id: "ap-1", outcome: "allowed-once", callId: "c1" }),
+  ]
+  const { messages } = projectHistoryPage({ events, reasoningBySeq: new Map(), hasMore: false })
+  assert.equal(messages.length, 1)
+  assert.equal(messages[0].id, "approval-ap-1")
+  assert.equal(messages[0].approvalId, "ap-1")
+  assert.equal(messages[0].requestStatus, "resolved")
+  assert.equal(messages[0].outcome, "allowed-once")
+})
+
+test("decided 在本页、asked 不在时仍输出不可再提交的终态卡", () => {
+  const events = [
+    ev(20, "approval/decided", { id: "ap-2", outcome: "rejected", toolName: "bash" }),
+  ]
+  const { messages } = projectHistoryPage({ events, reasoningBySeq: new Map(), hasMore: true })
+  assert.equal(messages[0].requestStatus, "resolved")
+  assert.equal(messages[0].outcome, "rejected")
+  assert.equal(messages[0].approvalId, "ap-2")
+})
+
+test("只有 asked 时保持 pending，倒序重复 decided 不回滚", () => {
+  const events = [
+    ev(31, "approval/decided", { id: "ap-3", outcome: "cancelled" }),
+    ev(30, "approval/asked", { id: "ap-3", toolName: "bash" }),
+    ev(32, "approval/decided", { id: "ap-3", outcome: "cancelled" }),
+  ]
+  const { messages } = projectHistoryPage({ events, reasoningBySeq: new Map(), hasMore: false })
+  assert.equal(messages.length, 1)
+  assert.equal(messages[0].requestStatus, "cancelled")
+  assert.equal(messages[0].outcome, "cancelled")
+})
+
 test("clampHistoryMaxMessages caps and rejects non-positive", () => {
   assert.equal(clampHistoryMaxMessages(20), 20)
   assert.equal(clampHistoryMaxMessages(MAX_HISTORY_MESSAGES + 999), MAX_HISTORY_MESSAGES)

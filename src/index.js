@@ -22,7 +22,7 @@ import {
   persistablePairing, randomToken, readDeviceToken, revokeDevice, verifyPairingCode,
 } from "./auth.js"
 import { loadOrCreateTls } from "./tls.js"
-import { loadEventsAfter, sseMessageFrame } from "./stream-cursor.js"
+import { assessForCursor, loadEventsAfter, sseMessageFrame, sseNamedFrame, sseResyncFrame } from "./stream-cursor.js"
 import { flushSeedQueue, startMuxQuestionBridge } from "./question-bridge.js"
 import { bindLocalRpcRuntime, callLocalRpc, LocalRpcError, unbindLocalRpcRuntime } from "./local-rpc.js"
 import {
@@ -31,6 +31,20 @@ import {
   planMobileWorkspaceCreate,
 } from "./workspace-create.js"
 import { DeviceMutationGate } from "./device-mutation-gate.js"
+import {
+  PLUGIN_PROTOCOL,
+  parseClientCaps,
+  pluginCapabilities,
+  subscribedDeviceIds,
+} from "./protocol-caps.js"
+import { normalizeQuestions, validateAnswers } from "./question-answers.js"
+import {
+  APPROVAL_OUTCOMES,
+  APPROVAL_TIMEOUT_MS,
+  canDeviceHandle,
+  createRequestRegistry,
+  mapApprovalUiStatus,
+} from "./request-lifecycle.js"
 import { deriveAddresses, generateHostKey, hostKeyFromSeed, resolveEnrollText, unb64u } from "./relay/crypto.js"
 import { enroll as enrollRelay, normalizeTlsFingerprint, RelayAgent } from "./relay/agent.js"
 
@@ -759,6 +773,7 @@ const MAX_SSE_GLOBAL = 64
 const MAX_SSE_PER_DEVICE = 8
 
 function createRuntime() {
+  const requests = createRequestRegistry()
   return {
     sessionStreams: new Map(),
     sessionFiles: new Map(),
@@ -767,12 +782,13 @@ function createRuntime() {
     pendingPolls: new Set(),
     // sessionId → { at, timer }，给 mux 补洞请求限流
     gapPolls: new Map(),
-    pendingApprovals: new Map(),
-    pendingQuestions: new Map(),
+    pendingApprovals: requests.pendingApprovals,
+    pendingQuestions: requests.pendingQuestions,
     reasoningCache: new Map(),
     deviceRequests: new Map(),
     pairingRequests: new Map(),
     deviceMutations: new DeviceMutationGate(),
+    requests,
   }
 }
 
@@ -795,9 +811,12 @@ function closeSseForDevice(rt, deviceId) {
       writers.delete(conn)
       try { conn.res.destroy() } catch {}
     }
-    if (writers.size === 0) dropSession(rt, sessionId)
+    rt.requests.removeEligible(sessionId, deviceId)
+    if (writers.size === 0) {
+      const anyEligible = rt.requests.pendingForSession(sessionId).some((rec) => rec.eligibleDeviceIds.size > 0)
+      dropSession(rt, sessionId, { immediate: !anyEligible })
+    } else afterWritersChanged(rt, sessionId)
   }
-  settleOrphanApprovals(rt)
 }
 
 function trackDeviceRequest(rt, deviceId, req, res) {
@@ -858,18 +877,32 @@ async function readAuthorizedJson(req, res, state, device, limit) {
   return body
 }
 
-function settleOrphanApprovals(rt) {
-  for (const rec of [...rt.pendingApprovals.values()]) {
-    const writers = rec.sessionId ? rt.sessionStreams.get(rec.sessionId) : null
-    if (!writers || writers.size === 0) {
-      try { rec.settle("cancelled") } catch {}
-    }
+function afterWritersChanged(rt, sessionId, { immediate = false } = {}) {
+  const writers = rt.sessionStreams.get(sessionId)
+  if (writers && writers.size > 0) {
+    rt.requests.clearGrace(sessionId)
+    for (const conn of writers) rt.requests.addEligible(sessionId, conn.deviceId)
+    return
   }
-  for (const rec of [...rt.pendingQuestions.values()]) {
-    const writers = rec.sessionId ? rt.sessionStreams.get(rec.sessionId) : null
-    if (!writers || writers.size === 0) {
-      try { rec.settle(null) } catch {}
-    }
+  const pending = rt.requests.pendingForSession(sessionId)
+  const anyEligible = pending.some((rec) => rec.eligibleDeviceIds.size > 0)
+  if (immediate || pending.length === 0 || !anyEligible) {
+    rt.requests.settleSession(sessionId)
+    return
+  }
+  rt.requests.scheduleGrace(sessionId, () => {
+    const current = rt.sessionStreams.get(sessionId)
+    if (current && current.size > 0) return
+    rt.requests.settleSession(sessionId)
+  })
+}
+
+function settleOrphanApprovals(rt) {
+  for (const sessionId of new Set([
+    ...[...rt.pendingApprovals.values()].map((rec) => rec.sessionId),
+    ...[...rt.pendingQuestions.values()].map((rec) => rec.sessionId),
+  ].filter(Boolean))) {
+    afterWritersChanged(rt, sessionId)
   }
 }
 
@@ -898,14 +931,62 @@ async function sessionFilePath(targetPort, sessionId, rt) {
   }
 }
 
-function dropSession(rt, sessionId) {
+function dropSession(rt, sessionId, { immediate = false } = {}) {
   rt.sessionStreams.delete(sessionId)
   rt.sessionFiles.delete(sessionId)
   rt.pendingPolls.delete(sessionId)
   const gap = rt.gapPolls.get(sessionId)
   if (gap?.timer) clearTimeout(gap.timer)
   rt.gapPolls.delete(sessionId)
-  settleOrphanApprovals(rt)
+  afterWritersChanged(rt, sessionId, { immediate })
+}
+
+function writeCatchup(writers, conn, assessed, sessionId) {
+  try {
+    if (assessed.complete) {
+      for (const e of assessed.events) {
+        if (e.seq <= conn.lastSeq) continue
+        const ok = conn.res.write(sseMessageFrame(e))
+        try { conn.res.flush?.() } catch {}
+        conn.lastSeq = e.seq
+        if (ok === false) {
+          writers.delete(conn)
+          try { conn.res.destroy() } catch {}
+          return
+        }
+      }
+      if (assessed.events.length > 0 && assessed.projections) {
+        try { conn.res.write(sseNamedFrame("stats", assessed.projections)) } catch {}
+      }
+      return
+    }
+    const now = Date.now()
+    if (conn.lastResyncAt && now - conn.lastResyncAt < 2_000) return
+    conn.lastResyncAt = now
+    const frame = conn.caps?.sync2
+      ? sseResyncFrame({
+        sessionId,
+        reason: assessed.reason,
+        afterSeq: conn.lastSeq,
+        oldestAvailableSeq: assessed.oldestAvailableSeq,
+        nextCursor: assessed.nextCursor,
+      })
+      : sseNamedFrame("error", {
+        code: "resync-required",
+        upgradeRequired: true,
+        sessionId,
+        reason: assessed.reason,
+      })
+    const ok = conn.res.write(frame)
+    try { conn.res.flush?.() } catch {}
+    if (ok === false) {
+      writers.delete(conn)
+      try { conn.res.destroy() } catch {}
+    }
+  } catch {
+    writers.delete(conn)
+    try { conn.res.destroy() } catch {}
+  }
 }
 
 function writeSse(writers, frame) {
@@ -974,30 +1055,11 @@ async function pollSession(sessionId, targetPort, rt, force = false) {
     const info = rt.sessionFiles.get(sessionId)
     if (!force && info && st && info.lastSize === st.size && info.lastMtime === st.mtimeMs) return
     const minCursor = Math.min(...[...writers].map((c) => c.lastSeq))
-    const { events, projections } = await loadEventsAfter(minCursor, (payload) =>
+    const batch = await loadEventsAfter(minCursor, (payload) =>
       callLocalRpc(targetPort, "session.history", { sessionId, ...payload }),
     )
     for (const conn of [...writers]) {
-      const forConn = events.filter((e) => e.seq > conn.lastSeq)
-      for (const e of forConn) {
-        try {
-          const ok = conn.res.write(sseMessageFrame(e))
-          try { conn.res.flush?.() } catch {}
-          conn.lastSeq = e.seq
-          if (ok === false) {
-            writers.delete(conn)
-            try { conn.res.destroy() } catch {}
-            break
-          }
-        } catch {
-          writers.delete(conn)
-          try { conn.res.destroy() } catch {}
-          break
-        }
-      }
-      if (forConn.length > 0 && projections) {
-        try { conn.res.write(`event: stats\ndata: ${JSON.stringify(projections)}\n\n`) } catch {}
-      }
+      writeCatchup(writers, conn, assessForCursor(conn.lastSeq, batch), sessionId)
     }
     if (info && st) {
       info.lastSize = st.size
@@ -1040,6 +1102,7 @@ async function handleStreamRoute(sessionId, res, targetPort, config, req, rt, de
     rt.sessionStreams.set(sessionId, writers)
   }
   const afterRaw = Number(new URL(req?.url ?? "/", "http://x").searchParams.get("afterSeq") ?? 0)
+  const caps = parseClientCaps(new URL(req?.url ?? "/", "http://x").searchParams.get("caps"))
   const conn = {
     res,
     lastSeq: Number.isFinite(afterRaw) && afterRaw > 0 ? afterRaw : 0,
@@ -1048,32 +1111,29 @@ async function handleStreamRoute(sessionId, res, targetPort, config, req, rt, de
     seeded: false,
     missedWhileSeeding: false,
     seedQueue: [],
+    seedOverflow: false,
+    caps,
+    lastResyncAt: 0,
   }
   writers.add(conn)
-  res.write(`event: ready\ndata: ${JSON.stringify({ resumeSeq: conn.lastSeq })}\n\n`)
+  rt.requests.addEligible(sessionId, device.deviceId)
+  rt.requests.clearGrace(sessionId)
+  res.write(`event: ready\ndata: ${JSON.stringify({
+    resumeSeq: conn.lastSeq,
+    protocol: PLUGIN_PROTOCOL,
+    capabilities: pluginCapabilities(),
+  })}\n\n`)
   try { res.flush?.() } catch {}
   ;(async () => {
     try {
-      const { events, projections } = await loadEventsAfter(conn.lastSeq, (payload) =>
+      const batch = await loadEventsAfter(conn.lastSeq, (payload) =>
         callLocalRpc(targetPort, "session.history", {
           sessionId,
           ...payload,
           maxMessages: payload.maxMessages ?? config.reconnectHistoryLimit,
         }),
       )
-      for (const e of events) {
-        if (e.seq <= conn.lastSeq) continue
-        try {
-          conn.res.write(sseMessageFrame(e))
-          try { conn.res.flush?.() } catch {}
-          conn.lastSeq = e.seq
-        } catch {
-          return
-        }
-      }
-      if (projections) {
-        try { conn.res.write(`event: stats\ndata: ${JSON.stringify(projections)}\n\n`) } catch {}
-      }
+      writeCatchup(writers, conn, assessForCursor(conn.lastSeq, batch), sessionId)
     } catch {} finally {
       conn.seeded = true
       flushSeedQueue(conn, sessionId, (id) => requestGapPoll(id, targetPort, rt))
@@ -1085,7 +1145,7 @@ async function handleStreamRoute(sessionId, res, targetPort, config, req, rt, de
     const set = rt.sessionStreams.get(sessionId)
     set?.delete(conn)
     if (set && set.size === 0) dropSession(rt, sessionId)
-    else settleOrphanApprovals(rt)
+    else afterWritersChanged(rt, sessionId)
   })
 }
 
@@ -1190,6 +1250,8 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
       const sessions = (value.items ?? []).map(mobileSessionSummary)
       return json(res, 200, {
         version: 1,
+        protocol: PLUGIN_PROTOCOL,
+        capabilities: pluginCapabilities(),
         host: { name: hostname(), deviceId: state.deviceId },
         device: { name: device.name },
         sessions,
@@ -1439,20 +1501,40 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
       if (!approvalId || !["allowed-once", "rejected"].includes(outcome)) {
         return json(res, 400, { error: "缺少 approvalId 或 outcome 无效" })
       }
-      const pending = rt.pendingApprovals.get(approvalId)
+      const terminal = rt.requests.getTerminal(approvalId)
+      if (terminal?.type === "approval") {
+        return json(res, 200, {
+          ok: true,
+          accepted: true,
+          alreadySettled: true,
+          outcome: terminal.outcome,
+          status: terminal.status,
+          handledBy: "plugin",
+        })
+      }
+      const pending = rt.requests.getApproval(approvalId)
       if (!pending) {
         return json(res, 409, { ok: false, accepted: false, error: "审批已结束或不存在" })
       }
-      // 审批绑定会话：URL sessionId 必须与审批记录一致，且只能由当前订阅该会话 SSE 的设备处理。
-      // 防止另一台只读过 history、并未在该会话上活跃连接的设备代答（放行危险工具或 DoS）。
       if (pending.sessionId !== sessionId) {
         return json(res, 409, { ok: false, accepted: false, error: "审批会话不匹配" })
       }
-      if (!isDeviceSubscribedToSession(rt, pending.sessionId, device.deviceId)) {
+      if (!canDeviceHandle(pending, {
+        deviceId: device.deviceId,
+        authorized: true,
+        subscribed: isDeviceSubscribedToSession(rt, pending.sessionId, device.deviceId),
+        inGrace: rt.requests.inGrace(pending.sessionId),
+      })) {
         return json(res, 403, { ok: false, accepted: false, error: "仅该会话的当前连接设备可处理审批" })
       }
-      pending.settle(outcome)
-      return json(res, 200, { ok: true, accepted: true, handledBy: "plugin" })
+      const result = rt.requests.finishApproval(pending, outcome)
+      return json(res, 200, {
+        ok: true,
+        accepted: true,
+        outcome: result?.outcome ?? outcome,
+        status: result?.status ?? mapApprovalUiStatus(outcome),
+        handledBy: "plugin",
+      })
     }
 
     const questionMatch = pathname.match(/^\/dsh-link\/mobile\/sessions\/([^/]+)\/question$/)
@@ -1463,20 +1545,54 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
       const rpcId = String(body.rpcId ?? "").trim()
       const answer = body.answer
       if (!rpcId || !answer || !Array.isArray(answer.answers)) {
-        return json(res, 400, { error: "缺少 rpcId 或 answer.answers" })
+        return json(res, 400, { error: "缺少 rpcId 或 answer.answers", code: "invalid-answers" })
       }
-      const pending = rt.pendingQuestions.get(rpcId)
+      const terminal = rt.requests.getTerminal(rpcId)
+      if (terminal?.type === "question") {
+        return json(res, 200, {
+          ok: true,
+          accepted: true,
+          alreadySettled: true,
+          status: terminal.status,
+          handledBy: "plugin",
+        })
+      }
+      const pending = rt.requests.getQuestion(rpcId)
       if (!pending) {
         return json(res, 409, { ok: false, accepted: false, error: "澄清已结束或不存在" })
       }
       if (pending.sessionId !== sessionId) {
         return json(res, 409, { ok: false, accepted: false, error: "澄清会话不匹配" })
       }
-      if (!isDeviceSubscribedToSession(rt, pending.sessionId, device.deviceId)) {
+      if (!canDeviceHandle(pending, {
+        deviceId: device.deviceId,
+        authorized: true,
+        subscribed: isDeviceSubscribedToSession(rt, pending.sessionId, device.deviceId),
+        inGrace: rt.requests.inGrace(pending.sessionId),
+      })) {
         return json(res, 403, { ok: false, accepted: false, error: "仅该会话的当前连接设备可回答澄清" })
       }
-      pending.settle(answer)
+      const normalized = normalizeQuestions(pending.questions ?? [])
+      if (!normalized.ok) {
+        return json(res, 400, { ok: false, accepted: false, error: "原问题定义无效", code: normalized.error })
+      }
+      const checked = validateAnswers(normalized.questions, answer)
+      if (!checked.ok) {
+        return json(res, 400, { ok: false, accepted: false, error: checked.error, code: checked.code })
+      }
+      rt.requests.finishQuestion(pending, checked.answer)
       return json(res, 200, { ok: true, accepted: true, handledBy: "plugin" })
+    }
+
+    const requestsMatch = pathname.match(/^\/dsh-link\/mobile\/sessions\/([^/]+)\/requests$/)
+    if (req.method === "GET" && requestsMatch) {
+      const sessionId = decodeURIComponent(requestsMatch[1])
+      const subscribed = isDeviceSubscribedToSession(rt, sessionId, device.deviceId)
+      const eligible = rt.requests.pendingForSession(sessionId).some((rec) => rec.eligibleDeviceIds.has(device.deviceId))
+      if (!subscribed && !(rt.requests.inGrace(sessionId) && eligible)) {
+        return json(res, 403, { error: "仅该会话的当前连接设备可查看待处理请求" })
+      }
+      return json(res, 200, { version: 1, ...rt.requests.snapshot(sessionId) })
     }
 
     const historyMatch = pathname.match(/^\/dsh-link\/mobile\/sessions\/([^/]+)\/history$/)
@@ -1587,9 +1703,6 @@ const PANEL_ONLY_PATHS = new Set([
   "/dsh-link/relay-enroll",
   "/dsh-link/relay-disconnect",
 ])
-
-const APPROVAL_OUTCOMES = new Set(["allowed-once", "rejected", "cancelled", "unavailable"])
-const APPROVAL_TIMEOUT_MS = 5 * 60 * 1000
 
 function sessionEvents(session) {
   if (typeof session?.snapshotEvents === "function") {
@@ -1911,18 +2024,24 @@ export function apply(ctx, config) {
     const id = findApprovalId(req)
     if (!id) return next()
     return new Promise((resolve) => {
-      const settle = (outcome) => {
-        const rec = rt.pendingApprovals.get(id)
-        if (!rec) return
-        rt.pendingApprovals.delete(id)
-        if (rec.timer) clearTimeout(rec.timer)
-        try { req.signal?.removeEventListener("abort", rec.onAbort) } catch {}
-        resolve(APPROVAL_OUTCOMES.has(outcome) ? outcome : "unavailable")
+      const rec = {
+        id,
+        sessionId,
+        type: "approval",
+        createdAt: Date.now(),
+        deadlineAt: Date.now() + APPROVAL_TIMEOUT_MS,
+        eligibleDeviceIds: subscribedDeviceIds(writers),
+        settled: false,
+        callId: req?.callId ?? null,
+        toolName: req?.toolName ?? req?.name ?? req?.payload?.toolName ?? null,
+        signal: req?.signal,
+        settle: (outcome) => resolve(APPROVAL_OUTCOMES.has(outcome) ? outcome : "unavailable"),
       }
-      const onAbort = () => settle("cancelled")
-      const timer = setTimeout(() => settle("unavailable"), APPROVAL_TIMEOUT_MS)
-      rt.pendingApprovals.set(id, { settle, timer, onAbort, sessionId })
-      req.signal?.addEventListener("abort", onAbort, { once: true })
+      rec.onAbort = () => rt.requests.finishApproval(rec, "cancelled")
+      rec.timer = setTimeout(() => rt.requests.finishApproval(rec, "unavailable"), APPROVAL_TIMEOUT_MS)
+      rec.timer?.unref?.()
+      rt.requests.addApproval(rec)
+      req.signal?.addEventListener("abort", rec.onAbort, { once: true })
     })
   })
 
@@ -1935,29 +2054,35 @@ export function apply(ctx, config) {
     const sessionId = req?.agent?.session?.id
     const writers = sessionId ? rt.sessionStreams.get(sessionId) : null
     if (!writers || writers.size === 0) return next()
+    const questions = req.questions ?? []
+    const targets = questions.length > 1
+      ? [...writers].filter((conn) => conn.caps?.multiQuestion)
+      : [...writers]
+    if (targets.length === 0) return next()
     const rpcId = "q-" + randomBytes(12).toString("hex")
     return new Promise((resolve, reject) => {
-      let settled = false
-      const settle = (answer) => {
-        if (settled) return
-        settled = true
-        const rec = rt.pendingQuestions.get(rpcId)
-        rt.pendingQuestions.delete(rpcId)
-        if (rec?.timer) clearTimeout(rec.timer)
-        try { req.signal?.removeEventListener("abort", rec?.onAbort) } catch {}
-        if (answer && Array.isArray(answer.answers)) resolve(answer)
-        else Promise.resolve().then(() => next()).then(resolve, reject)
-      }
-      const onAbort = () => settle(null)
-      const timer = setTimeout(() => settle(null), APPROVAL_TIMEOUT_MS)
-      rt.pendingQuestions.set(rpcId, { settle, timer, onAbort, sessionId })
-      req.signal?.addEventListener("abort", onAbort, { once: true })
-      const body = JSON.stringify({
-        rpcId,
+      const rec = {
+        id: rpcId,
         sessionId,
-        questions: req.questions ?? [],
-      })
-      writeSse(writers, `event: question\ndata: ${body}\n\n`)
+        type: "question",
+        createdAt: Date.now(),
+        deadlineAt: Date.now() + APPROVAL_TIMEOUT_MS,
+        eligibleDeviceIds: subscribedDeviceIds(targets),
+        settled: false,
+        questions,
+        signal: req?.signal,
+        settle: (answer) => {
+          if (answer && Array.isArray(answer.answers)) resolve(answer)
+          else Promise.resolve().then(() => next()).then(resolve, reject)
+        },
+      }
+      rec.onAbort = () => rt.requests.finishQuestion(rec, null)
+      rec.timer = setTimeout(() => rt.requests.finishQuestion(rec, null), APPROVAL_TIMEOUT_MS)
+      rec.timer?.unref?.()
+      rt.requests.addQuestion(rec)
+      req.signal?.addEventListener("abort", rec.onAbort, { once: true })
+      const body = JSON.stringify({ rpcId, sessionId, questions })
+      writeSse(new Set(targets), `event: question\ndata: ${body}\n\n`)
       ctx.logger.info(`dsh-links: question → mobile session=${String(sessionId).slice(0, 8)} rpc=${rpcId.slice(0, 8)}`)
     })
   })
@@ -2096,14 +2221,7 @@ export function apply(ctx, config) {
       }
       rt.gapPolls.clear()
       rt.reasoningCache.clear()
-      for (const rec of [...rt.pendingApprovals.values()]) {
-        try { rec.settle("cancelled") } catch {}
-      }
-      rt.pendingApprovals.clear()
-      for (const rec of [...rt.pendingQuestions.values()]) {
-        try { rec.settle(null) } catch {}
-      }
-      rt.pendingQuestions.clear()
+      rt.requests.disposeAll("cancelled")
       unbindLocalRpcRuntime()
       try { proxy?.closeAllConnections?.() } catch {}
       try { proxy?.close() } catch {}

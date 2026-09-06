@@ -124,6 +124,7 @@ test("补历史队列有容量上限，超限丢新事件并保留强制轮询�
   assert.equal(a.conn.seedQueue[0].seq, 1)
   assert.equal(a.conn.seedQueue[SEED_QUEUE_MAX - 1].seq, SEED_QUEUE_MAX)
   assert.equal(a.conn.missedWhileSeeding, true)
+  assert.equal(a.conn.seedOverflow, true)
   assert.equal(a.written.length, 0)
 })
 

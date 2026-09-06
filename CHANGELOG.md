@@ -1,5 +1,14 @@
 # Changelog
 
+## dsh-links 0.1.0-beta.14 — 2026-09-06
+
+- 补发历史超过 500 事件时不再静默跳号：无法证明连续覆盖则发重同步信号，游标不越过缺口。
+- 多题澄清改为逐题校验；旧 App 不声明多题能力时回落桌面，避免用第一题答案填其余题。
+- 审批生命周期与 SSE 断开分离：短暂断线有限宽限，吊销/插件退出立即失效；重复提交返回已记录终态。
+- 历史与实时流把 `approval/asked` 与 `approval/decided` 归并为同一请求状态。
+- 配套合同见 `docs/MOBILE_SYNC_CONTRACT.md`。完整后台推送（ENH-01）仍为渠道待定，未实施。
+- Android 客户端需 `0.5.0-beta.16` 才能使用重同步与多题校验；旧组合不会静默丢事件，但也不能假装完全兼容。
+
 ## dsh-links 0.1.0-beta.13 — 2026-09-02
 
 - 适配 DSH `0.1.2-alpha.5`：ApiProxy 移除后，本机调用改走 Typert Gateway（`session/list`、`session/page`、`session/modelCatalog`、`settings/describe|update`、`agentPresets/list`）；`session.history` 与 `workspace.list` 分别适配为 `session/page`（或 `session/follow` 快照）与 `workspace/follow` 基线。
