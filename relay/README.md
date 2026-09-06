@@ -1,9 +1,11 @@
-# dsh-links-relay
+# Relay
 
-DLR/1 自研 Relay — 电脑 `Agent` 与手机 `App` 均主动出站连接 Relay，Relay 仅在外层 TLS 内转发 DLR 控制帧与 App↔插件的内层 TLS 密文。
+本目录是 DSH Links Relay（DLR/1）源码，现位于公开仓库 [`lunaship/dsh-links`](https://github.com/lunaship/dsh-links) 的 `relay/`。Go module 为 `github.com/lunaship/dsh-links/relay`。
 
-> 三仓版本基线、发布状态和已验证组合统一见
-> [`dsh-links/docs/COMPATIBILITY.md`](https://github.com/lunaship/dsh-links/blob/main/docs/COMPATIBILITY.md)。
+电脑 `Agent` 与手机 `App` 均主动出站连接 Relay，Relay 仅在外层 TLS 内转发 DLR 控制帧与 App↔插件的内层 TLS 密文。使用仍为维护者接入码私测；本目录不含接入码或主机凭据。
+
+> 版本基线、发布状态和已验证组合统一见
+> [`docs/COMPATIBILITY.md`](../docs/COMPATIBILITY.md)。
 
 ## 架构
 
@@ -74,9 +76,11 @@ CGO_ENABLED=0 go test ./internal/ingress -run TestSequential -v
 
 ## 兼容性
 
-三仓唯一兼容矩阵、source baseline、发布状态和已验证范围见
-[`dsh-links/docs/COMPATIBILITY.md`](https://github.com/lunaship/dsh-links/blob/main/docs/COMPATIBILITY.md)。
-本仓库不再维护另一份版本表；Relay 的私测不等于公开生产支持。
+版本基线、发布状态和已验证范围见
+[`docs/COMPATIBILITY.md`](../docs/COMPATIBILITY.md)。
+本目录不再维护另一份版本表；Relay 的私测不等于公开生产支持。
+
+OpenShip / 旧私有仓部署请把源码根改为本目录（`lunaship/dsh-links` 的 `relay/`），不要再跟踪已归档的 `dsh-links-relay` 仓库。
 
 ## License
 

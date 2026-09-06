@@ -1,9 +1,9 @@
 # DSH Links compatibility matrix
 
-This is the single compatibility reference for `dsh-links`,
-`dsh-links-app`, and `dsh-links-relay`. The companion repositories link here
-instead of maintaining their own version tables. Update this file when a
-source baseline, tag, release, or verified combination changes.
+This is the single compatibility reference for the public `dsh-links`
+repository (plugin plus Relay under `relay/`) and the private
+`dsh-links-app`. Update this file when a source baseline, tag, release,
+or verified combination changes.
 
 ## Current source baseline
 
@@ -16,7 +16,7 @@ published.
 | DSH | `0.1.2-alpha.5` | Upstream dependency; npm dist-tag `alpha` as of 2026-09-02. `latest` remains `0.1.1-rc.2` | LAN smoke verification below; full phone end-to-end remains in the closed-beta scope |
 | Plugin `dsh-links` | package `0.1.0-beta.14`; source snapshot for this sync/request-state work | npm registry status is not asserted here; verify it with `npm view` in the release environment | Unit tests below; LAN phone end-to-end not rerun in this round |
 | Android `dsh-links-app` | `versionName 0.5.0-beta.16`; source snapshot for this sync/request-state work | APK release status is not asserted here; install only an official signed release whose version and SHA-256 are published with it | Unit/lint/debug assemble below; phone end-to-end remains in the closed-beta scope |
-| Relay `dsh-links-relay` | Current `main` contains unpublished changes; no release tag | No public release or deployment status is asserted here | DLR/1 implementation is private, invite-only test scope only |
+| Relay (`relay/` in this repo) | Current `main` contains unpublished changes; no release tag | No public Relay deployment status is asserted here | DLR/1 remains invite-only test scope; source is now public in this repository |
 
 ## Verified combination and scope
 

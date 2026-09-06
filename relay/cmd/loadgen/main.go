@@ -32,9 +32,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/dsh-links/dsh-links-relay/internal/cryptoutil"
-	"github.com/dsh-links/dsh-links-relay/internal/protocol"
-	"github.com/dsh-links/dsh-links-relay/internal/testkit"
+	"github.com/lunaship/dsh-links/relay/internal/cryptoutil"
+	"github.com/lunaship/dsh-links/relay/internal/protocol"
+	"github.com/lunaship/dsh-links/relay/internal/testkit"
 )
 
 // tlsDial connects to the relay's real TLS data plane. The capacity instance

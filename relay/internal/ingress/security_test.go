@@ -17,13 +17,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dsh-links/dsh-links-relay/internal/control"
-	"github.com/dsh-links/dsh-links-relay/internal/cryptoutil"
-	"github.com/dsh-links/dsh-links-relay/internal/metrics"
-	"github.com/dsh-links/dsh-links-relay/internal/protocol"
-	"github.com/dsh-links/dsh-links-relay/internal/registry"
-	"github.com/dsh-links/dsh-links-relay/internal/store"
-	"github.com/dsh-links/dsh-links-relay/internal/testkit"
+	"github.com/lunaship/dsh-links/relay/internal/control"
+	"github.com/lunaship/dsh-links/relay/internal/cryptoutil"
+	"github.com/lunaship/dsh-links/relay/internal/metrics"
+	"github.com/lunaship/dsh-links/relay/internal/protocol"
+	"github.com/lunaship/dsh-links/relay/internal/registry"
+	"github.com/lunaship/dsh-links/relay/internal/store"
+	"github.com/lunaship/dsh-links/relay/internal/testkit"
 )
 
 // Test frame boundaries 0,767,768,769,2047,2048,2049 already covered in protocol unit, but we also test via ingress that oversized frames are rejected

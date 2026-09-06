@@ -19,9 +19,8 @@
 
 | 组成 | 作用 | 发布方式 |
 |---|---|---|
-| **本仓库 `dsh-links`** | DSH 插件、手机 HTTPS 接入代理、电脑端配对与设备管理面板 | 开源 npm 插件 |
+| **本仓库 `dsh-links`** | DSH 插件、手机 HTTPS 接入代理、电脑端配对与设备管理面板；Relay 源码在 [`relay/`](relay/) | 开源 npm 插件；Relay 源码同仓公开，使用仍需维护者接入码 |
 | **DSH Links Android App** | 扫码/手动配对、设备入口、原生会话工作台、实时流与审批 | 私有源码；仅发布官方签名 APK |
-| **DSH Links Relay** | 跨网络中继：电脑与手机均主动连接 Relay，电脑不接受公网入站 | 维护者内测中。接入码只由维护者发放；本仓库、Release 和 npm 包都不含接入码 |
 
 ## Android App 能做什么
 
@@ -79,7 +78,7 @@ This release is an **Android Beta**. The supported public path remains a trusted
 - **Experimental, at your own risk:** a Tailscale or Cloudflare Tunnel path you operate yourself. It is not a supported Beta path and is not covered by the security or compatibility promise.
 - **Not supported:** exposing port `18640` directly to the public Internet or using frp. Public self-serve Relay enrollment is not available.
 
-The Android APK is distributed only as an official signed release. Verify the version and SHA-256 published with that release; do not install repackaged APKs. This repository contains the plugin and its documentation only; the Android source and Relay server are not included here.
+The Android APK is distributed only as an official signed release. Verify the version and SHA-256 published with that release; do not install repackaged APKs. This repository contains the plugin, Relay source under [`relay/`](relay/), and documentation. Android source stays in a private repository.
 
 ## 安装
 

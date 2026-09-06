@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dsh-links/dsh-links-relay/internal/cryptoutil"
+	"github.com/lunaship/dsh-links/relay/internal/cryptoutil"
 )
 
 // ValidHostID reports whether s is an accepted host identifier.

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dsh-links/dsh-links-relay/internal/config"
-	"github.com/dsh-links/dsh-links-relay/internal/cryptoutil"
+	"github.com/lunaship/dsh-links/relay/internal/config"
+	"github.com/lunaship/dsh-links/relay/internal/cryptoutil"
 )
 
 func TestIsLoopbackListen(t *testing.T) {

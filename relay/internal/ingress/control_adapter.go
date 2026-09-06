@@ -3,8 +3,8 @@ package ingress
 import (
 	"crypto/ed25519"
 
-	"github.com/dsh-links/dsh-links-relay/internal/control"
-	"github.com/dsh-links/dsh-links-relay/internal/cryptoutil"
+	"github.com/lunaship/dsh-links/relay/internal/control"
+	"github.com/lunaship/dsh-links/relay/internal/cryptoutil"
 )
 
 // InProcessControl adapts control.Control to ControlAPI

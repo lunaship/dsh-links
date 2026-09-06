@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dsh-links/dsh-links-relay/internal/cryptoutil"
+	"github.com/lunaship/dsh-links/relay/internal/cryptoutil"
 )
 
 func TestIPCClientKeepsIdleConnectionAndReceivesResponsesAndPushes(t *testing.T) {

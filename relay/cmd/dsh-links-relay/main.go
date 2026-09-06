@@ -16,14 +16,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/dsh-links/dsh-links-relay/internal/config"
-	"github.com/dsh-links/dsh-links-relay/internal/control"
-	"github.com/dsh-links/dsh-links-relay/internal/cryptoutil"
-	"github.com/dsh-links/dsh-links-relay/internal/ingress"
-	"github.com/dsh-links/dsh-links-relay/internal/logutil"
-	"github.com/dsh-links/dsh-links-relay/internal/metrics"
-	"github.com/dsh-links/dsh-links-relay/internal/registry"
-	"github.com/dsh-links/dsh-links-relay/internal/store"
+	"github.com/lunaship/dsh-links/relay/internal/config"
+	"github.com/lunaship/dsh-links/relay/internal/control"
+	"github.com/lunaship/dsh-links/relay/internal/cryptoutil"
+	"github.com/lunaship/dsh-links/relay/internal/ingress"
+	"github.com/lunaship/dsh-links/relay/internal/logutil"
+	"github.com/lunaship/dsh-links/relay/internal/metrics"
+	"github.com/lunaship/dsh-links/relay/internal/registry"
+	"github.com/lunaship/dsh-links/relay/internal/store"
 )
 
 func main() {

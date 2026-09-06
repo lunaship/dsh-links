@@ -16,9 +16,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dsh-links/dsh-links-relay/internal/cryptoutil"
-	"github.com/dsh-links/dsh-links-relay/internal/protocol"
-	"github.com/dsh-links/dsh-links-relay/internal/registry"
+	"github.com/lunaship/dsh-links/relay/internal/cryptoutil"
+	"github.com/lunaship/dsh-links/relay/internal/protocol"
+	"github.com/lunaship/dsh-links/relay/internal/registry"
 )
 
 //go:embed web/*

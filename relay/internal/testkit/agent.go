@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dsh-links/dsh-links-relay/internal/cryptoutil"
-	"github.com/dsh-links/dsh-links-relay/internal/protocol"
+	"github.com/lunaship/dsh-links/relay/internal/cryptoutil"
+	"github.com/lunaship/dsh-links/relay/internal/protocol"
 )
 
 // SimAgent simulates a Relay Agent

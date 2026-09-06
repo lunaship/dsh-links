@@ -9,11 +9,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: plugin-ci-${{ github.workflow }}-${{ github.ref }}
+  group: dsh-links-ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  verify:
+  plugin:
     name: Node gates
     runs-on: ubuntu-latest
     steps:
@@ -50,4 +50,39 @@ jobs:
         run: pnpm audit --prod
 
       - name: Check whitespace errors
+        run: git diff --check -- ':!relay'
+
+  relay:
+    name: Go gates
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: relay
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: relay/go.mod
+          cache-dependency-path: relay/go.sum
+
+      - name: Verify formatting
+        run: test -z "$(gofmt -l .)"
+
+      - name: Run race tests
+        run: CGO_ENABLED=0 go test ./... -race -count=1 -timeout 120s
+
+      - name: Run vet
+        run: CGO_ENABLED=0 go vet ./...
+
+      - name: Build binary
+        run: CGO_ENABLED=0 go build ./cmd/dsh-links-relay
+
+      - name: Run protocol fuzz smoke gate
+        run: go test ./internal/protocol -run=^$ -fuzz=FuzzFrameReader -fuzztime=10s
+
+      - name: Check whitespace errors
         run: git diff --check
+        working-directory: .

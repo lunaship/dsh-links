@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/dsh-links/dsh-links-relay/internal/cryptoutil"
+	"github.com/lunaship/dsh-links/relay/internal/cryptoutil"
 )
 
 // ErrDeviceDisabled is returned when an enrolled device has been disabled by

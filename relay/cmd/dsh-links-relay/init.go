@@ -17,7 +17,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/dsh-links/dsh-links-relay/internal/cryptoutil"
+	"github.com/lunaship/dsh-links/relay/internal/cryptoutil"
 )
 
 const minAdminPasswordLen = 12

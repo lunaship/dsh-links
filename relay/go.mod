@@ -1,4 +1,4 @@
-module github.com/dsh-links/dsh-links-relay
+module github.com/lunaship/dsh-links/relay
 
 go 1.25.0
 

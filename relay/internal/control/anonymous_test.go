@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dsh-links/dsh-links-relay/internal/cryptoutil"
-	"github.com/dsh-links/dsh-links-relay/internal/protocol"
-	"github.com/dsh-links/dsh-links-relay/internal/store"
+	"github.com/lunaship/dsh-links/relay/internal/cryptoutil"
+	"github.com/lunaship/dsh-links/relay/internal/protocol"
+	"github.com/lunaship/dsh-links/relay/internal/store"
 )
 
 func newTestControlWithPolicy(t *testing.T, policy AnonymousPolicy, capTTL time.Duration) (*Control, *store.Store) {

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dsh-links/dsh-links-relay/internal/testkit"
+	"github.com/lunaship/dsh-links/relay/internal/testkit"
 )
 
 func TestSequentialEcho(t *testing.T) {

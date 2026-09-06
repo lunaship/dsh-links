@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dsh-links/dsh-links-relay/internal/control"
-	"github.com/dsh-links/dsh-links-relay/internal/metrics"
-	"github.com/dsh-links/dsh-links-relay/internal/registry"
-	"github.com/dsh-links/dsh-links-relay/internal/store"
-	"github.com/dsh-links/dsh-links-relay/internal/testkit"
+	"github.com/lunaship/dsh-links/relay/internal/control"
+	"github.com/lunaship/dsh-links/relay/internal/metrics"
+	"github.com/lunaship/dsh-links/relay/internal/registry"
+	"github.com/lunaship/dsh-links/relay/internal/store"
+	"github.com/lunaship/dsh-links/relay/internal/testkit"
 )
 
 func setupIngress(t *testing.T) (*Ingress, *control.Control, func()) {

@@ -7,6 +7,7 @@
 - 审批生命周期与 SSE 断开分离：短暂断线有限宽限，吊销/插件退出立即失效；重复提交返回已记录终态。
 - 历史与实时流把 `approval/asked` 与 `approval/decided` 归并为同一请求状态。
 - 配套合同见 `docs/MOBILE_SYNC_CONTRACT.md`。完整后台推送（ENH-01）仍为渠道待定，未实施。
+- Relay 源码并入本仓库 `relay/`（原私有 `dsh-links-relay`）；Android 客户端仍为私有仓。
 - Android 客户端需 `0.5.0-beta.16` 才能使用重同步与多题校验；旧组合不会静默丢事件，但也不能假装完全兼容。
 
 ## dsh-links 0.1.0-beta.13 — 2026-09-02
