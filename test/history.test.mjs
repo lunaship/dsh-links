@@ -273,6 +273,50 @@ test("只有 asked 时保持 pending，倒序重复 decided 不回滚", () => {
   assert.equal(messages[0].outcome, "cancelled")
 })
 
+test("失败的 write 不投影产出文件", () => {
+  const events = [
+    userMsg(1, "写个文件"),
+    ev(2, "tool/call", {
+      callId: "c1",
+      name: "write",
+      arguments: JSON.stringify({ file_path: "notes/hi.md", content: "hi" }),
+      turn: 1,
+      step: 1,
+    }),
+    ev(3, "tool/result", {
+      turn: 1,
+      step: 1,
+      message: { source: { callId: "c1" }, content: [{ type: "text", text: "fail", isError: true }] },
+    }),
+    ev(4, "turn/end", { turn: 1, reason: { kind: "completed" } }),
+  ]
+  const { messages } = projectHistoryPage({ events, reasoningBySeq: new Map(), hasMore: false })
+  assert.equal(messages.filter((m) => m.role === "produced_files").length, 0)
+})
+
+test("成功的 write 在 turn/end 投影为本轮产出文件", () => {
+  const events = [
+    userMsg(1, "写个文件"),
+    ev(2, "tool/call", {
+      callId: "c1",
+      name: "write",
+      arguments: JSON.stringify({ file_path: "notes/hi.md", content: "hi" }),
+      turn: 1,
+      step: 1,
+    }),
+    ev(3, "tool/result", {
+      turn: 1,
+      step: 1,
+      message: { source: { callId: "c1" }, content: [{ type: "text", text: "ok" }] },
+    }),
+    ev(4, "turn/end", { turn: 1, reason: { kind: "completed" } }),
+  ]
+  const { messages } = projectHistoryPage({ events, reasoningBySeq: new Map(), hasMore: false })
+  const files = messages.filter((m) => m.role === "produced_files")
+  assert.equal(files.length, 1)
+  assert.deepEqual(files[0].files, ["notes/hi.md"])
+})
+
 test("clampHistoryMaxMessages caps and rejects non-positive", () => {
   assert.equal(clampHistoryMaxMessages(20), 20)
   assert.equal(clampHistoryMaxMessages(MAX_HISTORY_MESSAGES + 999), MAX_HISTORY_MESSAGES)

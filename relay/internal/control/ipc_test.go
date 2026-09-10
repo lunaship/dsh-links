@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/lunaship/dsh-links/relay/internal/cryptoutil"
+	"github.com/lunaship/dsh-links/relay/internal/store"
 )
 
 func TestIPCClientKeepsIdleConnectionAndReceivesResponsesAndPushes(t *testing.T) {
@@ -89,7 +91,7 @@ func TestIPCClientKeepsIdleConnectionAndReceivesResponsesAndPushes(t *testing.T)
 	if err != nil {
 		t.Fatalf("lookup over IPC: %v", err)
 	}
-	if lookup.HostID != "ipc-host" || lookup.Revoked || lookup.Generation != 1 {
+	if lookup.HostID != "ipc-host" || lookup.Revoked || lookup.Suspended || lookup.Generation != 1 {
 		t.Fatalf("unexpected lookup response: %+v", lookup)
 	}
 	connectNonce, _ := cryptoutil.RandomBytes(16)
@@ -109,6 +111,42 @@ func TestIPCClientKeepsIdleConnectionAndReceivesResponsesAndPushes(t *testing.T)
 	macReq.MAC = base64.RawURLEncoding.EncodeToString(make([]byte, 32))
 	if err := client.VerifyRouteMAC(macReq); err == nil {
 		t.Fatal("invalid route MAC accepted over IPC")
+	}
+
+	if err := client.TouchHost(routeID); err != nil {
+		t.Fatalf("touch host over IPC: %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		hosts, err := ctrl.ListHosts()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(hosts) == 1 && hosts[0].LastSeenAt != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("host_heartbeat did not persist last_seen_at")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	if err := client.ClearHostHeartbeat(routeID); err != nil {
+		t.Fatalf("clear host over IPC: %v", err)
+	}
+	deadline = time.Now().Add(2 * time.Second)
+	for {
+		hosts, err := ctrl.ListHosts()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(hosts) == 1 && hosts[0].LastSeenAt == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("host_offline did not clear last_seen_at")
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
@@ -503,3 +541,15 @@ func TestRevokeAckMismatchedRouteNotCounted(t *testing.T) {
 }
 
 func jsonRaw(s string) json.RawMessage { return json.RawMessage(s) }
+
+func TestEnrollControlErrorPreservesQuotaSentinel(t *testing.T) {
+	if !errors.Is(enrollControlError(store.ErrTenantHostLimit.Error()), store.ErrTenantHostLimit) {
+		t.Fatal("tenant host limit IPC string must round-trip")
+	}
+	if !errors.Is(enrollControlError(store.ErrDeviceHostLimit.Error()), store.ErrDeviceHostLimit) {
+		t.Fatal("device host limit IPC string must round-trip")
+	}
+	if store.IsHostQuotaError(enrollControlError("invite unavailable")) {
+		t.Fatal("unknown enroll errors must stay non-quota")
+	}
+}

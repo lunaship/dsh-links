@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/lunaship/dsh-links/relay/internal/cryptoutil"
 )
@@ -32,6 +33,29 @@ func ValidHostID(s string) bool {
 		}
 	}
 	return true
+}
+
+// SanitizeHostName turns an optional ENROLL display label into a short
+// operator-facing name. It is not identity: hostId remains the stable key.
+// Empty or garbage input falls back to fallback (typically hostId).
+func SanitizeHostName(name, fallback string) string {
+	var b strings.Builder
+	n := 0
+	for _, r := range strings.TrimSpace(name) {
+		if r < 32 || r == 127 || unicode.IsControl(r) {
+			continue
+		}
+		n++
+		if n > 64 {
+			break
+		}
+		b.WriteRune(r)
+	}
+	out := strings.TrimSpace(b.String())
+	if out == "" {
+		return fallback
+	}
+	return out
 }
 
 func ValidateHello(raw []byte) (*HelloFrame, error) {

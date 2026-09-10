@@ -1,4 +1,5 @@
 import { isContextInjectionText } from "./context-injection.js"
+import { mutationPath, toolResultIsError, uniquePaths } from "./produced-files.js"
 
 /** session.history 单页消息数上限（客户端 maxMessages 不得突破）。 */
 export const MAX_HISTORY_MESSAGES = 200
@@ -78,6 +79,8 @@ export function projectHistoryPage({ events, reasoningBySeq = new Map(), hasMore
 
   // tool/result 耗时：同 callId 的 tool/call 到 result 时差
   const toolCalls = new Map()
+  const mutationCalls = new Map()
+  const producedByTurn = new Map()
   let lastTurnEndReason = null
   const decidedById = new Map()
   const askedIds = new Set()
@@ -192,6 +195,8 @@ export function projectHistoryPage({ events, reasoningBySeq = new Map(), hasMore
     } else if (e.type === "tool/call") {
       flushReasoning(e.time)
       toolCalls.set(e.data?.callId, { time: e.time })
+      const path = mutationPath(e.data?.name, e.data?.arguments)
+      if (path) mutationCalls.set(String(e.data?.callId ?? ""), { path, turn: e.data?.turn })
       push({
         id: `tool-${e.seq}`,
         seq: e.seq,
@@ -209,6 +214,13 @@ export function projectHistoryPage({ events, reasoningBySeq = new Map(), hasMore
       const content = (e.data?.message?.content ?? []).map((c) => c.text || JSON.stringify(c)).join("\n")
       const callId = e.data?.message?.source?.callId
       const start = toolCalls.get(callId)?.time
+      const mutation = callId != null ? mutationCalls.get(String(callId)) : null
+      if (!toolResultIsError(e) && mutation) {
+        const turn = e.data?.turn ?? mutation.turn
+        const list = producedByTurn.get(turn) ?? []
+        list.push({ path: mutation.path, seq: e.seq })
+        producedByTurn.set(turn, list)
+      }
       push({
         id: `tool-res-${e.seq}`,
         seq: e.seq,
@@ -241,6 +253,19 @@ export function projectHistoryPage({ events, reasoningBySeq = new Map(), hasMore
       push({ id: `todo-${e.seq}`, seq: e.seq, role: "todo", todos: Array.isArray(e.data?.todos) ? e.data.todos : [], time: e.time, type: "todo" })
     } else if (e.type === "turn/end") {
       lastTurnEndReason = e.data?.reason?.kind ?? null
+      const files = uniquePaths(producedByTurn.get(e.data?.turn))
+      if (files.length) {
+        flushReasoning(e.time)
+        push({
+          id: `files-${e.seq}`,
+          seq: e.seq,
+          role: "produced_files",
+          text: "",
+          files,
+          time: e.time,
+          type: "produced_files",
+        })
+      }
     }
   }
   flushReasoning(messages.length ? messages[messages.length - 1].time : 0)

@@ -45,11 +45,20 @@ func TestHandlerServesWebAssets(t *testing.T) {
 			if !strings.Contains(recorder.Body.String(), test.marker) {
 				t.Fatalf("response for %s does not contain %q", test.path, test.marker)
 			}
-			if test.path == "/" && !strings.Contains(recorder.Body.String(), "接入码") {
-				t.Fatal("control UI is missing the invite copy surface")
+			if test.path == "/" && !strings.Contains(recorder.Body.String(), "粘贴进电脑插件") {
+				t.Fatal("control UI is missing the plugin paste instruction")
 			}
 			if test.path == "/" && !strings.Contains(recorder.Body.String(), "清理失效") {
 				t.Fatal("control UI is missing invite record cleanup")
+			}
+			if test.path == "/" && !strings.Contains(recorder.Body.String(), "管控租户") {
+				t.Fatal("control UI is missing the tenant ledger")
+			}
+			if test.path == "/" && !strings.Contains(recorder.Body.String(), "临时密码") {
+				t.Fatal("control UI is missing first-login password change")
+			}
+			if test.path == "/app.js" && !strings.Contains(recorder.Body.String(), "latestEnrollURI || latestInviteCode") {
+				t.Fatal("control copy must prefer the plugin-pasteable enroll URI")
 			}
 		})
 	}
@@ -74,6 +83,9 @@ func TestLoginUsesOpaqueRevocableSession(t *testing.T) {
 	session := cookies[0]
 	if session.Value == "correct horse battery staple" || len(session.Value) < 40 {
 		t.Fatalf("session cookie is not an opaque random token: %q", session.Value)
+	}
+	if session.Secure {
+		t.Fatal("loopback HTTP session cookie must not be Secure")
 	}
 
 	authorized := httptest.NewRequest(http.MethodGet, "/v1/not-found", nil)
@@ -229,6 +241,34 @@ func TestMutationAllowsExactOrigin(t *testing.T) {
 	}
 }
 
+func TestMutationAllowsHTTPSOriginThroughLoopbackProxy(t *testing.T) {
+	server := NewServer(nil, "legacy-token-0123456789", "admin", "correct horse battery staple")
+	req := httptest.NewRequest(http.MethodPost, "http://control.example.com/login", strings.NewReader(`{"user":"admin","password":"correct horse battery staple"}`))
+	req.RemoteAddr = "127.0.0.1:54321"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "https://control.example.com")
+	req.Header.Set("X-Forwarded-Proto", "https")
+	recorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("proxied HTTPS origin status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestMutationRejectsForwardedProtoFromNonLoopback(t *testing.T) {
+	server := NewServer(nil, "legacy-token-0123456789", "admin", "correct horse battery staple")
+	req := httptest.NewRequest(http.MethodPost, "http://control.example.com/login", strings.NewReader(`{"user":"admin","password":"correct horse battery staple"}`))
+	req.RemoteAddr = "203.0.113.9:54321"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "https://control.example.com")
+	req.Header.Set("X-Forwarded-Proto", "https")
+	recorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("untrusted forwarded proto status=%d, want 403", recorder.Code)
+	}
+}
+
 func TestLoginLimiterAggregatesLoopbackAddressRotation(t *testing.T) {
 	server := NewServer(nil, "legacy-token-0123456789", "admin", "correct horse battery staple")
 	handler := server.Handler()
@@ -249,6 +289,51 @@ func TestLoginLimiterAggregatesLoopbackAddressRotation(t *testing.T) {
 	handler.ServeHTTP(recorder, req)
 	if recorder.Code != http.StatusTooManyRequests {
 		t.Fatalf("rotated loopback status=%d, want 429", recorder.Code)
+	}
+}
+
+func TestLoginLimiterUsesForwardedClientFromLoopbackProxy(t *testing.T) {
+	server := NewServer(nil, "legacy-token-0123456789", "admin", "correct horse battery staple")
+	handler := server.Handler()
+	for i := 0; i < loginBurstAttempts; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(`{"user":"admin","password":"wrong password"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.RemoteAddr = "127.0.0.1:12345"
+		req.Header.Set("X-Forwarded-For", "203.0.113.10")
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+		if recorder.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d status=%d, want 401", i+1, recorder.Code)
+		}
+	}
+	blocked := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(`{"user":"admin","password":"correct horse battery staple"}`))
+	blocked.Header.Set("Content-Type", "application/json")
+	blocked.RemoteAddr = "127.0.0.1:12345"
+	blocked.Header.Set("X-Forwarded-For", "203.0.113.10")
+	blockedRec := httptest.NewRecorder()
+	handler.ServeHTTP(blockedRec, blocked)
+	if blockedRec.Code != http.StatusTooManyRequests {
+		t.Fatalf("same forwarded client status=%d, want 429", blockedRec.Code)
+	}
+
+	other := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(`{"user":"admin","password":"correct horse battery staple"}`))
+	other.Header.Set("Content-Type", "application/json")
+	other.RemoteAddr = "127.0.0.1:12345"
+	other.Header.Set("X-Forwarded-For", "203.0.113.11")
+	otherRec := httptest.NewRecorder()
+	handler.ServeHTTP(otherRec, other)
+	if otherRec.Code != http.StatusOK {
+		t.Fatalf("other forwarded client status=%d body=%s", otherRec.Code, otherRec.Body.String())
+	}
+
+	spoof := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(`{"user":"admin","password":"wrong password"}`))
+	spoof.Header.Set("Content-Type", "application/json")
+	spoof.RemoteAddr = "198.51.100.4:12345"
+	spoof.Header.Set("X-Forwarded-For", "203.0.113.99")
+	spoofRec := httptest.NewRecorder()
+	handler.ServeHTTP(spoofRec, spoof)
+	if spoofRec.Code != http.StatusUnauthorized {
+		t.Fatalf("non-loopback X-Forwarded-For status=%d, want 401", spoofRec.Code)
 	}
 }
 
@@ -362,18 +447,23 @@ func TestCreateInviteReturnsEnrollURI(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("invite status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	var body map[string]string
+	var body map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if body["inviteCode"] == "" {
+	inviteCode, _ := body["inviteCode"].(string)
+	enroll, _ := body["enroll"].(string)
+	if inviteCode == "" {
 		t.Fatal("missing inviteCode")
 	}
-	if body["enroll"] == "" || !strings.Contains(body["enroll"], body["inviteCode"]) || !strings.Contains(body["enroll"], "dsh-relay://relay.dshlinks.com/") {
-		t.Fatalf("enroll=%q", body["enroll"])
+	if enroll == "" || !strings.Contains(enroll, inviteCode) || !strings.Contains(enroll, "dsh-relay://relay.dshlinks.com/") {
+		t.Fatalf("enroll=%q", enroll)
 	}
-	if !strings.Contains(body["enroll"], fp) {
-		t.Fatalf("self-signed enroll missing fingerprint: %s", body["enroll"])
+	if !strings.Contains(enroll, fp) {
+		t.Fatalf("self-signed enroll missing fingerprint: %s", enroll)
+	}
+	if strings.Contains(enroll, "c=") || body["controlUrl"] != nil {
+		t.Fatal("self-host enroll must not pack a Control URL")
 	}
 
 	server.SetEnrollMeta("relay.dshlinks.com", "8444", false)
@@ -382,12 +472,13 @@ func TestCreateInviteReturnsEnrollURI(t *testing.T) {
 	req2.AddCookie(loginRec.Result().Cookies()[0])
 	rec2 := httptest.NewRecorder()
 	handler.ServeHTTP(rec2, req2)
-	var body2 map[string]string
+	var body2 map[string]any
 	if err := json.Unmarshal(rec2.Body.Bytes(), &body2); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(body2["enroll"], "fp=") {
-		t.Fatalf("public-CA enroll leaked fingerprint: %s", body2["enroll"])
+	enroll2, _ := body2["enroll"].(string)
+	if strings.Contains(enroll2, "fp=") {
+		t.Fatalf("public-CA enroll leaked fingerprint: %s", enroll2)
 	}
 }
 
@@ -553,7 +644,7 @@ func TestDevicesAndAnonymousSwitchAPI(t *testing.T) {
 	if err != nil || h.RevokedAt == nil {
 		t.Fatalf("host not revoked after device disable (err %v)", err)
 	}
-	if _, _, _, _, revoked, _ := ctrl.LookupRouteStatus(res.RouteId); !revoked {
+	if _, _, _, _, revoked, _, _ := ctrl.LookupRouteStatus(res.RouteId); !revoked {
 		t.Fatal("route live after device disable")
 	}
 
@@ -581,4 +672,108 @@ func TestDevicesAndAnonymousSwitchAPI(t *testing.T) {
 	if _, err := st.GetDevice(id); err == nil {
 		t.Fatal("device still present after delete")
 	}
+}
+
+func TestHostIsOnlineWindow(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	revoked := now.Unix()
+	fresh := now.Add(-30 * time.Second).Unix()
+	stale := now.Add(-2 * time.Hour).Unix()
+	if hostIsOnline(&revoked, &fresh, now) {
+		t.Fatal("revoked host must not be online")
+	}
+	if hostIsOnline(nil, nil, now) {
+		t.Fatal("never-seen host must not be online")
+	}
+	if !hostIsOnline(nil, &fresh, now) {
+		t.Fatal("fresh heartbeat should be online")
+	}
+	if hostIsOnline(nil, &stale, now) {
+		t.Fatal("stale heartbeat should be offline")
+	}
+}
+
+func TestHostListOnlineAfterTouch(t *testing.T) {
+	ctrl, st := newTestControl(t)
+	defer st.Close()
+	srv := NewServer(ctrl, "test-admin-token", "admin", "pw")
+	invite, err := ctrl.CreateInvite(time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := ctrl.Enroll(enrollRequest(t, invite, "host-online", priv))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	before := listAdminHosts(t, srv)
+	if len(before) != 1 || before[0]["online"] != false {
+		t.Fatalf("enrolled host must be offline until heartbeat: %+v", before)
+	}
+
+	if err := ctrl.TouchHostByRoute(res.RouteId); err != nil {
+		t.Fatal(err)
+	}
+	after := listAdminHosts(t, srv)
+	if len(after) != 1 || after[0]["online"] != true {
+		t.Fatalf("heartbeat should mark host online: %+v", after)
+	}
+	if after[0]["lastSeenAt"] == nil {
+		t.Fatal("online host missing lastSeenAt")
+	}
+
+	if err := ctrl.ClearHostHeartbeatByRoute(res.RouteId); err != nil {
+		t.Fatal(err)
+	}
+	gone := listAdminHosts(t, srv)
+	if len(gone) != 1 || gone[0]["online"] != false {
+		t.Fatalf("cleared heartbeat should mark host offline: %+v", gone)
+	}
+	if gone[0]["lastSeenAt"] != nil {
+		t.Fatalf("offline host still has lastSeenAt: %+v", gone[0]["lastSeenAt"])
+	}
+
+	if err := ctrl.TouchHostByRoute(res.RouteId); err != nil {
+		t.Fatal(err)
+	}
+	if listAdminHosts(t, srv)[0]["online"] != true {
+		t.Fatal("heartbeat after clear should mark host online again")
+	}
+
+	if _, _, err := ctrl.RevokeHost("host-online"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ctrl.TouchHostByRoute(res.RouteId); err != nil {
+		t.Fatal(err)
+	}
+	revoked := listAdminHosts(t, srv)
+	if len(revoked) != 1 || revoked[0]["online"] != false {
+		t.Fatalf("revoked host must stay offline: %+v", revoked)
+	}
+	if err := ctrl.ClearHostHeartbeatByRoute(res.RouteId); err != nil {
+		t.Fatal(err)
+	}
+	if listAdminHosts(t, srv)[0]["online"] != false {
+		t.Fatal("clear on revoked host must stay offline")
+	}
+}
+
+func listAdminHosts(t *testing.T, srv *Server) []map[string]any {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/v1/hosts", nil)
+	req.Header.Set("Authorization", "Bearer test-admin-token")
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /v1/hosts -> %d: %s", rec.Code, rec.Body.String())
+	}
+	var list []map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+		t.Fatal(err)
+	}
+	return list
 }

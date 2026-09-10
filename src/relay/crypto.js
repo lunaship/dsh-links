@@ -61,6 +61,19 @@ function be64(n) {
   return b
 }
 
+export function revokeSelfTranscript(routeId, ts, nonce, challenge) {
+  return Buffer.concat([
+    Buffer.from("DLR/1"),
+    Buffer.from([0]),
+    Buffer.from("REVOKE_SELF"),
+    Buffer.from([0]),
+    Buffer.from(routeId),
+    be64(ts),
+    Buffer.from(nonce),
+    Buffer.from(challenge),
+  ])
+}
+
 export function enrollTranscript(inviteCode, hostId, hostPublicKey, ts, nonce, challenge) {
   const host = Buffer.from(String(hostId), "utf8")
   return Buffer.concat([
@@ -210,12 +223,69 @@ export function parseEnrollText(raw) {
   if (!invite) throw new Error("接入信息缺少接入码")
   const tlsFingerprint = normalizeEnrollFingerprint(parsed.searchParams.get("fp") || "")
   const port = parsed.port
+  const controlUrl = normalizePublicControlURL(parsed.searchParams.get("c") || parsed.searchParams.get("control") || "")
   return {
     address: port ? `${host}:${port}` : host,
     inviteCode: invite,
     insecureTls: Boolean(tlsFingerprint),
     tlsFingerprint,
+    controlUrl,
   }
+}
+
+export function normalizePublicControlURL(raw) {
+  const text = String(raw ?? "").trim()
+  if (!text || text.length > 512) return ""
+  let parsed
+  try {
+    parsed = new URL(text)
+  } catch {
+    return ""
+  }
+  if (parsed.protocol !== "https:") return ""
+  if (parsed.username || parsed.password) return ""
+  if (parsed.search || parsed.hash) return ""
+  const host = String(parsed.hostname || "").toLowerCase().replace(/^\[|\]$/g, "")
+  if (!host) return ""
+  if (host === "localhost" || host === "localhost." || host === "::1" || host === "0.0.0.0" || host === "::") return ""
+  if (host === "0:0:0:0:0:0:0:0" || host === "0:0:0:0:0:0:0:1") return ""
+  if (isIPAddressLoopback(host)) return ""
+  const path = String(parsed.pathname || "").replace(/\/+$/, "")
+  return path && path !== "/" ? `https://${parsed.host}${path}` : `https://${parsed.host}`
+}
+
+function isIPAddressLoopback(host) {
+  return host === "127.0.0.1" || host.startsWith("127.")
+}
+
+/** Keep a hosted Control URL across same-Relay re-enroll; drop it when switching Relays. Never invent one. */
+export function nextRelayControlURL(previousRelay, nextAgentAddress, fromEnroll = {}) {
+  const fromPaste = normalizePublicControlURL(fromEnroll?.controlUrl)
+  if (fromPaste) return fromPaste
+  if (isRelaySwitch(previousRelay?.agentAddress, nextAgentAddress)) return ""
+  return normalizePublicControlURL(previousRelay?.controlUrl)
+}
+
+/** Persist a hosted Control URL after ENROLL fails (quota, auth). Never stores invites or loopback. */
+export function attachRelayControlUrl(relay, controlUrl, nextAgentAddress) {
+  const url = normalizePublicControlURL(controlUrl)
+  if (!url) return relay
+  if (relay && typeof relay === "object" && normalizePublicControlURL(relay.controlUrl) === url) return relay
+  const live = Boolean(String(relay?.routeId ?? "").trim() && String(relay?.routeSecret ?? "").trim())
+    && relay?.inactiveReason !== "revoked"
+    && relay?.inactiveReason !== "released"
+  if (live && isRelaySwitch(relay?.agentAddress, nextAgentAddress)) return relay
+  return { ...(relay && typeof relay === "object" ? relay : {}), controlUrl: url }
+}
+
+export function decorateRelayConsoleMessage(message, controlUrl) {
+  const text = String(message ?? "")
+  const url = normalizePublicControlURL(controlUrl)
+  if (!url) return text
+  return text
+    .replaceAll("请到控制台签发新接入码后再接入。", `打开 ${url} 签发新接入码后再接入。`)
+    .replaceAll("请到控制台新创建一次接入码后再试。", `打开 ${url} 签发新接入码后再试。`)
+    .replaceAll("请到控制台吊销不用的电脑", `打开 ${url} 吊销不用的电脑`)
 }
 
 export function resolveEnrollText(raw, extras = {}) {
@@ -223,7 +293,7 @@ export function resolveEnrollText(raw, extras = {}) {
   if (parsed) {
     if (parsed.insecureTls) return parsed
     if (isOfficialRelayHost(parsed.address)) {
-      return { ...officialEnroll(parsed.inviteCode), address: parsed.address }
+      return { ...officialEnroll(parsed.inviteCode), address: parsed.address, controlUrl: parsed.controlUrl }
     }
     return parsed
   }
@@ -239,6 +309,20 @@ export function resolveEnrollText(raw, extras = {}) {
     }
   }
   return officialEnroll(invite)
+}
+
+/** After Control revokes a Host or the plugin pauses, a bare invite belongs to the same remembered Relay. */
+export function rememberedRelayExtras(relay = {}) {
+  const revoked = relay.status === "revoked" || relay.inactiveReason === "revoked" || relay.inactiveReason === "released"
+  const paused = relay.status === "paused" || relay.paused === true
+  if (!revoked && !paused) return {}
+  const address = String(relay.agentAddress ?? "").trim()
+  if (!address || isOfficialRelayHost(address)) return {}
+  return {
+    address,
+    insecureTls: relay.insecureTls === true,
+    tlsFingerprint: String(relay.tlsFingerprint ?? ""),
+  }
 }
 
 export function deriveAddresses(input) {
@@ -265,6 +349,131 @@ export function displayRelayHost(address) {
   } catch {
     return raw
   }
+}
+
+/** Compare Relays by hostname; agent/client default ports are the same host. */
+export function relayIdentityHost(address) {
+  const raw = String(address ?? "").trim()
+  if (!raw) return ""
+  try {
+    return parseHostPort(raw, DEFAULT_AGENT_PORT).host.toLowerCase()
+  } catch {
+    return raw.toLowerCase()
+  }
+}
+
+export function isRelaySwitch(currentAddress, nextAddress) {
+  const current = relayIdentityHost(currentAddress)
+  const next = relayIdentityHost(nextAddress)
+  if (!current || !next) return false
+  return current !== next
+}
+
+/** Same-Relay 更换 does not consume a slot. A different hostname still occupies
+ *  the old Control until that route is revoked; the plugin tries REVOKE_SELF
+ *  after the new enroll succeeds. */
+export function relaySwitchConflict(currentAddress, nextAddress, { confirm = false, controlUrl } = {}) {
+  if (!isRelaySwitch(currentAddress, nextAddress) || confirm === true) return null
+  const previousHost = displayRelayHost(currentAddress) || relayIdentityHost(currentAddress)
+  const nextHost = displayRelayHost(nextAddress) || relayIdentityHost(nextAddress)
+  const previousControl = normalizePublicControlURL(controlUrl)
+  return {
+    error: previousControl
+      ? `换到 ${nextHost}：插件会尝试从 ${previousHost} 移除这台电脑以空出名额。原 Relay 若已不可达，请打开 ${previousControl} 吊销。确认继续？`
+      : `换到 ${nextHost}：插件会尝试从 ${previousHost} 移除这台电脑以空出名额。原 Relay 若已不可达，仍要去原控制台吊销。确认继续？`,
+    code: "relay_switch",
+    previousHost,
+    nextHost,
+  }
+}
+
+/** Pairing/bootstrap snapshot of the live plugin route. Null if not enrolled or already voided. */
+export function relayPairSnapshot(relay) {
+  if (!relay || typeof relay !== "object") return null
+  const reason = String(relay.inactiveReason ?? "")
+  if (reason === "revoked" || reason === "released") return null
+  const client = String(relay.clientAddress ?? "").trim()
+  const routeId = String(relay.routeId ?? "").trim()
+  const routeSecret = String(relay.routeSecret ?? "").trim()
+  if (!client || !routeId || !routeSecret) return null
+  const snap = { v: 2, client, routeId, routeSecret }
+  const tlsFingerprint = String(relay.tlsFingerprint ?? "").trim()
+  if (tlsFingerprint) snap.tlsFingerprint = tlsFingerprint
+  return snap
+}
+
+/** Snapshot used to REVOKE_SELF the previous Control after a hostname switch. */
+export function previousRelayReleaseTarget(relay, nextAgentAddress) {
+  if (!isRelaySwitch(relay?.agentAddress, nextAgentAddress)) return null
+  if (!relay?.routeId || !relay?.hostSeed || !relay?.hostPublicKey || !relay?.agentAddress) return null
+  if (relay.inactiveReason === "revoked" || relay.inactiveReason === "released") return null
+  return {
+    address: String(relay.agentAddress),
+    routeId: String(relay.routeId),
+    hostSeed: String(relay.hostSeed),
+    hostPublicKey: String(relay.hostPublicKey),
+    insecureTls: relay.insecureTls === true,
+    tlsFingerprint: String(relay.tlsFingerprint ?? ""),
+    controlUrl: normalizePublicControlURL(relay.controlUrl),
+  }
+}
+
+export function rememberReplacedRelayHost(relay, nextAgentAddress) {
+  if (isRelaySwitch(relay?.agentAddress, nextAgentAddress)) {
+    return displayRelayHost(relay.agentAddress) || relayIdentityHost(relay.agentAddress)
+  }
+  return String(relay?.replacedRelayHost ?? "").trim()
+}
+
+export function rememberReplacedRelayControlURL(relay, nextAgentAddress) {
+  if (isRelaySwitch(relay?.agentAddress, nextAgentAddress)) {
+    return normalizePublicControlURL(relay?.controlUrl)
+  }
+  return normalizePublicControlURL(relay?.replacedRelayControlUrl)
+}
+
+/** True when enroll will rotate a live route that phones may still be using. */
+export function relayRouteRotated(relay) {
+  const reason = String(relay?.inactiveReason ?? "")
+  if (reason === "revoked" || reason === "released") return false
+  return Boolean(String(relay?.routeId ?? "").trim() && String(relay?.routeSecret ?? "").trim())
+}
+
+/** Plugin copy after a live route rotates. Phones do not log into Control. */
+export function phoneRelayRouteHint({ routeRotated, previousReleased } = {}) {
+  if (!routeRotated) return ""
+  if (previousReleased === false) {
+    return "云端路由已更换，原 Relay 名额可能仍占用。同一网络下的手机下次打开即可跟上；纯远程请重新扫云端配对码。手机不登录控制台。"
+  }
+  return "云端路由已更换。同一网络下的手机下次打开即可跟上；纯远程请重新扫云端配对码。手机不登录控制台。"
+}
+
+/** Cloud QR is for a live plugin route, not Agent heartbeat. Pause/revoke hide it. */
+export function showCloudPairQR(relay) {
+  if (!relay || typeof relay !== "object") return false
+  const status = String(relay.status ?? "")
+  if (status === "revoked" || status === "paused") return false
+  const reason = String(relay.inactiveReason ?? "")
+  if (reason === "revoked" || reason === "released") return false
+  if (relay.enrolled === true) return true
+  return Boolean(String(relay.routeId ?? "").trim() && String(relay.routeSecret ?? "").trim())
+}
+
+export function cloudPairHint(online) {
+  return online
+    ? "扫这张云端配对码。手机不登录控制台。"
+    : "Relay 连上后即可扫这张云端码。同一网络也可先用局域网。手机不登录控制台。"
+}
+
+/** Non-secret cache buster so the cloud QR refreshes when the route rotates. */
+export function cloudPairStamp(relay) {
+  const routeId = String(relay?.routeId ?? "").trim()
+  const client = String(relay?.clientAddress ?? "").trim()
+  if (!routeId) return ""
+  const id = routeId.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 12)
+  if (!id) return ""
+  const host = client.replace(/[^A-Za-z0-9._:-]/g, "").slice(0, 48)
+  return host ? `${host}.${id}` : id
 }
 
 export function certFingerprintSha256(raw) {

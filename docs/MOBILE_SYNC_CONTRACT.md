@@ -14,12 +14,35 @@
   "capabilities": {
     "sync": { "resync": true, "catchupIntegrity": true },
     "questions": { "multi": true, "serverValidation": true },
-    "requests": { "snapshot": true, "reconnectGraceMs": 30000 }
+    "requests": { "snapshot": true, "reconnectGraceMs": 30000 },
+    "files": { "workspace": true, "maxBytes": 8388608 }
   }
 }
 ```
 
 旧 App 忽略未知字段。旧插件忽略 `caps` 查询参数。
+
+产出文件：历史投影可含 `role: "produced_files"` 与 `files` 路径列表。具备 `capabilities.files.workspace` 时，`GET /dsh-link/mobile/sessions/:id/file?path=` 在该会话 cwd 沙箱内返回原始字节（默认上限 8MB）。路径越出工作区返回 403。旧 App 忽略未知 role，仍可走工具结果文本。
+
+## 云端路由快照
+
+`GET /dsh-link/mobile/bootstrap` 在设备 token 鉴权后附带当前插件 Relay 路由（与扫码 `pair-info?via=relay` 同形）：
+
+```json
+{
+  "relay": {
+    "v": 2,
+    "client": "relay.example:8443",
+    "routeId": "<b64u>",
+    "routeSecret": "<b64u>",
+    "tlsFingerprint": "<optional sha256 hex>"
+  }
+}
+```
+
+未接入、已吊销或已「释放名额」时下发 `"relay": null`，App 清掉本机云端字段并保留局域网配对。旧插件不下发该键，App 不得因此擦掉已存路由。旧 App 忽略未知字段。该快照不含 Control 登录地址；接入串里的 `c=` 只给电脑插件，Android App 不登录 Control。
+
+插件更换 Relay / 释放名额后，旧 `routeId` 的 CONNECT 在 MAC 通过后返回 DLR `REVOKED`。App 不得把整台配对删掉：同一网络仍可用设备 token；恢复云端需重新扫码（纯远程手机在下次进局域网或重扫之前拿不到新路由）。App 在本机记下「需扫码恢复云端」，设备列表保留扫码入口，不登录 Control。插件在已有有效路由时即显示云端配对码，不必等 Agent 心跳在线；暂停或吊销后隐藏。换路由后按非密钥路由戳刷新该码，避免扫到旧路由。该码不含 Control 登录地址。
 
 | 组合 | 行为 |
 | --- | --- |

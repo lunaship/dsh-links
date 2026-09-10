@@ -76,12 +76,28 @@ systemctl status dsh-links-relay-*
 # 通过 SSH 隧道打开 Control
 ssh -N -L 8080:127.0.0.1:8080 user@relay.example.com &
 curl -H "Authorization: Bearer $(cat /etc/dsh-links-relay/admin.token)" -H "Content-Type: application/json" -d '{}' http://127.0.0.1:8080/v1/invites
-# 得到 enroll（接入信息）和 inviteCode。把 enroll 整段贴进插件（有效 30分钟, 一次性）
+# 得到 enroll（接入信息）和 inviteCode。把 enroll 整段贴进插件（默认有效 8 小时, 一次性）
 ```
 
 插件完成 ENROLL 后会在 Control UI 看到 Host, Relay 日志显示 `agent registered`.
 
-## 3.5 Bridge 空闲与最大寿命
+## 3.5 托管租户（维护者发账号，对方自己签发）
+
+自建：SSH 隧道打开 `127.0.0.1:8080`，只用 `admin`。不要给租户 SSH。
+
+公网维护者 Relay：Control 仍然只出现在主机回环。在主机上用 TLS 反代（Caddy / nginx）指到 `127.0.0.1:8080`，在 Control 配置里填写 `public_control_url`（租户打开的 HTTPS 地址），开通租户时控制台和 `tenant create` 会交出该地址，签发的接入串也会带上（`c=`），电脑插件可打开控制台。满额 ENROLL 失败后插件仍记住该公网地址，刷新面板不必再贴。不要把 8080 直接绑到公网，也不要开放注册。手机 App 不登录 Control。若反代对 Control 走 **HTTP**（而不是 Control 自己的 `admin_tls_*`），在 Control 配置里打开 `admin_secure_cookies = true`，否则浏览器拿到的登录 Cookie 没有 Secure。自建 SSH 隧道继续用 `http://127.0.0.1:8080`，保持该选项关闭。反代应带上 `X-Forwarded-Proto` / `X-Forwarded-For`（Caddy `reverse_proxy` 默认会带）：Control 只在对端是回环时采信，用来匹配 HTTPS Origin 并按真实客户端限登录，而不是把所有租户算成 `127.0.0.1`。
+
+```bash
+dsh-links-relay tenant create --config /etc/dsh-links-relay/config.toml --login alice --name Alice --password-file /root/alice.pass
+dsh-links-relay tenant list   --config /etc/dsh-links-relay/config.toml
+dsh-links-relay tenant hosts  --config /etc/dsh-links-relay/config.toml --login alice
+dsh-links-relay tenant disable --config /etc/dsh-links-relay/config.toml --login alice
+dsh-links-relay tenant enable  --config /etc/dsh-links-relay/config.toml --login alice
+```
+
+停用会作废未用邀请并吊销 Host。恢复只恢复登录，不会把已吊销 Host 救回来。新开或重置密码的租户必须先改控制台密码，才能签发或吊销。`tenant list` 把已接入或未用码满额的标成 `host-full` / `invite-full` 并排到前面；维护者不开户内机器，对方自己登录去吊销或签发。控制台台账可再复制登录地址（未配置且本页是回环时不会把 127.0.0.1 外发）。台账「查看电脑」只看该户的 Host / 邀请 / 记录；SSH 上用 `tenant hosts --login alice` 列出占名额电脑（`--all` 含已吊销）。清理已吊销仍作用于全部租户。未用邀请满额时，控制台确认后可作废最早那张未用码再签发；不带确认的 API 仍返回 409。自建 `admin` 不限额。
+
+## 3.6 Bridge 空闲与最大寿命
 
 Bridge 按**整条连接**判断空闲：任一方向成功读写都会刷新活动时间。默认 idle 5 分钟，与 `bridge_max_lifetime`（默认 30 分钟）不是同一件事。
 
@@ -94,7 +110,7 @@ Bridge 按**整条连接**判断空闲：任一方向成功读写都会刷新活
 ## 4. 监控
 
 ### 4.1 指标
-- 通过 Control `/v1/overview` 查看在线 Host、邀请数
+- 通过 Control `/v1/overview` 查看 Host、邀请数。心跳在线来自 Agent `REGISTER`/`PING` 写入的 `last_seen_at`（约 90 秒窗口）；插件断开后立即离线。插件「断开」保留凭据可重连。配额已接入是未吊销名额，断开不释放；插件「释放名额」发送 `REVOKE_SELF` 会立刻空出名额。会话仍只在插件本机。
 - Relay 日志: `journalctl -u dsh-links-relay-relay -f` (已脱敏)
 - 容量数字以实测为准；在出现测量数据前不要承诺并发 Agent 数量
 
@@ -130,8 +146,8 @@ SQLite、日志、请求体或凭据。不要把原始日志追加到该文件�
 
 ## 6. 吊销
 - **手机**: 在插件 UI 吊销设备, 后续 Token 401, 已有 SSE 关闭
-- **Host**: `POST /v1/hosts/:id/revoke` 断开该 route；`POST /v1/hosts/:id/delete` 吊销并删除记录；`POST /v1/hosts/purge` 清理全部已吊销 Host
-- **邀请**: `POST /v1/invites/:id/revoke` 仅对未消费有效；`POST /v1/invites/:id/delete` 删除记录；`POST /v1/invites/purge` 清理已消费 / 过期 / 已吊销
+- **Host**: `POST /v1/hosts/:id/revoke` 断开该 route；`POST /v1/hosts/:id/delete` 吊销并删除记录；`POST /v1/hosts/purge` 清理已吊销 Host（租户只清自己的）。插件收到 `REVOKED` 后停止重连并提示签发新接入码，不会每 3 秒再 REGISTER
+- **邀请**: `POST /v1/invites/:id/revoke` 仅对未消费有效；`POST /v1/invites/:id/delete` 删除记录；`POST /v1/invites/purge` 清理已过期未用、已吊销、以及电脑已不占名额的已用邀请（仍占名额的已接入记录保留；租户只清自己的）。`GET /v1/invites` 对已消费的码带 `consumedHostId` / `consumedHostName`（电脑展示名，不是接入码），电脑未吊销时 `consumedHostLive` 为 true，控制台可从该行吊销 Host。控制台「复制」优先复制完整接入串（含主机）；裸邀请码只作为官方 Relay 的简写
 
 ## 7. 回滚
 - 插件默认 `relay.enabled=false`, 关闭后仅 LAN
@@ -156,5 +172,5 @@ SQLite、日志、请求体或凭据。不要把原始日志追加到该文件�
 
 1. **实验环境开启发行**：控制台「匿名设备」面板点「开启匿名接入」（持久化，重启不丢）；不得在公共生产服务启用。
 2. **封禁**：设备列表「禁用」→ 该设备全部 Host 立即吊销并广播断开；「删除」→ 同时抹除身份。
-3. **流量超限**：`stats_daily` 当日累计超 `anonymous_daily_bytes` 的匿名 route 自动挂起至次日 UTC 零点；控制台 Host 列表会显示 revoked 状态，日志出现 `suspended` 相关记录（`ReportUsage` 路径）。
+3. **流量超限**：`stats_daily` 当日累计超 `anonymous_daily_bytes` 的匿名 route 自动挂起至次日 UTC 零点；控制台 Host 列表显示「挂起（日流量）」，CONNECT 返回 `RATE_LIMITED`，不会吊销凭据或丢掉 App 配对。
 4. **紧急停止**：一键关闭匿名总开关后，新 BOOTSTRAP/匿名 ENROLL 全部拒绝，现有匿名 host 不受影响（如需同时清场，批量禁用设备）。

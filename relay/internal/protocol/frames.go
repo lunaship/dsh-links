@@ -65,6 +65,9 @@ type EnrollFrame struct {
 	Ts            int64  `json:"ts"`
 	Nonce         string `json:"nonce"` // base64url 16B
 	Proof         string `json:"proof"` // base64url 64B
+	// HostName is an optional display label (computer name). Not in the
+	// enroll transcript; identity stays hostId + host public key.
+	HostName string `json:"hostName,omitempty"`
 }
 
 // BootstrapFrame requests a short-lived bootstrap token. The device submits

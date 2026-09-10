@@ -54,7 +54,24 @@ const createPanelModule = (require) => {
       inviteCode: invite,
       insecureTls: Boolean(fpRaw),
       tlsFingerprint: fpRaw,
+      controlUrl: publicControlURL(parsed.searchParams.get('c') || parsed.searchParams.get('control') || ''),
     }
+  }
+
+  function publicControlURL(raw) {
+    const text = String(raw ?? '').trim()
+    if (!text || text.length > 512) return ''
+    let parsed
+    try { parsed = new URL(text) } catch { return '' }
+    if (parsed.protocol !== 'https:') return ''
+    if (parsed.username || parsed.password || parsed.search || parsed.hash) return ''
+    const host = String(parsed.hostname || '').toLowerCase().replace(/^\[|\]$/g, '')
+    if (!host) return ''
+    if (host === 'localhost' || host === 'localhost.' || host === '::1' || host === '0.0.0.0' || host === '::') return ''
+    if (host === '0:0:0:0:0:0:0:0' || host === '0:0:0:0:0:0:0:1') return ''
+    if (host === '127.0.0.1' || host.startsWith('127.')) return ''
+    const path = String(parsed.pathname || '').replace(/\/+$/, '')
+    return path && path !== '/' ? `https://${parsed.host}${path}` : `https://${parsed.host}`
   }
 
   const OFFICIAL_RELAY_HOST = 'relay.dshlinks.com'
@@ -64,19 +81,38 @@ const createPanelModule = (require) => {
     return /^[A-Za-z0-9_-]{16,64}$/.test(String(raw ?? '').trim())
   }
 
-  function resolvePaste(raw) {
+  function isOfficialRelayHost(address) {
+    const raw = String(address ?? '').trim().toLowerCase()
+    if (!raw) return true
+    return raw === OFFICIAL_RELAY_HOST || raw.startsWith(OFFICIAL_RELAY_HOST + ':')
+  }
+
+  function resolvePaste(raw, previous = {}) {
     const parsed = parseEnrollText(raw)
     if (parsed) {
       if (parsed.insecureTls) return parsed
-      return {
-        address: parsed.address,
-        inviteCode: parsed.inviteCode,
-        insecureTls: true,
-        tlsFingerprint: OFFICIAL_RELAY_TLS_SHA256,
+      if (isOfficialRelayHost(parsed.address)) {
+        return {
+          address: parsed.address,
+          inviteCode: parsed.inviteCode,
+          insecureTls: true,
+          tlsFingerprint: OFFICIAL_RELAY_TLS_SHA256,
+          controlUrl: parsed.controlUrl,
+        }
       }
+      return parsed
     }
     const invite = String(raw ?? '').trim()
     if (!looksLikeInviteCode(invite)) return null
+    const previousAddress = String(previous.address ?? '').trim()
+    if (previousAddress && !isOfficialRelayHost(previousAddress)) {
+      return {
+        address: previousAddress,
+        inviteCode: invite,
+        insecureTls: previous.insecureTls === true,
+        tlsFingerprint: previous.tlsFingerprint || '',
+      }
+    }
     return {
       address: OFFICIAL_RELAY_HOST,
       inviteCode: invite,
@@ -276,9 +312,17 @@ const createPanelModule = (require) => {
     .dshlink-field:hover { border-color: var(--cl-accent-line); }
     .dshlink-field:focus { outline: none; border-color: var(--cl-accent); box-shadow: 0 0 0 3px var(--cl-accent-soft); }
     .dshlink-relay-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .dshlink-relay-control {
+      appearance: none; cursor: pointer; border: 0; background: transparent;
+      color: var(--cl-accent-text); font: inherit; font-size: 12.5px; font-weight: 600;
+      padding: 4px 7px; border-radius: 7px; text-decoration: none; align-self: center;
+    }
+    .dshlink-relay-control:hover { background: var(--cl-accent-soft); }
+    .dshlink-relay-control:focus-visible { outline: 2px solid var(--cl-accent); outline-offset: 2px; }
     .dshlink-relay-status { font-size: 12.5px; color: var(--cl-muted); margin: 0; }
     .dshlink-relay-status.is-ok { color: var(--cl-ok); font-weight: 600; }
     .dshlink-relay-status.is-error { color: var(--cl-danger); font-weight: 600; }
+    .dshlink-relay-replaced { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; width: 100%; }
     .dshlink-relay-online { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 13px 16px; border-radius: var(--cl-radius-m); background: var(--cl-ok-soft); border: 1px solid var(--cl-ok-line); }
     .dshlink-relay-online .dshlink-relay-status { flex: 1; min-width: 120px; display: flex; align-items: center; gap: 9px; }
     .dshlink-relay-online .rdot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--cl-ok); }
@@ -521,7 +565,7 @@ const createPanelModule = (require) => {
     })
   }
 
-  function PairCard({ via, code, label }) {
+  function PairCard({ via, code, label, hint, stamp }) {
     const [copied, setCopied] = React.useState(false)
     const copyTimer = React.useRef(0)
     React.useEffect(() => () => clearTimeout(copyTimer.current), [])
@@ -534,6 +578,9 @@ const createPanelModule = (require) => {
         copyTimer.current = setTimeout(() => setCopied(false), 2000)
       } catch {}
     }
+    const qrKey = `${via}:${code || ''}:${stamp || ''}`
+    const qrSrc = `/dsh-link/qr.png?via=${via}&v=${encodeURIComponent(code || '')}`
+      + (stamp ? `&r=${encodeURIComponent(stamp)}` : '')
     return jsxs('div', {
       className: 'dshlink-pair',
       children: [
@@ -541,8 +588,8 @@ const createPanelModule = (require) => {
           className: 'dshlink-qr-plate',
           children: jsx('img', {
             className: 'dshlink-qr',
-            key: code || '',
-            src: `/dsh-link/qr.png?via=${via}&v=${encodeURIComponent(code || '')}`,
+            key: qrKey,
+            src: qrSrc,
             alt: label,
           }),
         }),
@@ -564,7 +611,7 @@ const createPanelModule = (require) => {
                   : null,
               ],
             }),
-            jsx('p', { className: 'dshlink-pair-hint', children: '用手机 App 扫码，或手动输入配对码。' }),
+            jsx('p', { className: 'dshlink-pair-hint', children: hint || '用手机 App 扫码，或手动输入配对码。' }),
           ],
         }),
       ],
@@ -582,18 +629,81 @@ const createPanelModule = (require) => {
     })
   }
 
-  function RelayForm({ relay, onEnroll, onDisconnect }) {
+  function ReplacedRelayBanner({ host, controlUrl, onAck }) {
+    if (!host) return null
+    const href = publicControlURL(controlUrl)
+    return jsxs('div', {
+      className: 'dshlink-relay-replaced',
+      children: [
+        jsx('p', {
+          className: 'dshlink-relay-status is-error',
+          children: href
+            ? `请打开原控制台吊销这台电脑，否则 ${host} 上的名额仍占用。`
+            : `请到原控制台（${host}）吊销这台电脑，否则那边名额仍占用。`,
+        }),
+        href
+          ? jsx('a', {
+              className: 'dshlink-relay-control',
+              href,
+              target: '_blank',
+              rel: 'noopener noreferrer',
+              children: '打开原控制台',
+            })
+          : null,
+        jsx('button', {
+          type: 'button',
+          className: 'dshlink-secondary',
+          onClick: onAck,
+          children: '知道了',
+        }),
+      ],
+    })
+  }
+
+  function RelayControlLink({ url }) {
+    const href = publicControlURL(url)
+    if (!href) return null
+    return jsx('a', {
+      className: 'dshlink-relay-control',
+      href,
+      target: '_blank',
+      rel: 'noopener noreferrer',
+      children: '打开控制台',
+    })
+  }
+
+  function RelayForm({ relay, onEnroll, onDisconnect, onReconnect, onRelease, onAckReplaced }) {
     const [paste, setPaste] = React.useState('')
     const [busy, setBusy] = React.useState(false)
     const [message, setMessage] = React.useState('')
     const [replace, setReplace] = React.useState(false)
     const online = relay?.status === 'online'
-    const enrolled = relay?.enrolled === true || online || (Boolean(relay?.agentAddress) && relay?.status === 'offline')
+    const paused = relay?.status === 'paused'
+    const revoked = relay?.status === 'revoked'
+    const enrolled = !revoked && (relay?.enrolled === true || online || paused || (Boolean(relay?.agentAddress) && relay?.status === 'offline'))
     const parsedEnroll = (() => {
-      try { return resolvePaste(paste) } catch { return null }
+      try {
+        return resolvePaste(paste, (revoked || paused) ? {
+          address: relay?.agentAddress,
+          insecureTls: relay?.insecureTls,
+          tlsFingerprint: relay?.tlsFingerprint,
+        } : {})
+      } catch { return null }
     })()
     const canSubmit = Boolean(parsedEnroll?.inviteCode) && !busy
     const connectedHost = displayRelayHost(relay?.agentAddress) || OFFICIAL_RELAY_HOST
+    const release = async () => {
+      if (busy) return
+      setBusy(true)
+      setMessage('')
+      try {
+        await onRelease()
+      } catch (err) {
+        setMessage(String(err?.message ?? err))
+      } finally {
+        setBusy(false)
+      }
+    }
     const submit = async (event) => {
       event.preventDefault()
       if (!canSubmit) return
@@ -605,6 +715,7 @@ const createPanelModule = (require) => {
           inviteCode: parsedEnroll.inviteCode,
           insecureTls: parsedEnroll.insecureTls,
           tlsFingerprint: parsedEnroll.tlsFingerprint,
+          controlUrl: parsedEnroll.controlUrl,
         })
         setPaste('')
         setReplace(false)
@@ -615,39 +726,60 @@ const createPanelModule = (require) => {
       }
     }
     if (enrolled && !replace) {
-      return jsx('div', {
+      return jsxs('div', {
         className: 'dshlink-relay-form',
-        children: jsxs('div', {
-          className: 'dshlink-relay-online',
-          children: [
-            online
-              ? jsxs('p', {
-                  className: 'dshlink-relay-status is-ok',
-                  children: [jsx('span', { className: 'rdot', 'aria-hidden': true }), connectedHost],
-                })
-              : jsx('p', {
-                  className: 'dshlink-relay-status' + (relay?.status === 'error' ? ' is-error' : ''),
-                  children: relay?.error || `正在连接 ${connectedHost}`,
-                }),
-            jsxs('div', {
-              className: 'dshlink-relay-actions',
-              children: [
-                jsx('button', {
-                  type: 'button',
-                  className: 'dshlink-secondary',
-                  onClick: onDisconnect,
-                  children: '断开',
-                }),
-                jsx('button', {
-                  type: 'button',
-                  className: 'dshlink-secondary',
-                  onClick: () => { setReplace(true); setMessage('') },
-                  children: '更换',
-                }),
-              ],
-            }),
-          ],
-        }),
+        children: [
+          jsxs('div', {
+            className: 'dshlink-relay-online',
+            children: [
+              online
+                ? jsxs('p', {
+                    className: 'dshlink-relay-status is-ok',
+                    children: [jsx('span', { className: 'rdot', 'aria-hidden': true }), connectedHost],
+                  })
+                : jsx('p', {
+                    className: 'dshlink-relay-status' + (relay?.status === 'error' || revoked ? ' is-error' : ''),
+                    children: paused
+                      ? (relay?.error || '已断开。点重新连接即可，不用新接入码。名额仍占用；要空出名额请点「释放名额」。')
+                      : (relay?.error || `正在连接 ${connectedHost}`),
+                  }),
+              jsxs('div', {
+                className: 'dshlink-relay-actions',
+                children: [
+                  paused
+                    ? jsx('button', {
+                        type: 'button',
+                        className: 'dshlink-primary',
+                        onClick: onReconnect,
+                        children: '重新连接',
+                      })
+                    : jsx('button', {
+                        type: 'button',
+                        className: 'dshlink-secondary',
+                        onClick: onDisconnect,
+                        children: '断开',
+                      }),
+                  jsx('button', {
+                    type: 'button',
+                    className: 'dshlink-secondary',
+                    onClick: () => { setReplace(true); setMessage('') },
+                    children: '更换',
+                  }),
+                  jsx('button', {
+                    type: 'button',
+                    className: 'dshlink-revoke',
+                    disabled: busy,
+                    onClick: release,
+                    children: '释放名额',
+                  }),
+                  jsx(RelayControlLink, { url: relay?.controlUrl || parsedEnroll?.controlUrl }),
+                ],
+              }),
+            ],
+          }),
+          message ? jsx('p', { className: 'dshlink-relay-status is-error', children: message }) : null,
+          jsx(ReplacedRelayBanner, { host: relay?.replacedRelayHost, controlUrl: relay?.replacedRelayControlUrl, onAck: onAckReplaced }),
+        ],
       })
     }
     return jsxs('form', {
@@ -662,12 +794,20 @@ const createPanelModule = (require) => {
               id: 'dsh-relay-paste',
               className: 'dshlink-field',
               value: paste,
-              placeholder: '粘贴接入码',
+              placeholder: '粘贴控制台接入码',
               onChange: (event) => { setPaste(event.target.value); setMessage('') },
               autoComplete: 'off',
               spellCheck: false,
             }),
           ],
+        }),
+        jsx('p', {
+          className: 'dshlink-relay-status' + (revoked ? ' is-error' : ''),
+          children: revoked
+            ? (relay?.error || '接入已被控制台吊销。请到控制台签发新接入码后再接入。')
+            : enrolled
+              ? '同一电脑贴新码会换新路由，不占额外名额。换到别的 Relay 会先确认；插件会尝试从原控制台移除这台电脑。'
+              : '接入码来自 Relay 控制台。手机扫的是插件配对码，不是登录账号。',
         }),
         jsxs('div', {
           className: 'dshlink-relay-actions',
@@ -684,22 +824,45 @@ const createPanelModule = (require) => {
               onClick: () => setReplace(false),
               children: '取消',
             }) : null,
+            jsx(RelayControlLink, { url: relay?.controlUrl || parsedEnroll?.controlUrl }),
           ],
         }),
         message ? jsx('p', { className: 'dshlink-relay-status is-error', children: message }) : null,
+        jsx(ReplacedRelayBanner, { host: relay?.replacedRelayHost, controlUrl: relay?.replacedRelayControlUrl, onAck: onAckReplaced }),
       ],
     })
   }
 
-  function RemoteBody({ info, devices, approve, revoke, revokeAll, relay, onEnroll, onDisconnect }) {
+  function phoneRelayRouteHint({ routeRotated, previousReleased } = {}) {
+    if (!routeRotated) return ''
+    if (previousReleased === false) {
+      return '云端路由已更换，原 Relay 名额可能仍占用。同一网络下的手机下次打开即可跟上；纯远程请重新扫云端配对码。手机不登录控制台。'
+    }
+    return '云端路由已更换。同一网络下的手机下次打开即可跟上；纯远程请重新扫云端配对码。手机不登录控制台。'
+  }
+
+  function showCloudPairQR(relay) {
+    if (!relay) return false
+    if (relay.status === 'revoked' || relay.status === 'paused') return false
+    return relay.enrolled === true
+  }
+
+  function cloudPairHint(online) {
+    return online
+      ? '扫这张云端配对码。手机不登录控制台。'
+      : 'Relay 连上后即可扫这张云端码。同一网络也可先用局域网。手机不登录控制台。'
+  }
+
+  function RemoteBody({ info, devices, approve, revoke, revokeAll, relay, onEnroll, onDisconnect, onReconnect, onRelease, onAckReplaced, phoneHint }) {
     const pairingCode = info?.pairingCode || ''
     const online = relay?.status === 'online'
     return jsxs('div', {
       className: 'dshlink-remote',
       children: [
-        jsx(RelayForm, { relay, onEnroll, onDisconnect }),
-        online
-          ? jsx(PairCard, { via: 'relay', code: pairingCode, label: '云端配对码' })
+        jsx(RelayForm, { relay, onEnroll, onDisconnect, onReconnect, onRelease, onAckReplaced }),
+        phoneHint ? jsx('p', { className: 'dshlink-pair-hint', children: phoneHint }) : null,
+        showCloudPairQR(relay)
+          ? jsx(PairCard, { via: 'relay', code: pairingCode, label: '云端配对码', hint: cloudPairHint(online), stamp: relay?.pairStamp })
           : null,
         jsx(DeviceSection, { devices: devicesVia(devices, 'relay'), approve, revoke, revokeAll }),
       ],
@@ -726,7 +889,7 @@ const createPanelModule = (require) => {
     })
   }
 
-  function ConnectionBody({ info, devices, err, revoke, approve, revokeAll, setRequireConfirm, relay, onEnroll, onDisconnect, load }) {
+  function ConnectionBody({ info, devices, err, revoke, approve, revokeAll, setRequireConfirm, relay, onEnroll, onDisconnect, onReconnect, onRelease, onAckReplaced, load, phoneHint }) {
     const [active, setActive] = React.useState('lan')
     React.useEffect(() => { load?.() }, [active, load])
     if (err) return jsx('div', { className: 'dshlink-status is-error', children: `加载失败：${err}` })
@@ -738,7 +901,7 @@ const createPanelModule = (require) => {
         jsx(ExposureBanner, { exposure: info.exposure }),
         active === 'lan'
           ? jsx(LanBody, { info, devices, approve, revoke, revokeAll, setRequireConfirm })
-          : jsx(RemoteBody, { info, devices, approve, revoke, revokeAll, relay, onEnroll, onDisconnect }),
+          : jsx(RemoteBody, { info, devices, approve, revoke, revokeAll, relay, onEnroll, onDisconnect, onReconnect, onRelease, onAckReplaced, phoneHint }),
       ],
     })
   }
@@ -748,6 +911,7 @@ const createPanelModule = (require) => {
     const [devices, setDevices] = React.useState([])
     const [relay, setRelay] = React.useState(null)
     const [err, setErr] = React.useState('')
+    const [phoneHint, setPhoneHint] = React.useState('')
 
     const load = React.useCallback(async () => {
       try {
@@ -824,26 +988,54 @@ const createPanelModule = (require) => {
       }
     }
 
-    const onEnroll = async ({ address, inviteCode, insecureTls, tlsFingerprint }) => {
+    const onEnroll = async ({ address, inviteCode, insecureTls, tlsFingerprint, controlUrl }, confirmRelaySwitch = false) => {
       const res = await fetch('/dsh-link/relay-enroll', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ address, inviteCode, insecureTls, tlsFingerprint }),
+        body: JSON.stringify({ address, inviteCode, insecureTls, tlsFingerprint, confirmRelaySwitch, controlUrl }),
       })
       const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
+      if (res.status === 409 && data.code === 'relay_switch') {
+        if (!window.confirm(data.error || '换到另一台 Relay 时，插件会尝试从原控制台移除这台电脑。确认继续？')) return
+        return onEnroll({ address, inviteCode, insecureTls, tlsFingerprint, controlUrl }, true)
+      }
+      if (!res.ok) {
+        await load().catch(() => {})
+        throw new Error(data.error || `HTTP ${res.status}`)
+      }
+      setPhoneHint(phoneRelayRouteHint({
+        routeRotated: data.routeRotated === true,
+        previousReleased: data.previousReleased,
+      }))
       await load()
     }
     const onDisconnect = async () => {
       await fetch('/dsh-link/relay-disconnect', { method: 'POST' })
       await load()
     }
-    return { info, devices, err, revoke, approve, revokeAll, setRequireConfirm, relay, onEnroll, onDisconnect, load }
+    const onRelease = async () => {
+      if (!window.confirm('从控制台移除这台电脑？名额立刻空出，手机云端配对会失效，需要新接入码才能再连。只想暂停请用「断开」。')) return
+      const res = await fetch('/dsh-link/relay-release', { method: 'POST' })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
+      await load()
+    }
+    const onReconnect = async () => {
+      const res = await fetch('/dsh-link/relay-reconnect', { method: 'POST' })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
+      await load()
+    }
+    const onAckReplaced = async () => {
+      await fetch('/dsh-link/relay-ack-replaced', { method: 'POST' })
+      await load()
+    }
+    return { info, devices, err, revoke, approve, revokeAll, setRequireConfirm, relay, onEnroll, onDisconnect, onReconnect, onRelease, onAckReplaced, load, phoneHint }
   }
 
   function LinkPanel() {
     const [open, setOpen] = React.useState(false)
-    const { info, devices, err, revoke, approve, revokeAll, setRequireConfirm, relay, onEnroll, onDisconnect, load } = usePairData(open)
+    const { info, devices, err, revoke, approve, revokeAll, setRequireConfirm, relay, onEnroll, onDisconnect, onReconnect, onRelease, onAckReplaced, load, phoneHint } = usePairData(open)
 
     React.useEffect(() => {
       window.__dshlinkOpenPanel = () => setOpen(true)
@@ -873,7 +1065,7 @@ const createPanelModule = (require) => {
                 onClick: (e) => e.stopPropagation(),
                 children: [
                   jsx(BrandHeader, { status: connectionStatus(info, relay) }),
-                  jsx(ConnectionBody, { info, devices, err, revoke, approve, revokeAll, setRequireConfirm, relay, onEnroll, onDisconnect, load }),
+                  jsx(ConnectionBody, { info, devices, err, revoke, approve, revokeAll, setRequireConfirm, relay, onEnroll, onDisconnect, onReconnect, onRelease, onAckReplaced, load, phoneHint }),
                   jsx('button', {
                     type: 'button',
                     className: 'dshlink-close',
@@ -889,7 +1081,7 @@ const createPanelModule = (require) => {
   }
 
   function DshLinkSettingsSection() {
-    const { info, devices, err, revoke, approve, revokeAll, setRequireConfirm, relay, onEnroll, onDisconnect, load } = usePairData(true)
+    const { info, devices, err, revoke, approve, revokeAll, setRequireConfirm, relay, onEnroll, onDisconnect, onReconnect, onRelease, onAckReplaced, load, phoneHint } = usePairData(true)
 
     return jsxs(React.Fragment, {
       children: [
@@ -898,7 +1090,7 @@ const createPanelModule = (require) => {
           className: 'dshlink-settings dshlink-root',
           children: [
             jsx(BrandHeader, { status: connectionStatus(info, relay) }),
-            jsx(ConnectionBody, { info, devices, err, revoke, approve, revokeAll, setRequireConfirm, relay, onEnroll, onDisconnect, load }),
+            jsx(ConnectionBody, { info, devices, err, revoke, approve, revokeAll, setRequireConfirm, relay, onEnroll, onDisconnect, onReconnect, onRelease, onAckReplaced, load, phoneHint }),
           ],
         }),
       ],

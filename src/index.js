@@ -17,6 +17,10 @@ import { zstdDecompressSync } from "node:zlib"
 import z from "@deepseek-ai/schemastery"
 import QRCode from "qrcode"
 import { clampHistoryMaxMessages, projectHistoryPage } from "./history.js"
+import { mimeFromName, resolveWorkspaceFile } from "./workspace-file.js"
+import { resolveSessionLogPath } from "./session-log-path.js"
+import { mobileSessionSummary } from "./mobile-session-summary.js"
+import { omitNullFields, optionalString } from "./optional-string.js"
 import {
   consumePairingCode, ensurePairingCode, ensureTokenKey, findDeviceByToken, hmacDeviceToken, hydratePairing,
   persistablePairing, randomToken, readDeviceToken, revokeDevice, verifyPairingCode,
@@ -45,8 +49,8 @@ import {
   createRequestRegistry,
   mapApprovalUiStatus,
 } from "./request-lifecycle.js"
-import { deriveAddresses, generateHostKey, hostKeyFromSeed, resolveEnrollText, unb64u } from "./relay/crypto.js"
-import { enroll as enrollRelay, normalizeTlsFingerprint, RelayAgent } from "./relay/agent.js"
+import { deriveAddresses, generateHostKey, hostKeyFromSeed, nextRelayControlURL, attachRelayControlUrl, previousRelayReleaseTarget, rememberedRelayExtras, rememberReplacedRelayControlURL, rememberReplacedRelayHost, relayPairSnapshot, relayRouteRotated, cloudPairStamp, resolveEnrollText, relaySwitchConflict, decorateRelayConsoleMessage, unb64u } from "./relay/crypto.js"
+import { applyRelayRouteRevoked, enroll as enrollRelay, normalizeTlsFingerprint, RelayAgent, relayAgentShouldRun, relayPluginView, revokeSelf as revokeSelfRelay } from "./relay/agent.js"
 
 export const name = "dsh-links"
 export const inject = ["webServer", "typertGateway"]
@@ -296,16 +300,8 @@ function pairInfo(config, state, certFingerprint, via = "lan") {
     pairingCode: ensurePairingCode(state, config.pairingTtlSeconds),
     certFingerprint,
   }
-  const relay = state.relay
-  if (via === "relay" && relay?.routeId && relay?.routeSecret && relay?.clientAddress) {
-    info.relay = {
-      v: 2,
-      client: relay.clientAddress,
-      routeId: relay.routeId,
-      routeSecret: relay.routeSecret,
-    }
-    if (relay.tlsFingerprint) info.relay.tlsFingerprint = relay.tlsFingerprint
-  }
+  const snap = relayPairSnapshot(state.relay)
+  if (via === "relay" && snap) info.relay = snap
   info.requireConfirm = pairRequireConfirm(config, state)
   info.exposure = listenExposure(config, lan.infos)
   return info
@@ -637,8 +633,8 @@ async function readSessionReasoning(targetPort, sessionId, rt) {
     const cwd = row?.cwd
     if (!cwd) return new Map()
     const enc = "--" + cwd.split("/").filter(Boolean).join("-") + "--"
-    const p = join(homedir(), ".dsh", "sessions", enc, sessionId, "session.jsonl.zstd")
-    if (!existsSync(p)) return new Map()
+    const p = resolveSessionLogPath(join(homedir(), ".dsh", "sessions", enc, sessionId))
+    if (!p) return new Map()
     let st
     try { st = statSync(p) } catch { return new Map() }
     if (st.size > 32 * 1024 * 1024) return new Map()
@@ -919,12 +915,17 @@ async function sessionFilePath(targetPort, sessionId, rt) {
       return null
     }
     const enc = "--" + cwd.split("/").filter(Boolean).join("-") + "--"
-    const p = join(homedir(), ".dsh", "sessions", enc, sessionId, "session.jsonl.zstd")
-    if (!existsSync(p)) {
+    const p = resolveSessionLogPath(join(homedir(), ".dsh", "sessions", enc, sessionId))
+    if (!p) {
       rt.sessionFiles.set(sessionId, { missingUntil: Date.now() + 10_000 })
       return null
     }
-    rt.sessionFiles.set(sessionId, { path: p, lastSize: undefined, lastMtime: undefined })
+    const prev = cached?.path
+    rt.sessionFiles.set(sessionId, {
+      path: p,
+      lastSize: prev === p ? cached?.lastSize : undefined,
+      lastMtime: prev === p ? cached?.lastMtime : undefined,
+    })
     return p
   } catch {
     return null
@@ -1149,31 +1150,6 @@ async function handleStreamRoute(sessionId, res, targetPort, config, req, rt, de
   })
 }
 
-function mobileSessionSummary(item) {
-  const projections = item?.projections?.values ?? {}
-  const title = typeof projections.title === "string" && projections.title.trim()
-    ? projections.title.trim()
-    : "未命名会话"
-  const parentSessionId = item.parentSessionId
-    ?? item.parentSession?.sessionId
-    ?? item.parentSession?.id
-    ?? item.spawn?.parentSessionId
-    ?? null
-  const subagentCountRaw = item.subagentCount ?? item.activeSubagentCount
-    ?? (Array.isArray(item.subagents) ? item.subagents.length : null)
-  return {
-    sessionId: item.sessionId,
-    title,
-    updatedAt: item.updatedAt,
-    running: Boolean(item.running),
-    blank: Boolean(item.blank),
-    cwd: item.cwd ?? null,
-    agentPreset: item.agentPreset ?? null,
-    origin: item.origin ?? null,
-    parentSessionId: parentSessionId ?? null,
-    subagentCount: Number.isFinite(subagentCountRaw) ? subagentCountRaw : null,
-  }
-}
 
 function dropDevice(state, rt, device, exceptReq) {
   revokeDevice(null, device.deviceId)
@@ -1256,6 +1232,7 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
         device: { name: device.name },
         sessions,
         webPath: "/",
+        relay: relayPairSnapshot(state.relay),
       })
     }
 
@@ -1290,7 +1267,11 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
       else if (typeof body.cwd === "string" && body.cwd.trim()) payload.cwd = body.cwd.trim()
       if (typeof body.agentPreset === "string" && body.agentPreset.trim()) payload.agentPreset = body.agentPreset.trim()
       const value = await callLocalRpc(targetPort, "session.create", payload)
-      return json(res, 201, { version: 1, sessionId: value.sessionId, agentPreset: value.agentPreset ?? null })
+      return json(res, 201, omitNullFields({
+        version: 1,
+        sessionId: value.sessionId,
+        agentPreset: optionalString(value.agentPreset),
+      }))
     }
 
     if (req.method === "GET" && pathname === "/dsh-link/mobile/models") {
@@ -1595,6 +1576,36 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
       return json(res, 200, { version: 1, ...rt.requests.snapshot(sessionId) })
     }
 
+    const fileMatch = pathname.match(/^\/dsh-link\/mobile\/sessions\/([^/]+)\/file$/)
+    if (req.method === "GET" && fileMatch) {
+      const sessionId = decodeURIComponent(fileMatch[1])
+      const requested = String(new URL(req.url ?? "/", "http://x").searchParams.get("path") ?? "").trim()
+      try {
+        const list = await callLocalRpc(targetPort, "session.list", {})
+        const item = (list.items ?? []).find((s) => s.sessionId === sessionId)
+        if (!item) {
+          const err = new Error("会话不存在")
+          err.status = 404
+          throw err
+        }
+        const cwd = optionalString(item?.cwd)
+        const resolved = resolveWorkspaceFile(cwd, requested)
+        const body = readFileSync(resolved.abs)
+        const mime = mimeFromName(resolved.name)
+        res.writeHead(200, {
+          "content-type": mime,
+          "content-length": body.length,
+          "cache-control": "private, max-age=60",
+          "x-dsh-link-filename": encodeURIComponent(resolved.name),
+        })
+        res.end(body)
+      } catch (err) {
+        const status = Number.isInteger(err?.status) ? err.status : 500
+        return json(res, status, { error: err?.message || "读取文件失败" })
+      }
+      return
+    }
+
     const historyMatch = pathname.match(/^\/dsh-link\/mobile\/sessions\/([^/]+)\/history$/)
     if (req.method === "GET" && historyMatch) {
       const sessionId = decodeURIComponent(historyMatch[1])
@@ -1702,6 +1713,9 @@ const PANEL_ONLY_PATHS = new Set([
   "/dsh-link/relay-status",
   "/dsh-link/relay-enroll",
   "/dsh-link/relay-disconnect",
+  "/dsh-link/relay-reconnect",
+  "/dsh-link/relay-release",
+  "/dsh-link/relay-ack-replaced",
 ])
 
 function sessionEvents(session) {
@@ -1773,7 +1787,7 @@ export function apply(ctx, config) {
   }
   const startRelayAgent = () => {
     stopRelayAgent()
-    if (!state.relay?.routeSecret || !state.relay?.agentAddress) return
+    if (!relayAgentShouldRun(state.relay)) return
     if (state.relay.insecureTls && !state.relay.tlsPinTrusted) {
       const fp = String(state.relay.tlsFingerprint ?? "").replace(/[:\s]/g, "").toLowerCase()
       if (/^[0-9a-f]{64}$/.test(fp)) {
@@ -1785,7 +1799,7 @@ export function apply(ctx, config) {
         return
       }
     }
-    relayAgent = new RelayAgent({
+    const agent = new RelayAgent({
       address: state.relay.agentAddress,
       credentials: {
         keys: hostKeyFromSeed(unb64u(state.relay.hostSeed), unb64u(state.relay.hostPublicKey)),
@@ -1805,11 +1819,18 @@ export function apply(ctx, config) {
           throw err
         }
       },
+      onRevoked: () => {
+        if (applyRelayRouteRevoked(state.relay, agent.credentials.routeId)) {
+          saveState(stateFile, state)
+        }
+        if (relayAgent === agent) stopRelayAgent()
+      },
       pluginPort: config.port,
       logger: ctx.logger,
       insecureTls: Boolean(state.relay.insecureTls),
       tlsFingerprint: state.relay.tlsFingerprint ?? "",
     })
+    relayAgent = agent
     relayAgent.start().catch((err) => ctx.logger.warn(`dsh-links relay: ${err?.message ?? err}`))
   }
 
@@ -1906,14 +1927,23 @@ export function apply(ctx, config) {
       handler: (req, res) => {
         if (!requireLoopbackSameOrigin(req, res)) return
         json(res, 200, {
-          status: relayAgent?.status ?? (state.relay?.routeId ? "offline" : "idle"),
-          error: relayAgent?.error ?? "",
-          enrolled: Boolean(state.relay?.routeId && state.relay?.routeSecret),
+          ...relayPluginView({
+            agent: relayAgent,
+            routeId: state.relay?.routeId,
+            routeSecret: state.relay?.routeSecret,
+            inactiveReason: state.relay?.inactiveReason,
+            paused: Boolean(state.relay?.paused),
+            controlUrl: state.relay?.controlUrl,
+          }),
           agentAddress: state.relay?.agentAddress ?? "",
           clientAddress: state.relay?.clientAddress ?? "",
           insecureTls: Boolean(state.relay?.insecureTls),
           tlsFingerprint: state.relay?.tlsFingerprint ?? "",
           tlsPinTrusted: Boolean(state.relay?.tlsPinTrusted),
+          replacedRelayHost: state.relay?.replacedRelayHost ?? "",
+          replacedRelayControlUrl: state.relay?.replacedRelayControlUrl ?? "",
+          controlUrl: state.relay?.controlUrl ?? "",
+          pairStamp: cloudPairStamp(state.relay),
         })
       },
     }),
@@ -1933,8 +1963,17 @@ export function apply(ctx, config) {
         let tlsFingerprint = ""
         let fromEnroll = null
         try {
-          fromEnroll = resolveEnrollText(body.enroll, { address: addressRaw, insecureTls, tlsFingerprint: body.tlsFingerprint })
-            || resolveEnrollText(inviteCodeRaw, { address: addressRaw, insecureTls, tlsFingerprint: body.tlsFingerprint })
+          const extras = addressRaw
+            ? { address: addressRaw, insecureTls, tlsFingerprint: body.tlsFingerprint }
+            : rememberedRelayExtras({
+              inactiveReason: state.relay?.inactiveReason,
+              paused: state.relay?.paused,
+              agentAddress: state.relay?.agentAddress,
+              insecureTls: state.relay?.insecureTls,
+              tlsFingerprint: state.relay?.tlsFingerprint,
+            })
+          fromEnroll = resolveEnrollText(body.enroll, extras)
+            || resolveEnrollText(inviteCodeRaw, extras)
         } catch (err) {
           return json(res, 400, { error: err?.message ?? "接入码无效" })
         }
@@ -1951,8 +1990,27 @@ export function apply(ctx, config) {
           }
         }
         if (!inviteCode || !address) return json(res, 400, { error: "请填写 Relay 地址和接入码" })
+        let derived
         try {
-          const derived = deriveAddresses(address)
+          derived = deriveAddresses(address)
+        } catch (err) {
+          return json(res, 400, { error: err?.message ?? "Relay 地址无效" })
+        }
+        const switchConflict = relaySwitchConflict(state.relay?.agentAddress, derived.agentAddress, {
+          confirm: body.confirmRelaySwitch === true,
+          controlUrl: state.relay?.controlUrl,
+        })
+        if (switchConflict) return json(res, 409, switchConflict)
+        const previousRelease = previousRelayReleaseTarget(state.relay, derived.agentAddress)
+        const replacedRelayHost = rememberReplacedRelayHost(state.relay, derived.agentAddress)
+        const replacedRelayControlUrl = rememberReplacedRelayControlURL(state.relay, derived.agentAddress)
+        const routeRotated = relayRouteRotated(state.relay)
+        const controlUrl = nextRelayControlURL(state.relay, derived.agentAddress, {
+          controlUrl: fromEnroll?.controlUrl || body.controlUrl,
+        })
+        const resumeOnFailure = relayAgentShouldRun(state.relay)
+        stopRelayAgent()
+        try {
           let keys
           if (state.relay?.hostSeed && state.relay?.hostPublicKey) {
             keys = hostKeyFromSeed(unb64u(state.relay.hostSeed), unb64u(state.relay.hostPublicKey))
@@ -1963,10 +2021,26 @@ export function apply(ctx, config) {
             address: derived.agentAddress,
             inviteCode,
             hostId: state.deviceId,
+            hostName: hostname(),
             keys,
             insecureTls,
             tlsFingerprint,
           })
+          let previousReleased = false
+          if (previousRelease) {
+            try {
+              await revokeSelfRelay({
+                address: previousRelease.address,
+                routeId: previousRelease.routeId,
+                keys: hostKeyFromSeed(unb64u(previousRelease.hostSeed), unb64u(previousRelease.hostPublicKey)),
+                insecureTls: previousRelease.insecureTls,
+                tlsFingerprint: previousRelease.tlsFingerprint,
+              })
+              previousReleased = true
+            } catch {
+              previousReleased = false
+            }
+          }
           state.relay = {
             agentAddress: derived.agentAddress,
             clientAddress: derived.clientAddress,
@@ -1980,14 +2054,42 @@ export function apply(ctx, config) {
             insecureTls,
             tlsPinTrusted: insecureTls,
           }
+          if (controlUrl) state.relay.controlUrl = controlUrl
+          if (previousRelease && !previousReleased && replacedRelayHost) {
+            state.relay.replacedRelayHost = replacedRelayHost
+            if (replacedRelayControlUrl) state.relay.replacedRelayControlUrl = replacedRelayControlUrl
+          }
           saveState(stateFile, state)
           startRelayAgent()
-          json(res, 200, { ok: true, agentAddress: derived.agentAddress, clientAddress: derived.clientAddress })
+          json(res, 200, { ok: true, agentAddress: derived.agentAddress, clientAddress: derived.clientAddress, previousReleased, routeRotated })
         } catch (err) {
+          if (resumeOnFailure) startRelayAgent()
+          const remembered = attachRelayControlUrl(state.relay, controlUrl, derived.agentAddress)
+          if (remembered !== state.relay) {
+            state.relay = remembered
+            saveState(stateFile, state)
+          }
           const raw = String(err?.message ?? "接入失败")
-          const error = raw === "enroll failed" ? "接入未成功。请到控制台新创建一次接入码后再试。" : raw
+          const error = decorateRelayConsoleMessage(
+            raw === "enroll failed" ? "接入未成功。请到控制台新创建一次接入码后再试。" : raw,
+            controlUrl,
+          )
           json(res, 400, { error })
         }
+      },
+    }),
+    web.register({
+      kind: "exact",
+      path: "/dsh-link/relay-ack-replaced",
+      handler: async (req, res) => {
+        if (!requireLoopbackSameOrigin(req, res)) return
+        if (req.method !== "POST") return json(res, 405, { error: "method not allowed" })
+        if (state.relay?.replacedRelayHost || state.relay?.replacedRelayControlUrl) {
+          delete state.relay.replacedRelayHost
+          delete state.relay.replacedRelayControlUrl
+          saveState(stateFile, state)
+        }
+        json(res, 200, { ok: true })
       },
     }),
     web.register({
@@ -1997,15 +2099,56 @@ export function apply(ctx, config) {
         if (!requireLoopbackSameOrigin(req, res)) return
         if (req.method !== "POST") return json(res, 405, { error: "method not allowed" })
         stopRelayAgent()
-        if (state.relay) {
-          delete state.relay.routeId
-          delete state.relay.routeSecret
-          delete state.relay.capability
-          delete state.relay.generation
-          delete state.relay.tlsFingerprint
-          delete state.relay.tlsPinTrusted
+        if (state.relay?.routeId && state.relay?.routeSecret) {
+          state.relay.paused = true
+          delete state.relay.inactiveReason
         }
         saveState(stateFile, state)
+        json(res, 200, { ok: true })
+      },
+    }),
+    web.register({
+      kind: "exact",
+      path: "/dsh-link/relay-release",
+      handler: async (req, res) => {
+        if (!requireLoopbackSameOrigin(req, res)) return
+        if (req.method !== "POST") return json(res, 405, { error: "method not allowed" })
+        const relay = state.relay
+        if (!relay?.routeId || !relay?.hostSeed || !relay?.hostPublicKey || !relay?.agentAddress) {
+          return json(res, 400, { error: "没有可释放的接入。" })
+        }
+        const routeId = relay.routeId
+        const resumeOnFailure = relayAgentShouldRun(relay)
+        stopRelayAgent()
+        try {
+          await revokeSelfRelay({
+            address: relay.agentAddress,
+            routeId,
+            keys: hostKeyFromSeed(unb64u(relay.hostSeed), unb64u(relay.hostPublicKey)),
+            insecureTls: Boolean(relay.insecureTls),
+            tlsFingerprint: relay.tlsFingerprint ?? "",
+          })
+          applyRelayRouteRevoked(relay, routeId, { released: true })
+          saveState(stateFile, state)
+          json(res, 200, { ok: true })
+        } catch (err) {
+          if (resumeOnFailure) startRelayAgent()
+          json(res, 400, { error: err?.message ?? "释放名额失败" })
+        }
+      },
+    }),
+    web.register({
+      kind: "exact",
+      path: "/dsh-link/relay-reconnect",
+      handler: async (req, res) => {
+        if (!requireLoopbackSameOrigin(req, res)) return
+        if (req.method !== "POST") return json(res, 405, { error: "method not allowed" })
+        if (!state.relay?.routeId || !state.relay?.routeSecret) {
+          return json(res, 400, { error: "没有可重连的接入。请粘贴控制台接入码。" })
+        }
+        delete state.relay.paused
+        saveState(stateFile, state)
+        startRelayAgent()
         json(res, 200, { ok: true })
       },
     }),

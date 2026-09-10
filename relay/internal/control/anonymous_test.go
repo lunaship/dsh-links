@@ -259,15 +259,17 @@ func TestRevokeSelf(t *testing.T) {
 }
 
 // Daily byte budget: once an anonymous host crosses the budget its route is
-// reported revoked (suspended) and active streams get pushed out; the next
-// UTC midnight resets.
+// held (RATE_LIMITED) until the next UTC midnight. Credentials stay valid.
 func TestAnonymousDailyBudgetSuspends(t *testing.T) {
 	suspended := make(chan string, 1)
 	ctrl, st := newTestControlWithPolicy(t, AnonymousPolicy{Enabled: true, MaxHosts: 2, MaxStreams: 2, DailyBytes: 1000}, 0)
 	defer st.Close()
 	ctrl.SetRevokeFn(func(routeID, hostID string) (int, int) {
+		t.Errorf("budget hold must not push REVOKED route=%s host=%s", routeID, hostID)
+		return 0, 0
+	})
+	ctrl.SetSuspendFn(func(routeID, hostID string) {
 		suspended <- hostID
-		return 1, 1
 	})
 	hostPub, hostPriv, _ := ed25519.GenerateKey(rand.Reader)
 	nonce, _ := cryptoutil.GenerateNonce()
@@ -285,11 +287,11 @@ func TestAnonymousDailyBudgetSuspends(t *testing.T) {
 	if err := ctrl.ReportUsage(res.RouteId, 600, 0, 1); err != nil {
 		t.Fatal(err)
 	}
-	_, _, _, _, revoked, err := ctrl.LookupRouteStatus(res.RouteId)
-	if err != nil || revoked {
-		t.Fatalf("under budget revoked=%v err=%v", revoked, err)
+	_, _, _, _, revoked, held, err := ctrl.LookupRouteStatus(res.RouteId)
+	if err != nil || revoked || held {
+		t.Fatalf("under budget revoked=%v suspended=%v err=%v", revoked, held, err)
 	}
-	// Crossing the budget suspends and pushes a revoke.
+	// Crossing the budget suspends and evicts streams without REVOKED.
 	if err := ctrl.ReportUsage(res.RouteId, 500, 0, 1); err != nil {
 		t.Fatal(err)
 	}
@@ -299,11 +301,11 @@ func TestAnonymousDailyBudgetSuspends(t *testing.T) {
 			t.Fatalf("suspended host %q want %q", hostID, res.HostId)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("budget suspension did not push revoke")
+		t.Fatal("budget suspension did not push stream eviction")
 	}
-	_, _, _, _, revoked, err = ctrl.LookupRouteStatus(res.RouteId)
-	if err != nil || !revoked {
-		t.Fatalf("over budget revoked=%v err=%v, want revoked", revoked, err)
+	_, _, _, _, revoked, held, err = ctrl.LookupRouteStatus(res.RouteId)
+	if err != nil || revoked || !held {
+		t.Fatalf("over budget revoked=%v suspended=%v err=%v, want hold", revoked, held, err)
 	}
 	// Invite-enrolled hosts are exempt from the anonymous budget.
 	invite, _ := ctrl.CreateInvite(time.Hour)
@@ -316,9 +318,9 @@ func TestAnonymousDailyBudgetSuspends(t *testing.T) {
 	if err := ctrl.ReportUsage(inviteRes.RouteId, 1<<30, 1<<30, 1); err != nil {
 		t.Fatal(err)
 	}
-	_, _, _, _, revoked, err = ctrl.LookupRouteStatus(inviteRes.RouteId)
-	if err != nil || revoked {
-		t.Fatalf("invite host budget-exempt revoked=%v err=%v", revoked, err)
+	_, _, _, _, revoked, held, err = ctrl.LookupRouteStatus(inviteRes.RouteId)
+	if err != nil || revoked || held {
+		t.Fatalf("invite host budget-exempt revoked=%v suspended=%v err=%v", revoked, held, err)
 	}
 }
 

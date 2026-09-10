@@ -93,18 +93,31 @@ func TestPublicHostFromCertSkipsLoopback(t *testing.T) {
 }
 
 func TestBuildEnrollURI(t *testing.T) {
-	uri := BuildEnrollURI("relay.dshlinks.com", "8444", "invite-code", strings.Repeat("ab", 32))
+	uri := BuildEnrollURI("relay.dshlinks.com", "8444", "invite-code", strings.Repeat("ab", 32), "")
 	if !strings.HasPrefix(uri, "dsh-relay://relay.dshlinks.com/?") {
 		t.Fatalf("uri=%s", uri)
 	}
 	if !strings.Contains(uri, "i=invite-code") || !strings.Contains(uri, "fp="+strings.Repeat("ab", 32)) {
 		t.Fatalf("uri missing fields: %s", uri)
 	}
-	plain := BuildEnrollURI("relay.dshlinks.com", DefaultAgentPort, "invite-code", "")
+	if strings.Contains(uri, "c=") {
+		t.Fatalf("self-host enroll leaked control URL: %s", uri)
+	}
+	plain := BuildEnrollURI("relay.dshlinks.com", DefaultAgentPort, "invite-code", "", "")
 	if strings.Contains(plain, "fp=") {
 		t.Fatalf("public-CA enroll leaked fingerprint: %s", plain)
 	}
-	if BuildEnrollURI("", "8444", "invite", "") != "" {
+	if BuildEnrollURI("", "8444", "invite", "", "") != "" {
 		t.Fatal("empty host produced a URI")
+	}
+	hosted := BuildEnrollURI("relay.dshlinks.com", DefaultAgentPort, "invite-code", "", "https://control.example.com/panel")
+	if !strings.Contains(hosted, "c=") || !strings.Contains(hosted, "control.example.com") {
+		t.Fatalf("hosted enroll missing control URL: %s", hosted)
+	}
+	if strings.Contains(BuildEnrollURI("relay.dshlinks.com", DefaultAgentPort, "invite-code", "", "http://control.example.com"), "c=") {
+		t.Fatal("http control URL must not be packed")
+	}
+	if strings.Contains(BuildEnrollURI("relay.dshlinks.com", DefaultAgentPort, "invite-code", "", "https://127.0.0.1:8080"), "c=") {
+		t.Fatal("loopback control URL must not be packed")
 	}
 }

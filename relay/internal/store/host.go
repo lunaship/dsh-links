@@ -9,6 +9,7 @@ import (
 type Host struct {
 	ID         string
 	UserID     string
+	LoginName  string
 	RouteID    []byte // 16B
 	HostName   string
 	HostPubKey []byte // 32B
@@ -103,7 +104,15 @@ func (s *Store) GetHostByPubKey(pub []byte) (*Host, error) {
 }
 
 func (s *Store) ListHosts() ([]Host, error) {
-	rows, err := s.db.Query(`SELECT id, user_id, route_id, host_name, host_pubkey, generation, max_streams, version, last_seen_at, revoked_at, created_at FROM hosts ORDER BY created_at DESC`)
+	return s.listHostsQuery(`SELECT hosts.id, hosts.user_id, COALESCE(users.login_name,''), hosts.route_id, hosts.host_name, hosts.host_pubkey, hosts.generation, hosts.max_streams, hosts.version, hosts.last_seen_at, hosts.revoked_at, hosts.created_at FROM hosts LEFT JOIN users ON users.id = hosts.user_id ORDER BY hosts.created_at DESC`)
+}
+
+func (s *Store) ListHostsByUser(userID string) ([]Host, error) {
+	return s.listHostsQuery(`SELECT hosts.id, hosts.user_id, COALESCE(users.login_name,''), hosts.route_id, hosts.host_name, hosts.host_pubkey, hosts.generation, hosts.max_streams, hosts.version, hosts.last_seen_at, hosts.revoked_at, hosts.created_at FROM hosts LEFT JOIN users ON users.id = hosts.user_id WHERE hosts.user_id=? ORDER BY hosts.created_at DESC`, userID)
+}
+
+func (s *Store) listHostsQuery(q string, args ...any) ([]Host, error) {
+	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +122,7 @@ func (s *Store) ListHosts() ([]Host, error) {
 		var h Host
 		var last sql.NullInt64
 		var revoked sql.NullInt64
-		if err := rows.Scan(&h.ID, &h.UserID, &h.RouteID, &h.HostName, &h.HostPubKey, &h.Generation, &h.MaxStreams, &h.Version, &last, &revoked, &h.CreatedAt); err != nil {
+		if err := rows.Scan(&h.ID, &h.UserID, &h.LoginName, &h.RouteID, &h.HostName, &h.HostPubKey, &h.Generation, &h.MaxStreams, &h.Version, &last, &revoked, &h.CreatedAt); err != nil {
 			return nil, err
 		}
 		if last.Valid {
@@ -201,21 +210,41 @@ func (s *Store) DeleteHost(id string) error {
 }
 
 func (s *Store) PurgeRevokedHosts() (int64, error) {
+	return s.purgeRevokedHosts("")
+}
+
+// PurgeRevokedHostsByUser deletes one tenant's revoked Host rows and their
+// credentials. Live Hosts are kept. Empty userID is a no-op.
+func (s *Store) PurgeRevokedHostsByUser(userID string) (int64, error) {
+	if userID == "" {
+		return 0, nil
+	}
+	return s.purgeRevokedHosts(userID)
+}
+
+func (s *Store) purgeRevokedHosts(userID string) (int64, error) {
+	filter := `revoked_at IS NOT NULL`
+	var args []any
+	if userID != "" {
+		filter += ` AND user_id=?`
+		args = append(args, userID)
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return 0, err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`DELETE FROM credentials WHERE host_id IN (SELECT id FROM hosts WHERE revoked_at IS NOT NULL)`); err != nil {
+	inHosts := `host_id IN (SELECT id FROM hosts WHERE ` + filter + `)`
+	if _, err := tx.Exec(`DELETE FROM credentials WHERE `+inHosts, args...); err != nil {
 		return 0, err
 	}
-	if _, err := tx.Exec(`DELETE FROM renewal_replays WHERE host_id IN (SELECT id FROM hosts WHERE revoked_at IS NOT NULL)`); err != nil {
+	if _, err := tx.Exec(`DELETE FROM renewal_replays WHERE `+inHosts, args...); err != nil {
 		return 0, err
 	}
-	if _, err := tx.Exec(`DELETE FROM stats_daily WHERE host_id IN (SELECT id FROM hosts WHERE revoked_at IS NOT NULL)`); err != nil {
+	if _, err := tx.Exec(`DELETE FROM stats_daily WHERE `+inHosts, args...); err != nil {
 		return 0, err
 	}
-	res, err := tx.Exec(`DELETE FROM hosts WHERE revoked_at IS NOT NULL`)
+	res, err := tx.Exec(`DELETE FROM hosts WHERE `+filter, args...)
 	if err != nil {
 		return 0, err
 	}
@@ -229,6 +258,26 @@ func (s *Store) PurgeRevokedHosts() (int64, error) {
 func (s *Store) UpdateHostHeartbeat(id string) error {
 	now := time.Now().Unix()
 	_, err := s.db.Exec(`UPDATE hosts SET last_seen_at=? WHERE id=?`, now, id)
+	return err
+}
+
+func (s *Store) UpdateHostHeartbeatByRoute(routeID []byte) error {
+	if len(routeID) != 16 {
+		return nil
+	}
+	now := time.Now().Unix()
+	_, err := s.db.Exec(`UPDATE hosts SET last_seen_at=? WHERE route_id=? AND revoked_at IS NULL`, now, routeID)
+	return err
+}
+
+// ClearHostHeartbeatByRoute drops last_seen_at so Control shows 离线
+// immediately when this route's Agent disconnects. Revoked rows are left
+// unchanged. Does not free a quota slot; that still requires RevokeHost.
+func (s *Store) ClearHostHeartbeatByRoute(routeID []byte) error {
+	if len(routeID) != 16 {
+		return nil
+	}
+	_, err := s.db.Exec(`UPDATE hosts SET last_seen_at=NULL WHERE route_id=? AND revoked_at IS NULL`, routeID)
 	return err
 }
 

@@ -11,6 +11,7 @@ const (
 	ErrRateLimited    = "RATE_LIMITED"
 	ErrServerBusy     = "SERVER_BUSY"
 	ErrRevoked        = "REVOKED"
+	ErrQuotaExceeded  = "QUOTA_EXCEEDED"
 )
 
 var retryable = map[string]bool{

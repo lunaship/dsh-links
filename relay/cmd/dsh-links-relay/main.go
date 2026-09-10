@@ -49,6 +49,8 @@ func main() {
 		runControl(configPath)
 	case "relay":
 		runRelay(configPath)
+	case "tenant":
+		runTenant(configPath, os.Args[2:])
 	case "help", "--help", "-h":
 		usage()
 	default:
@@ -65,12 +67,14 @@ Usage:
   dsh-links-relay init    --dir .local
   dsh-links-relay control --config .local/config.toml
   dsh-links-relay relay   --config .local/config.toml
+	dsh-links-relay tenant  --config .local/config.toml <list|hosts|create|disable|enable|password>
   dsh-links-relay help
 
 Commands:
   init     create keys, a localhost TLS certificate, and config.toml
   control  run control plane (SQLite, invites, admin API, Unix socket)
   relay    run data plane (8443/8444 TLS, registry, bridge)
+  tenant   maintainer provisioning for Control tenants (loopback admin API)
 `)
 }
 
@@ -107,6 +111,8 @@ func runControl(configPath string) {
 		log.Fatalf("open store: %v", err)
 	}
 	defer st.Close()
+
+	st.SetTenantLimits(cfg.TenantMaxLiveHosts, cfg.TenantMaxUnusedInvites)
 
 	ctrl, err := control.New(st, issuerPrivBytes, routeMaster, cfg.DefaultMaxStreamsPerRoute)
 	if err != nil {
@@ -145,11 +151,15 @@ func runControl(configPath string) {
 		log.Printf("host revoked %s host=%s delivered=%d acked=%d", routeId[:min(len(routeId), 8)], logutil.Value(hostId), delivered, acked)
 		return delivered, acked
 	})
+	ctrl.SetSuspendFn(func(routeId, hostId string) {
+		ipcSrv.BroadcastSuspend(routeId, hostId)
+	})
 
 	// Start HTTP admin
 	adminTLS := strings.TrimSpace(cfg.AdminTLSCert) != ""
-	adminSrv := control.NewServerWithSecureCookies(ctrl, adminToken, cfg.AdminUser, adminPassword, adminTLS)
+	adminSrv := control.NewServerWithSecureCookies(ctrl, adminToken, cfg.AdminUser, adminPassword, controlSecureCookies(adminTLS, cfg.AdminSecureCookies))
 	applyEnrollMeta(adminSrv, cfg)
+	adminSrv.SetPublicControlURL(cfg.PublicControlURL)
 	httpSrv := &http.Server{
 		Addr:              cfg.AdminListen,
 		Handler:           adminSrv.Handler(),
@@ -242,6 +252,8 @@ func runRelay(configPath string) {
 					host, err := ipcClient.LookupHostByRoute(sess.RouteIdRaw)
 					if err != nil || host.Revoked || host.Generation != sess.Generation {
 						reg.Revoke(sess.RouteIdStr)
+					} else if host.Suspended {
+						reg.EvictStreams(sess.RouteIdStr)
 					}
 				}
 			case <-revokePollStop:
@@ -254,6 +266,10 @@ func runRelay(configPath string) {
 	ipcClient.SetRevokeFn(func(routeId, hostId string) {
 		log.Printf("relay revoke push: route=%s host=%s", routeId[:min(len(routeId), 8)], logutil.Value(hostId))
 		reg.Revoke(routeId)
+	})
+	ipcClient.SetSuspendFn(func(routeId, hostId string) {
+		log.Printf("relay suspend push: route=%s host=%s", routeId[:min(len(routeId), 8)], logutil.Value(hostId))
+		reg.EvictStreams(routeId)
 	})
 
 	relayCtrl := &ipcControlAdapter{
@@ -335,6 +351,10 @@ func validateAdminTransport(addr string, allowNonLoopback bool, tlsCert, tlsKey 
 	return nil
 }
 
+func controlSecureCookies(adminTLS, adminSecureCookies bool) bool {
+	return adminTLS || adminSecureCookies
+}
+
 func applyEnrollMeta(server *control.Server, cfg *config.Config) {
 	if fp, err := cryptoutil.CertSHA256FingerprintFile(cfg.TLSCert); err == nil {
 		server.SetTLSFingerprint(fp)
@@ -366,6 +386,8 @@ type ipcControlAdapter struct {
 	issuerPub ed25519.PublicKey
 }
 
+var _ ingress.ControlAPI = (*ipcControlAdapter)(nil)
+
 func (a *ipcControlAdapter) Enroll(req *ingress.EnrollProxyRequest) (*ingress.EnrollProxyResponse, error) {
 	// Forward to control via IPC
 	// Encode fields to base64 for IPC
@@ -377,6 +399,7 @@ func (a *ipcControlAdapter) Enroll(req *ingress.EnrollProxyRequest) (*ingress.En
 		Nonce:         base64.RawURLEncoding.EncodeToString(req.Nonce),
 		Proof:         base64.RawURLEncoding.EncodeToString(req.Proof),
 		Challenge:     base64.RawURLEncoding.EncodeToString(req.Challenge),
+		HostName:      req.HostName,
 	}
 	resp, err := a.client.Enroll(ipcReq)
 	if err != nil {
@@ -392,16 +415,16 @@ func (a *ipcControlAdapter) Enroll(req *ingress.EnrollProxyRequest) (*ingress.En
 	}, nil
 }
 
-func (a *ipcControlAdapter) LookupHostByRoute(routeId []byte) (string, uint64, []byte, int, bool, error) {
+func (a *ipcControlAdapter) LookupHostByRoute(routeId []byte) (string, uint64, []byte, int, bool, bool, error) {
 	h, err := a.client.LookupHostByRoute(routeId)
 	if err != nil {
-		return "", 0, nil, 0, false, err
+		return "", 0, nil, 0, false, false, err
 	}
 	pubKey, err := base64.RawURLEncoding.DecodeString(h.HostPublicKey)
 	if err != nil || len(pubKey) != ed25519.PublicKeySize {
-		return "", 0, nil, 0, false, fmt.Errorf("invalid host public key from control")
+		return "", 0, nil, 0, false, false, fmt.Errorf("invalid host public key from control")
 	}
-	return h.HostID, h.Generation, pubKey, h.MaxStreams, h.Revoked, nil
+	return h.HostID, h.Generation, pubKey, h.MaxStreams, h.Revoked, h.Suspended, nil
 }
 
 func (a *ipcControlAdapter) VerifyRouteMAC(req *ingress.RouteMACProxyRequest) error {
@@ -439,6 +462,14 @@ func (a *ipcControlAdapter) Renew(req *ingress.RenewProxyRequest) (string, error
 
 func (a *ipcControlAdapter) ReportUsage(routeID []byte, rx, tx int64, connects int) error {
 	return a.client.ReportUsage(routeID, rx, tx, connects)
+}
+
+func (a *ipcControlAdapter) TouchHost(routeID []byte) error {
+	return a.client.TouchHost(routeID)
+}
+
+func (a *ipcControlAdapter) ClearHostHeartbeat(routeID []byte) error {
+	return a.client.ClearHostHeartbeat(routeID)
 }
 
 func (a *ipcControlAdapter) Bootstrap(req *ingress.BootstrapProxyRequest) (string, error) {

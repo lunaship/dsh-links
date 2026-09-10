@@ -127,3 +127,70 @@ func TestPurgeRevokedHosts(t *testing.T) {
 		t.Fatal("revoked host still present")
 	}
 }
+
+func TestPurgeByUserLeavesOthers(t *testing.T) {
+	s, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	alice, err := s.CreateTenant("alice", "Alice", "twelve-chars-min", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob, err := s.CreateTenant("bob-user", "Bob", "twelve-chars-min", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, stale, err := s.CreateInvite(alice.ID, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RevokeInvite(stale.ID); err != nil {
+		t.Fatal(err)
+	}
+	_, live, err := s.CreateInvite(bob.ID, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := s.PurgeStaleInvitesByUser(alice.ID, time.Now().Unix())
+	if err != nil || n != 1 {
+		t.Fatalf("alice invite purge n=%d err=%v", n, err)
+	}
+	bobInvites, err := s.ListInvitesByUser(bob.ID)
+	if err != nil || len(bobInvites) != 1 || bobInvites[0].ID != live.ID {
+		t.Fatalf("bob invites after alice purge: %+v err=%v", bobInvites, err)
+	}
+	aliceInvites, err := s.ListInvitesByUser(alice.ID)
+	if err != nil || len(aliceInvites) != 0 {
+		t.Fatalf("alice invites after purge: %+v", aliceInvites)
+	}
+
+	aliceRoute := make([]byte, 16)
+	aliceRoute[0] = 1
+	aliceKey := make([]byte, 32)
+	aliceKey[0] = 1
+	if _, err := s.CreateHost(alice.ID, "alice-drop", aliceRoute, aliceKey, "Alice Mac", 8, "v0.1.0", 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RevokeHost("alice-drop"); err != nil {
+		t.Fatal(err)
+	}
+	bobRoute := make([]byte, 16)
+	bobRoute[0] = 2
+	bobKey := make([]byte, 32)
+	bobKey[0] = 2
+	if _, err := s.CreateHost(bob.ID, "bob-keep", bobRoute, bobKey, "Bob Mac", 8, "v0.1.0", 1); err != nil {
+		t.Fatal(err)
+	}
+	n, err = s.PurgeRevokedHostsByUser(alice.ID)
+	if err != nil || n != 1 {
+		t.Fatalf("alice host purge n=%d err=%v", n, err)
+	}
+	if _, err := s.GetHostByID("alice-drop"); err == nil {
+		t.Fatal("alice revoked host still present")
+	}
+	if _, err := s.GetHostByID("bob-keep"); err != nil {
+		t.Fatalf("bob live host removed: %v", err)
+	}
+}

@@ -19,8 +19,13 @@ admin_user = "admin"
 
 database = "/var/lib/dsh-links-relay/control.db"
 default_max_streams_per_route = 8
+tenant_max_live_hosts = 8
+tenant_max_unused_invites = 4
 # 公网域名（插件拨号 8444 的 Agent TLS 主机名）。两者都不填时控制台
 # 只有裸邀请码，无法生成完整接入串与二维码；docker-compose 可用环境变量注入：
 #   DSH_RELAY_PUBLIC_HOST=relay.example.com docker compose up -d
 # 或在此取消注释直接填写。
 # public_host = "relay.example.com"
+# HTTPS 控制台地址（租户打开的反代 URL，指向本机 127.0.0.1:8080）。
+# 不是数据面 public_host，也不是 App 登录。自建留空。
+# public_control_url = "https://control.example.com"

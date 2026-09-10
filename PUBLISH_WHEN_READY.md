@@ -27,6 +27,6 @@ GitHub `lunaship/dsh-links` = **插件源码、Relay 源码（`relay/`）与文�
 
 ## 对外口径
 
-- **Beta / Android only / Trusted LAN / Relay 内测（需接入码）/ DSH `0.1.2-alpha.5`**。
+- **Beta / Android only / Trusted LAN / Relay 内测（需接入码）/ DSH `0.1.5-alpha.1`**。
 - 用户自行使用内网穿透仅为实验性个人部署，不是支持路径，也不提供安全或兼容承诺。
 - 不得将 `18640` 直接暴露到公网。Relay 已跑通但仍是邀请制内测；不要把接入码写进 README、Release 说明或 npm 包。

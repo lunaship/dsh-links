@@ -25,6 +25,7 @@ func (c *InProcessControl) Enroll(req *EnrollProxyRequest) (*EnrollProxyResponse
 		Nonce:         req.Nonce,
 		Challenge:     req.Challenge,
 		Proof:         req.Proof,
+		HostName:      req.HostName,
 	})
 	if err != nil {
 		return nil, err
@@ -38,7 +39,7 @@ func (c *InProcessControl) Enroll(req *EnrollProxyRequest) (*EnrollProxyResponse
 	}, nil
 }
 
-func (c *InProcessControl) LookupHostByRoute(routeId []byte) (string, uint64, []byte, int, bool, error) {
+func (c *InProcessControl) LookupHostByRoute(routeId []byte) (string, uint64, []byte, int, bool, bool, error) {
 	return c.ctrl.LookupRouteStatus(routeId)
 }
 
@@ -72,6 +73,14 @@ var _ ControlAPI = (*InProcessControl)(nil)
 
 func (c *InProcessControl) ReportUsage(routeID []byte, rx, tx int64, connects int) error {
 	return c.ctrl.ReportUsage(routeID, rx, tx, connects)
+}
+
+func (c *InProcessControl) TouchHost(routeID []byte) error {
+	return c.ctrl.TouchHostByRoute(routeID)
+}
+
+func (c *InProcessControl) ClearHostHeartbeat(routeID []byte) error {
+	return c.ctrl.ClearHostHeartbeatByRoute(routeID)
 }
 
 func (c *InProcessControl) Bootstrap(req *BootstrapProxyRequest) (string, error) {

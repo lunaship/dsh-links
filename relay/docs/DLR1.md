@@ -99,7 +99,7 @@ Payload 至少包含：
 | 操作 | 执行方 | 立即效果 |
 |---|---|---|
 | 吊销手机 `clientId` | 插件 | 对应 Token 后续请求返回 401，已有 SSE 被关闭；不依赖 Relay |
-| 吊销 Host Relay 路由 | Control | 关闭该 route 的 Agent 控制连接和全部 stream；新 REGISTER/CONNECT 拒绝 |
+| 吊销 Host Relay 路由 | Control | 向在线 Agent 控制连接写 `ERROR REVOKED` 后关闭该 route 的控制连接和全部 stream；新 REGISTER/CONNECT 拒绝 |
 | 吊销邀请码 | Control | 未消费邀请码不能再 Enrollment；不影响已签发 Host |
 
 V1 的 `routeSecret` 是 Host 级传输凭据，不是手机业务凭据。拿到它只能建立到插件 TLS 端口的字节通道，仍不能绕过插件 Token。Host Relay 路由吊销时立即封禁旧 route；重置后必须创建新的 `routeId`、派生新的 `routeSecret` 并提升 generation，旧 route 永久保持吊销。
@@ -110,7 +110,7 @@ V1 的 `routeSecret` 是 Host 级传输凭据，不是手机业务凭据。拿�
 
 ### 2.1 Enrollment 入口
 
-`127.0.0.1:8080` 是管理员入口，只能通过 SSH 隧道打开。远端插件不能也不应访问它。插件 Enrollment 复用公网 Agent TLS 入口 `8444`：
+`127.0.0.1:8080` 是 Control 入口：自建用 SSH 隧道；托管可用主机上的 TLS 反代，供维护者开通的租户自己签发邀请。远端插件不能也不应访问它。插件 Enrollment 复用公网 Agent TLS 入口 `8444`：
 
 ```mermaid
 sequenceDiagram
@@ -130,7 +130,7 @@ sequenceDiagram
     Relay-->>Agent: ENROLLED
 ```
 
-邀请码为 192 bit 随机值，Base64URL 无填充，只能使用一次，默认 30 分钟过期。`ENROLL` 帧必须包含 `inviteCode`、`hostId`、`hostPublicKey`、`ts`、`nonce` 和 `proof`。`hostId` 是 UTF-8 字符串，最多 64 字节；`hostPublicKey` 解码后固定 32 字节。
+邀请码为 192 bit 随机值，Base64URL 无填充，只能使用一次，默认 8 小时过期，最短 1 分钟、最长 24 小时。Control 签发页可选 30 分钟 / 2 小时 / 8 小时 / 24 小时；`POST /v1/invites` 若带超长 `ttl` 会被夹紧，避免托管租户签发长期闲置码。满额 `QUOTA_EXCEEDED` 不消耗该码，并把剩余有效期短于默认时长的未用码续到 8 小时（不超过 `created_at` 起 24 小时），以便吊销后再 ENROLL。`ENROLL` 帧必须包含 `inviteCode`、`hostId`、`hostPublicKey`、`ts`、`nonce` 和 `proof`。可选 `hostName` 是电脑展示名（Control Host 列表与已消费邀请记录用），不进入 enroll transcript，也不是身份；缺省时 Control 用 `hostId`。已消费邀请在 Host 仍占名额时可由控制台从该行吊销。`hostId` 是 UTF-8 字符串，最多 64 字节；`hostPublicKey` 解码后固定 32 字节。
 
 Agent 的 `proof` 是 Host Ed25519 私钥对以下 transcript 的签名，证明申请者持有 Host 私钥：
 
@@ -163,7 +163,7 @@ dsh-links-relay relay --config /etc/dsh-links-relay/config.toml
 * Enrollment 与 RENEW 请求
 * Host lookup 与 CONNECT/BIND route MAC 验证
 * Host 吊销/generation 变更推送
-* Relay 在线状态和聚合指标快照
+* Relay 在线状态和聚合指标快照（Agent `REGISTER`/`PING` 经 `host_heartbeat` 写入 `hosts.last_seen_at`；控制连接断开经 `host_offline` 立即清掉，供 Control 显示在线/离线；不存会话内容）
 * Control 启动后向 Relay 下发当前吊销集合
 
 SQLite 只能由 Control 写。Relay 的在线 Registry、stream、challenge 和限流桶全部在内存中；Relay 重启后 Agent 自动重新 REGISTER。
@@ -318,16 +318,19 @@ sequenceDiagram
 | 错误码 | 适用情况 | 是否可重试 |
 |---|---|---:|
 | `BAD_REQUEST` | 帧非法、字段长度错误、版本不支持 | 否 |
-| `AUTH_FAILED` | Capability、proof 或 MAC 无效；路由不存在也返回此码 | 否 |
+| `AUTH_FAILED` | Capability、proof 或 MAC 无效 | 否 |
 | `REPLAY_REJECTED` | 同一连接/窗口内 nonce 重复 | 否 |
 | `AGENT_OFFLINE` | 合法 route 当前无 Agent | 是 |
 | `ROUTE_BUSY` | route 达到 stream 上限 | 是 |
 | `BIND_TIMEOUT` | Agent 未按时绑定 | 是 |
-| `RATE_LIMITED` | IP 或 route 限流 | 延迟后重试 |
+| `RATE_LIMITED` | IP 或 route 限流；匿名日流量挂起（CONNECT/BIND 在 MAC 通过后） | 延迟后重试 |
 | `SERVER_BUSY` | 全局预算已满 | 是 |
-| `REVOKED` | 已认证 Agent 的 Host 或 Capability 已吊销 | 否 |
+| `REVOKED` | 已认证对端的 Host 已吊销、generation 不匹配，或 CONNECT MAC 通过后路由已不存在 | 否 |
+| `QUOTA_EXCEEDED` | ENROLL 时接入码有效，但租户已接入名额已满（需在控制台吊销后再接入；码未消耗） | 否 |
 
-对 App CONNECT 等未认证客户端，路由不存在、MAC 错误、Host 吊销统一返回 `AUTH_FAILED`，响应尺寸一致，不泄露 route 是否存在。`REVOKED` 只返回给已经用 Host 私钥完成认证的 Agent，或显示在管理员接口中。
+插件 Agent 将 `REVOKED` 视为终态：停止重连、丢弃 `routeId` / `routeSecret` / capability（保留本机 Host 密钥），并提示到控制台签发新接入码后再接入。网络闪断仍会重试 REGISTER；只有该错误码停止。ENROLL 在接入码有效但租户已接入名额已满时返回 `QUOTA_EXCEEDED`（不要自动重试）：邀请码未消耗，控制台吊销一台后同一张码可再 ENROLL；插件提示吊销而不是再签发。接入串若带公网控制台地址（`c=`），满额失败后插件仍记住该地址，刷新面板可打开控制台；不会交给 App。无效或过期接入码仍是 `AUTH_FAILED`，不泄露码是否存在。
+
+App `CONNECT` 在 MAC 校验失败时仍返回 `AUTH_FAILED`，不泄露路由是否存在。MAC 通过之后，Host 已吊销或旧 `routeId` 已被同一电脑换新码替换，则返回 `REVOKED`：手机清掉失效的云端路由并保留局域网配对，恢复云端需重新扫码。健康探测不得把该错误当成暂时离线；LAN 仍可尝试。匿名日流量挂起返回可重试的 `RATE_LIMITED`，不得当成吊销；插件 REGISTER 在挂起期间仍可成功，零点后 CONNECT 自动恢复。插件暂停时路由仍有效，返回可重试的 `AGENT_OFFLINE`。
 
 ---
 
@@ -366,11 +369,11 @@ sequenceDiagram
 | 帧 | 方向 | 请求负载 | 成功响应 |
 |---|---|---|---|
 | `BOOTSTRAP` | App→Relay 8444 | `pubkey`(b64u 32B) `ts` `nonce`(b64u 16B) `proof`(b64u 64B) | `BOOTSTRAPPED {token}` |
-| `REVOKE_SELF` | App→Relay 8444 | `routeId`(b64u 16B) `ts` `nonce` `proof` | `REVOKED {}` |
+| `REVOKE_SELF` | Agent→Relay 8444 | `routeId`(b64u 16B) `ts` `nonce` `proof` | `REVOKED {}` |
 
 - transcript 前缀 `DLR/1\x00BOOTSTRAP\x00` / `DLR/1\x00REVOKE_SELF\x00`，其余拼接规则与 ENROLL 一致（`BuildBootstrapTranscript` / `BuildRevokeSelfTranscript`）。
 - `BOOTSTRAP` 的 `proof` 证明公钥私钥持有；服务端校验 ts 窗口 ±60s、全局+按前缀限流（与 ENROLL 共用 enrollLimiter）、匿名总开关（`anonymous_enroll`）。成功后签发 JWS bootstrap token（10 分钟、`scope:bootstrap`、`sub`=公钥指纹）。
-- `REVOKE_SELF` 的 `proof` 用宿主 host 私钥签名 routeId；服务端核对 route 归属后吊销该 host（幂等）。
+- `REVOKE_SELF` 的 `proof` 用宿主 host 私钥签名 routeId；服务端核对 route 归属后吊销并删除该 host（幂等）。邀请制租户用同一帧释放已接入名额；插件「释放名额」走这条路径，不登录 Control。
 - 两个 handler 均为每连接单帧（与 ENROLL 一致）。
 
 ### 6.2 ENROLL 扩展语义
@@ -389,7 +392,7 @@ sequenceDiagram
 
 ### 6.3 配额与封禁
 
-- **日流量预算**：relay 每 30s 把 route 级字节/连接计数经 IPC 上报 control（`stats_report`），落入 `stats_daily`；匿名 host 当日累计（rx+tx）超过 `anonymous_daily_bytes` 后 `suspended_until` 置为次日 UTC 零点，route 立即以 revoked 语义拒绝/断开（`LookupRouteStatus`），零点后自动恢复。邀请制 host 不受此限。
+- **日流量预算**：relay 每 30s 把 route 级字节/连接计数经 IPC 上报 control（`stats_report`），落入 `stats_daily`；匿名 host 当日累计（rx+tx）超过 `anonymous_daily_bytes` 后 `suspended_until` 置为次日 UTC 零点，已有 stream 被踢掉，新 CONNECT/BIND 返回可重试的 `RATE_LIMITED`（不是 `REVOKED`），Agent 保持登记；零点后自动恢复。邀请制 host 不受此限。
 - **设备封禁**：`/v1/devices/{id}/disable` 级联吊销设备全部 host 并广播；`enable` 恢复身份（旧 host 保持吊销）；`delete` 移除身份。
 - **总开关**：`POST /v1/settings/anonymous` 持久化于 settings 表，重启不丢；关闭后 BOOTSTRAP 与匿名 ENROLL 一律拒绝。
 - 所有按 IP 限流在本阶段起按 IPv6 `/64`（`ipv6_prefix_len`）聚合；全局预认证速率预算 + 预认证连接池上限（maxConns/4）保证洪峰不能饿死已认证流量。

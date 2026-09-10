@@ -25,6 +25,7 @@ var (
 // AgentSender is interface to send OPEN to agent control connection.
 type AgentSender interface {
 	SendOpen(streamId string, generation uint64) error
+	NotifyRevoked() error
 	Close() error
 }
 
@@ -340,6 +341,24 @@ func (r *Registry) Release(p *PendingStream) {
 	p.finishBridge()
 }
 
+// EvictStreams closes live streams without telling the Agent it was revoked.
+// Used for a temporary daily-budget hold: the control connection stays up
+// so CONNECT can resume after the window without a new access code.
+func (r *Registry) EvictStreams(routeIdStr string) {
+	r.mu.RLock()
+	sess, ok := r.agents[routeIdStr]
+	r.mu.RUnlock()
+	if !ok {
+		return
+	}
+	r.closeSession(sess, ErrRouteBusy)
+	sess.mu.Lock()
+	if sess.streams == nil {
+		sess.streams = make(map[string]*PendingStream)
+	}
+	sess.mu.Unlock()
+}
+
 // Revoke closes and removes agent and fails pendings.
 func (r *Registry) Revoke(routeIdStr string) {
 	r.mu.Lock()
@@ -352,6 +371,7 @@ func (r *Registry) Revoke(routeIdStr string) {
 		return
 	}
 	if sess.Sender != nil {
+		_ = sess.Sender.NotifyRevoked()
 		_ = sess.Sender.Close()
 	}
 	r.closeSession(sess, errors.New("revoked"))

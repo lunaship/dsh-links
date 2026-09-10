@@ -19,6 +19,7 @@ import (
 type SimAgent struct {
 	AgentAddr   string
 	HostId      string
+	HostName    string
 	Priv        ed25519.PrivateKey
 	Pub         ed25519.PublicKey
 	RouteId     string // b64u
@@ -99,6 +100,7 @@ func (a *SimAgent) Enroll(inviteCode string) error {
 		Type:          protocol.TypeEnroll,
 		InviteCode:    inviteCode,
 		HostId:        a.HostId,
+		HostName:      a.HostName,
 		HostPublicKey: base64.RawURLEncoding.EncodeToString(a.Pub),
 		Ts:            ts,
 		Nonce:         base64.RawURLEncoding.EncodeToString(nonce),
@@ -114,13 +116,12 @@ func (a *SimAgent) Enroll(inviteCode string) error {
 	if err != nil {
 		return fmt.Errorf("read enrolled: %w", err)
 	}
+	var e protocol.ErrorFrame
+	if err := json.Unmarshal(enrolledRaw, &e); err == nil && e.Type == protocol.TypeError {
+		return fmt.Errorf("enroll error %s: %s", e.Code, e.Message)
+	}
 	var enrolled protocol.EnrolledFrame
 	if err := json.Unmarshal(enrolledRaw, &enrolled); err != nil {
-		// maybe error frame
-		var e protocol.ErrorFrame
-		if json.Unmarshal(enrolledRaw, &e) == nil && e.Type == "ERROR" {
-			return fmt.Errorf("enroll error %s: %s", e.Code, e.Message)
-		}
 		return err
 	}
 	if enrolled.Type != protocol.TypeEnrolled {

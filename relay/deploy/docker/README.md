@@ -53,7 +53,31 @@ docker compose ps
 
 The TLS-protected Control UI is published only at `https://127.0.0.1:8080`;
 ports 8443 and 8444 are the only public listeners. The generated certificate
-includes the loopback SANs; use an SSH tunnel for remote administration.
+includes the loopback SANs; use an SSH tunnel for the `admin` operator.
+
+Hosted Control tenants (not App accounts) log in to the same UI. Put a TLS
+reverse proxy on the host in front of `127.0.0.1:8080` — do not publish 8080
+on `0.0.0.0`. This Compose file already gives Control TLS, so session cookies
+are Secure. If a proxy talks **HTTP** to loopback Control instead, set
+`admin_secure_cookies = true`. Example Caddy snippet:
+
+```
+control.example.com {
+    reverse_proxy https://127.0.0.1:8080 {
+        transport http {
+            tls_insecure_skip_verify
+        }
+    }
+}
+```
+
+Provision tenants on the host after Control is up:
+
+```sh
+dsh-links-relay tenant create --config .local/config.toml --login alice --password-file ./alice.pass
+```
+
+If `public_control_url` is set, the command prints that HTTPS Control URL for the handoff. There is no public signup. The Android App still pairs with the plugin.
 
 For released images, set `DSH_RELAY_IMAGE` to an immutable digest and omit
 `--build`, for example `registry.example/dsh-links-relay@sha256:...`.

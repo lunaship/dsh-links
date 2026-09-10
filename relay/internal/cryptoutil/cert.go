@@ -85,10 +85,12 @@ func PublicHostFromCert(pemBytes []byte) string {
 	return ""
 }
 
-// BuildEnrollURI packs host, one-time invite, and optional SHA-256 pin into
-// a single paste token for the plugin. Fingerprint is omitted for public-CA
-// certificates so the plugin uses system trust.
-func BuildEnrollURI(host, agentPort, invite, fingerprint string) string {
+// BuildEnrollURI packs host, one-time invite, optional SHA-256 pin, and
+// optional hosted Control URL into a single paste token for the plugin.
+// Fingerprint is omitted for public-CA certificates so the plugin uses
+// system trust. control is omitted unless it is an https, non-loopback URL
+// (never 127.0.0.1). The Android App does not parse this URI.
+func BuildEnrollURI(host, agentPort, invite, fingerprint, control string) string {
 	host = strings.TrimSpace(host)
 	invite = strings.TrimSpace(invite)
 	if host == "" || invite == "" {
@@ -112,6 +114,37 @@ func BuildEnrollURI(host, agentPort, invite, fingerprint string) string {
 	if len(fp) == 64 {
 		query.Set("fp", fp)
 	}
+	if c := enrollControlQuery(control); c != "" {
+		query.Set("c", c)
+	}
 	u.RawQuery = query.Encode()
 	return u.String()
+}
+
+func enrollControlQuery(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || len(raw) > 512 {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return ""
+	}
+	host := strings.Trim(strings.ToLower(strings.TrimSpace(u.Hostname())), "[]")
+	if host == "" {
+		return ""
+	}
+	switch host {
+	case "localhost", "localhost.", "::1", "0.0.0.0", "::", "0:0:0:0:0:0:0:0", "0:0:0:0:0:0:0:1":
+		return ""
+	}
+	if ip := net.ParseIP(host); ip != nil && (ip.IsLoopback() || ip.IsUnspecified()) {
+		return ""
+	}
+	path := strings.TrimRight(u.EscapedPath(), "/")
+	out := "https://" + u.Host
+	if path != "" {
+		out += path
+	}
+	return out
 }

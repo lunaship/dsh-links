@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/base64"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -18,7 +20,12 @@ type Config struct {
 	AdminAllowNonLoopback bool   `toml:"admin_allow_non_loopback"`
 	AdminTLSCert          string `toml:"admin_tls_cert"`
 	AdminTLSKey           string `toml:"admin_tls_key"`
-	ControlSocket         string `toml:"control_socket"`
+	// AdminSecureCookies marks Control session cookies Secure. Needed when a
+	// TLS reverse proxy terminates HTTPS and talks HTTP to loopback Control.
+	// Direct http://127.0.0.1 self-host must leave this false. Control TLS
+	// (admin_tls_cert) already implies Secure cookies.
+	AdminSecureCookies bool   `toml:"admin_secure_cookies"`
+	ControlSocket      string `toml:"control_socket"`
 
 	TLSCert string `toml:"tls_cert"`
 	TLSKey  string `toml:"tls_key"`
@@ -27,6 +34,13 @@ type Config struct {
 	// TLS on 8444. Used to mint one-paste enroll URIs. Empty falls back to
 	// a non-loopback SAN on tls_cert when that file is readable.
 	PublicHost string `toml:"public_host"`
+
+	// PublicControlURL is the HTTPS origin (or origin+path) hosted tenants
+	// should open for Control. Typical value is the TLS reverse proxy in
+	// front of loopback 8080. Empty for self-host: do not send 127.0.0.1
+	// to tenants. This is not the data-plane PublicHost and is not an App
+	// login URL.
+	PublicControlURL string `toml:"public_control_url"`
 
 	IssuerPrivateKey  string `toml:"issuer_private_key"`
 	IssuerPublicKey   string `toml:"issuer_public_key"`
@@ -53,6 +67,10 @@ type Config struct {
 	AnonymousMaxStreamsPerRoute int    `toml:"anonymous_max_streams_per_route"`
 	AnonymousDailyBytes         int64  `toml:"anonymous_daily_bytes"`
 	CapabilityTTL               string `toml:"capability_ttl"`
+
+	// Hosted Control tenants. Self-host admin ledger is never capped.
+	TenantMaxLiveHosts     int `toml:"tenant_max_live_hosts"`
+	TenantMaxUnusedInvites int `toml:"tenant_max_unused_invites"`
 
 	// Parsed durations
 	HeartbeatIntervalDur time.Duration `toml:"-"`
@@ -90,6 +108,8 @@ func DefaultConfig() *Config {
 		AnonymousMaxStreamsPerRoute: 2,
 		AnonymousDailyBytes:         512 << 20, // 512 MiB/day per route
 		CapabilityTTL:               "168h",    // 7 days (ParseDuration has no "d" unit)
+		TenantMaxLiveHosts:          8,
+		TenantMaxUnusedInvites:      4,
 	}
 }
 
@@ -142,6 +162,12 @@ func (c *Config) Validate() error {
 	if c.AnonymousDailyBytes < 0 {
 		return fmt.Errorf("anonymous_daily_bytes must be >=0 (0 = unlimited)")
 	}
+	if c.TenantMaxLiveHosts <= 0 {
+		return fmt.Errorf("tenant_max_live_hosts must be >0")
+	}
+	if c.TenantMaxUnusedInvites <= 0 {
+		return fmt.Errorf("tenant_max_unused_invites must be >0")
+	}
 	if c.BridgeMaxLifetimeDur <= 0 {
 		return fmt.Errorf("bridge_max_lifetime >0")
 	}
@@ -166,7 +192,58 @@ func (c *Config) Validate() error {
 	if c.IPv6PrefixLen != 0 && (c.IPv6PrefixLen < 32 || c.IPv6PrefixLen > 128) {
 		return fmt.Errorf("ipv6_prefix_len must be 32..128 (or 0 to disable aggregation)")
 	}
+	normalized, err := NormalizePublicControlURL(c.PublicControlURL)
+	if err != nil {
+		return err
+	}
+	c.PublicControlURL = normalized
 	return nil
+}
+
+// NormalizePublicControlURL canonicalizes the URL tenants should open.
+// Empty is valid (self-host). Hosted values must be https, non-loopback,
+// and must not carry credentials, query, or fragment.
+func NormalizePublicControlURL(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("public_control_url: %w", err)
+	}
+	if u.Scheme != "https" {
+		return "", fmt.Errorf("public_control_url must be https")
+	}
+	if u.User != nil {
+		return "", fmt.Errorf("public_control_url must not include credentials")
+	}
+	if u.RawQuery != "" || u.Fragment != "" {
+		return "", fmt.Errorf("public_control_url must not include query or fragment")
+	}
+	host := strings.TrimSpace(u.Hostname())
+	if host == "" {
+		return "", fmt.Errorf("public_control_url host is required")
+	}
+	if isLoopbackControlHost(host) {
+		return "", fmt.Errorf("public_control_url must not be loopback")
+	}
+	path := strings.TrimRight(u.EscapedPath(), "/")
+	out := "https://" + u.Host
+	if path != "" {
+		out += path
+	}
+	return out, nil
+}
+
+func isLoopbackControlHost(host string) bool {
+	host = strings.Trim(strings.ToLower(host), "[]")
+	switch host {
+	case "localhost", "localhost.", "::1", "0.0.0.0", "::", "0:0:0:0:0:0:0:0", "0:0:0:0:0:0:0:1":
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && (ip.IsLoopback() || ip.IsUnspecified())
 }
 
 // LoadRouteMasterKey reads 32-byte raw key from file (raw bytes, not base64)

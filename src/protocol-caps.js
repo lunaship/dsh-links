@@ -1,5 +1,7 @@
 /** 业务层能力协商。DLR/1 与内层证书固定不因这些字段改变。 */
 
+import { MAX_WORKSPACE_FILE_BYTES } from "./workspace-file.js"
+
 export const PLUGIN_PROTOCOL = 2
 export const CAP_SYNC2 = "sync2"
 export const CAP_MULTI_QUESTION = "multiQuestion"
@@ -23,6 +25,7 @@ export function pluginCapabilities() {
     sync: { resync: true, catchupIntegrity: true },
     questions: { multi: true, serverValidation: true },
     requests: { snapshot: true, reconnectGraceMs: RECONNECT_GRACE_MS },
+    files: { workspace: true, maxBytes: MAX_WORKSPACE_FILE_BYTES },
   }
 }
 

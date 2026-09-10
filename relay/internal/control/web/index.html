@@ -21,26 +21,26 @@
       <form id="loginForm" class="auth-form">
         <div class="auth-heading">
           <h1 id="loginTitle">登录控制台</h1>
-          <p>管理邀请与 Host。</p>
+          <p>管理邀请与 Host。手机 App 不在这里登录。</p>
         </div>
         <div class="field-group">
-          <label for="inpUser">管理账号</label>
+          <label for="inpUser">账号</label>
           <input class="field" id="inpUser" name="username" autocomplete="username" placeholder="admin" required>
         </div>
         <div class="field-group">
-          <label for="inpPass">管理密码</label>
-          <input class="field" id="inpPass" name="password" type="password" autocomplete="current-password" placeholder="config.toml 中的 admin_password" required>
+          <label for="inpPass">密码</label>
+          <input class="field" id="inpPass" name="password" type="password" autocomplete="current-password" placeholder="自托管见 config.toml" required>
         </div>
         <button class="button button--primary" id="btnLogin" type="submit">登录</button>
         <p id="loginErr" class="form-error" role="alert"></p>
-        <p class="form-help">默认账号为 <code>admin</code>。控制台应仅通过本机或 SSH 隧道访问。</p>
+        <p class="form-help">自托管默认账号为 <code>admin</code>。托管租户使用维护者分配的账号。控制台应仅通过本机或 SSH 隧道访问。</p>
       </form>
     </div>
   </section>
 
   <div id="mainPanel" class="app-shell hidden">
     <header class="masthead">
-      <pre class="term-line"><span class="term-prompt" aria-hidden="true">❯</span> <span class="term-cmd">dsh-relay</span> <a class="rail-link term-flag" href="#overviewSection" aria-current="page">--概览</a> <a class="rail-link term-flag" href="#hostsSection">--host</a> <a class="rail-link term-flag" href="#invitesSection">--邀请</a><span class="term-caret" aria-hidden="true">▮</span></pre>
+      <pre class="term-line"><span class="term-prompt" aria-hidden="true">❯</span> <span class="term-cmd">dsh-relay</span> <a class="rail-link term-flag" href="#overviewSection" aria-current="page">--概览</a> <a class="rail-link term-flag" href="#hostsSection">--host</a> <a class="rail-link term-flag" href="#invitesSection">--邀请</a> <a class="rail-link term-flag" href="#eventsSection">--记录</a> <a class="rail-link term-flag" id="railTenants" href="#tenantsSection">--租户</a><span class="term-caret" aria-hidden="true">▮</span></pre>
       <div class="masthead-actions">
         <div class="connection-pill" id="connectionState" data-state="online" role="status">
           <span class="connection-dot" aria-hidden="true"></span>
@@ -56,17 +56,19 @@
           <p class="page-context">DSH LINKS RELAY / CONTROL</p>
           <h1>中继控制台</h1>
           <p class="stat-copy">一次性邀请码与已登记的 Host，每 5 秒自动刷新。</p>
+          <p class="banner-warn" id="passwordMustChange" hidden role="alert">维护者发给你的是临时密码。改成只有你知道的密码后，才能签发接入码或吊销 Host。</p>
+          <div class="banner-warn" id="hostQuotaFull" hidden role="alert"></div>
         </div>
         <div class="stat-strip">
           <article class="stat-item">
-            <span class="stat-label">Host 总数</span>
+            <span class="stat-label" id="statHostsLabel">Host 总数</span>
             <strong class="stat-value tnum" id="statHosts">—</strong>
-            <span class="stat-note">含已吊销</span>
+            <span class="stat-note" id="statHostsNote">含已吊销</span>
           </article>
           <article class="stat-item">
-            <span class="stat-label">邀请总数</span>
+            <span class="stat-label" id="statInvitesLabel">邀请总数</span>
             <strong class="stat-value tnum" id="statInvites">—</strong>
-            <span class="stat-note">含历史记录</span>
+            <span class="stat-note" id="statInvitesNote">含历史记录</span>
           </article>
           <article class="stat-item">
             <span class="stat-label">控制面</span>
@@ -79,10 +81,20 @@
       <section class="forge" id="inviteCreateSection" aria-labelledby="forgeTitle">
         <header class="forge-header">
           <h2 id="forgeTitle">签发邀请码</h2>
-          <p>30 分钟有效 · 一次性 · 仅显示一次</p>
+          <p id="forgeQuota">一次性 · 最长 24 小时</p>
         </header>
         <p class="banner-warn" id="publicHostMissing" hidden role="alert">未配置 <code>public_host</code> / <code>RELAY_HOST</code>：接入串与二维码不可用，只能签发裸邀请码。请在 config 中填写公网域名后重启 control。</p>
         <div class="forge-body">
+          <div class="field-group invite-ttl">
+            <label for="inviteTTL">有效时长</label>
+            <select class="field" id="inviteTTL">
+              <option value="30m">30 分钟</option>
+              <option value="2h">2 小时</option>
+              <option value="8h" selected>8 小时</option>
+              <option value="24h">24 小时</option>
+            </select>
+            <p class="form-help">默认 8 小时，满额后去吊销再贴同一张码够用。未使用前过期。最长 24 小时。未用满额时再签发会先确认作废最早那张。</p>
+          </div>
           <div class="forge-action">
             <button class="button button--primary" id="btnInvite" type="button">创建邀请码</button>
             <p class="inline-message" id="inviteMessage" role="alert"></p>
@@ -94,19 +106,19 @@
                 <code class="invite-code" id="inviteCode"></code>
                 <button class="button button--primary" id="btnCopyInvite" type="button">复制</button>
               </div>
-              <span class="stat-note">仅显示这一次，关闭页面后无法找回。</span>
+              <span class="stat-note" id="inviteExpiryNote">粘贴进电脑插件「远端连接」。仅显示这一次，关闭后无法找回。</span>
             </div>
             <div id="enrollBlock" hidden>
               <div class="invite-qr">
                 <canvas id="inviteQr" width="220" height="220" aria-label="接入串二维码" role="img"></canvas>
-                <p class="stat-note">手机任意扫码器扫这张图，把解码出的接入串发到电脑，粘贴进插件「远端」面板即可完成接入。</p>
+                <p class="stat-note">也可扫这张图，把接入码转到电脑再粘贴进插件。</p>
               </div>
-              <details class="invite-advanced">
-                <summary>自托管完整接入串</summary>
+              <details class="invite-advanced" id="inviteBareBlock">
+                <summary>仅邀请码</summary>
                 <div class="invite-code-row">
-                  <code class="invite-code" id="enrollURI"></code>
-                  <button class="button" id="btnCopyEnroll" type="button">复制</button>
+                  <code class="invite-code" id="inviteBare"></code>
                 </div>
+                <p class="stat-note">不含主机。只有官方 Relay 可以只贴这一段；自建请复制上面的完整接入码。</p>
               </details>
             </div>
           </div>
@@ -125,7 +137,7 @@
         <header class="ledger-header">
           <div class="ledger-heading">
             <h2 id="hostsTitle">Host 路由</h2>
-            <p>已登记的电脑。删除后需重新接入。</p>
+            <p>占名额的电脑。管理员可从租户台账点「查看电脑」只看该户。吊销或插件「释放名额」才空出名额。换到别的 Relay 不必先在这里吊销。已吊销折起，清理只删那些记录。</p>
           </div>
           <button class="button button--quiet" id="btnPurgeHosts" type="button">清理已吊销</button>
         </header>
@@ -137,12 +149,23 @@
         <header class="ledger-header">
           <div class="ledger-heading">
             <h2 id="invitesTitle">邀请记录</h2>
-            <p>有效、已用、过期与已吊销。</p>
+            <p>未用码和仍占名额的已接入记录在主表。失效折起；清理不会删掉还能对照吊销电脑的已用码。</p>
           </div>
           <button class="button button--quiet" id="btnPurgeInvites" type="button">清理失效</button>
         </header>
         <div class="table-wrap" id="invites"></div>
         <p class="panel-message" id="invitesMessage" role="alert" hidden></p>
+      </section>
+
+      <section class="ledger" id="eventsSection" aria-labelledby="eventsTitle">
+        <header class="ledger-header">
+          <div class="ledger-heading">
+            <h2 id="eventsTitle">操作记录</h2>
+            <p>谁签发或吊销了邀请与 Host，以及控制台登录成败。电脑名会写入，不含接入码、密码或会话内容。</p>
+          </div>
+        </header>
+        <div class="table-wrap" id="events"></div>
+        <p class="panel-message" id="eventsMessage" role="alert" hidden></p>
       </section>
 
       <section class="ledger" id="devicesSection" aria-labelledby="devicesTitle">
@@ -158,6 +181,54 @@
         </header>
         <div class="table-wrap" id="devices"></div>
         <p class="panel-message" id="devicesMessage" role="alert" hidden></p>
+      </section>
+
+      <section class="ledger" id="tenantsSection" aria-labelledby="tenantsTitle">
+        <header class="ledger-header">
+          <div class="ledger-heading">
+            <h2 id="tenantsTitle">管控租户</h2>
+            <p>维护者开通。config 填写 <code>public_control_url</code>（HTTPS 反代地址）后，开通即可把该地址交给租户。已接入或未用码满额的排在前面，对方自己登录去吊销或签发。回环 <code>127.0.0.1</code> 不要外发。隔离邀请与 Host，不是 App 账号，也不是公开注册。停用后可恢复，已吊销 Host 不会自动回来。</p>
+          </div>
+        </header>
+        <p class="banner-warn" id="publicControlURLMissing" hidden role="alert">未配置 <code>public_control_url</code>：在回环开通租户时无法自动交出登录地址。托管请填写指向 <code>127.0.0.1:8080</code> 的 HTTPS 反代 URL 后重启 control。不要把 8080 暴露到公网，也不要开放注册。</p>
+        <form id="tenantForm" class="forge-body">
+          <div class="field-group">
+            <label for="inpTenantLogin">登录名</label>
+            <input class="field" id="inpTenantLogin" name="loginName" autocomplete="off" spellcheck="false" required>
+          </div>
+          <div class="field-group">
+            <label for="inpTenantDisplay">显示名</label>
+            <input class="field" id="inpTenantDisplay" name="displayName" autocomplete="off">
+          </div>
+          <div class="field-group">
+            <label for="inpTenantPassword">初始密码</label>
+            <input class="field" id="inpTenantPassword" name="password" type="password" autocomplete="new-password" minlength="12" required>
+          </div>
+          <button class="button button--primary" id="btnCreateTenant" type="submit">开通租户</button>
+          <p class="panel-message" id="tenantsMessage" role="alert" hidden></p>
+        </form>
+        <div class="table-wrap" id="tenants"></div>
+      </section>
+
+      <section class="ledger" id="passwordSection" hidden aria-labelledby="passwordTitle">
+        <header class="ledger-header">
+          <div class="ledger-heading">
+            <h2 id="passwordTitle">修改密码</h2>
+            <p>只改控制台登录。维护者发的初始密码或重置密码，登录后必须先改这一次。手机 App 不走这里。</p>
+          </div>
+        </header>
+        <form id="passwordForm" class="forge-body">
+          <div class="field-group">
+            <label for="inpCurrentPassword">当前密码</label>
+            <input class="field" id="inpCurrentPassword" name="currentPassword" type="password" autocomplete="current-password" required>
+          </div>
+          <div class="field-group">
+            <label for="inpNewPassword">新密码</label>
+            <input class="field" id="inpNewPassword" name="newPassword" type="password" autocomplete="new-password" minlength="12" required>
+          </div>
+          <button class="button button--primary" id="btnChangePassword" type="submit">更新密码</button>
+          <p class="panel-message" id="passwordMessage" role="alert" hidden></p>
+        </form>
       </section>
 
       <footer class="foot-stmt">

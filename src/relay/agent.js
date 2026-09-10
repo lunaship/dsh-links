@@ -7,11 +7,13 @@ import {
   enrollTranscript,
   registerTranscript,
   renewTranscript,
+  revokeSelfTranscript,
   capabilityExpiry,
   bindMac,
   signEd25519,
   certFingerprintSha256,
   parseHostPort,
+  decorateRelayConsoleMessage,
 } from "./crypto.js"
 
 const MAX_HELLO = 768
@@ -28,6 +30,74 @@ export const MAX_CONTROL_WRITE_QUEUE = 8
 export const MAX_CONTROL_WRITE_BYTES = 16 * 1024
 export const CONTROL_WRITE_DEADLINE_MS = 8_000
 export const CONTROL_WRITE_HIGH_WATER_BYTES = 32 * 1024
+export const RELAY_REVOKED_MESSAGE = "接入已被控制台吊销。请到控制台签发新接入码后再接入。"
+export const RELAY_RELEASED_MESSAGE = "已从控制台移除这台电脑。名额已空出。请签发新接入码后再接入。"
+export const RELAY_PAUSED_MESSAGE = "已断开。点重新连接即可，不用新接入码。名额仍占用；要空出名额请点「释放名额」。"
+export const RELAY_QUOTA_MESSAGE = "接入名额已满。请到控制台吊销不用的电脑，或在已接入的电脑插件里点「释放名额」。这张接入码仍有效，吊销后不用重新签发，再点接入即可。"
+
+export function isRelayRevokedFrame(frame) {
+  return frame?.type === "ERROR" && String(frame.code ?? "") === "REVOKED"
+}
+
+export function isRelayQuotaFrame(frame) {
+  return frame?.type === "ERROR" && String(frame.code ?? "") === "QUOTA_EXCEEDED"
+}
+
+export function errorFromRelayFrame(frame, fallback = "relay error") {
+  if (isRelayRevokedFrame(frame)) {
+    const err = new Error(RELAY_REVOKED_MESSAGE)
+    err.code = "REVOKED"
+    return err
+  }
+  if (isRelayQuotaFrame(frame)) {
+    const err = new Error(RELAY_QUOTA_MESSAGE)
+    err.code = "QUOTA_EXCEEDED"
+    return err
+  }
+  return new Error(frame?.message || frame?.code || fallback)
+}
+
+export function relayPluginView({ agent, routeId, routeSecret, inactiveReason, paused, controlUrl } = {}) {
+  const released = inactiveReason === "released"
+  const revoked = agent?.status === "revoked" || inactiveReason === "revoked" || released
+  if (revoked) {
+    return {
+      status: "revoked",
+      error: decorateRelayConsoleMessage(released ? RELAY_RELEASED_MESSAGE : RELAY_REVOKED_MESSAGE, controlUrl),
+      enrolled: false,
+    }
+  }
+  const enrolled = Boolean(routeId && routeSecret)
+  if (paused && enrolled) {
+    return { status: "paused", error: RELAY_PAUSED_MESSAGE, enrolled: true }
+  }
+  return {
+    status: agent?.status ?? (routeId ? "offline" : "idle"),
+    error: decorateRelayConsoleMessage(agent?.error ?? "", controlUrl),
+    enrolled,
+  }
+}
+
+export function relayAgentShouldRun(relay = {}) {
+  if (!relay?.routeSecret || !relay?.agentAddress) return false
+  if (relay.inactiveReason === "revoked" || relay.inactiveReason === "released") return false
+  if (relay.paused) return false
+  return true
+}
+
+// Drop route creds only when Control revoked THIS route. A same-host re-enroll
+// (更换) revokes the old route while new creds are already in state; wiping
+// blindly would strand the tenant with a live Control slot and no plugin creds.
+export function applyRelayRouteRevoked(relay, revokedRouteId, { released = false } = {}) {
+  if (!relay || !revokedRouteId || relay.routeId !== revokedRouteId) return false
+  delete relay.routeId
+  delete relay.routeSecret
+  delete relay.capability
+  delete relay.generation
+  delete relay.paused
+  relay.inactiveReason = released ? "released" : "revoked"
+  return true
+}
 
 export function normalizeHeartbeatSeconds(value) {
   const seconds = Number(value)
@@ -215,7 +285,7 @@ async function readHello(socket) {
   return exactB64u(hello.challenge, 32, "HELLO challenge")
 }
 
-export async function enroll({ address, inviteCode, hostId, keys, insecureTls = false, tlsFingerprint = "" }) {
+export async function enroll({ address, inviteCode, hostId, keys, insecureTls = false, tlsFingerprint = "", hostName = "" }) {
   const socket = await connectTls(address, { insecureTls, tlsFingerprint })
   try {
     const challenge = await readHello(socket)
@@ -223,7 +293,7 @@ export async function enroll({ address, inviteCode, hostId, keys, insecureTls = 
     const ts = Math.floor(Date.now() / 1000)
     const transcript = enrollTranscript(inviteCode, hostId, keys.publicKey, ts, nonce, challenge)
     const proof = signEd25519(keys.seed, keys.publicKey, transcript)
-    await writeFrame(socket, {
+    const frame = {
       type: "ENROLL",
       inviteCode,
       hostId,
@@ -231,9 +301,12 @@ export async function enroll({ address, inviteCode, hostId, keys, insecureTls = 
       ts,
       nonce: b64u(nonce),
       proof: b64u(proof),
-    })
+    }
+    const label = String(hostName ?? "").trim()
+    if (label) frame.hostName = label
+    await writeFrame(socket, frame)
     const enrolled = await readFrame(socket, MAX_ENROLLED, 8000)
-    if (enrolled?.type === "ERROR") throw new Error(enrolled.message || enrolled.code || "enroll failed")
+    if (enrolled?.type === "ERROR") throw errorFromRelayFrame(enrolled, "enroll failed")
     if (enrolled?.type !== "ENROLLED") throw new Error("expected ENROLLED")
     exactB64u(enrolled.routeId, 16, "routeId")
     exactB64u(enrolled.routeSecret, 32, "routeSecret")
@@ -255,13 +328,40 @@ export async function enroll({ address, inviteCode, hostId, keys, insecureTls = 
   }
 }
 
+const MAX_REVOKED = 512
+
+export async function revokeSelf({ address, routeId, keys, insecureTls = false, tlsFingerprint = "" }) {
+  const route = exactB64u(routeId, 16, "routeId")
+  const socket = await connectTls(address, { insecureTls, tlsFingerprint })
+  try {
+    const challenge = await readHello(socket)
+    const nonce = randomBytes(16)
+    const ts = Math.floor(Date.now() / 1000)
+    const transcript = revokeSelfTranscript(route, ts, nonce, challenge)
+    const proof = signEd25519(keys.seed, keys.publicKey, transcript)
+    await writeFrame(socket, {
+      type: "REVOKE_SELF",
+      routeId,
+      ts,
+      nonce: b64u(nonce),
+      proof: b64u(proof),
+    })
+    const reply = await readFrame(socket, MAX_REVOKED, 8000)
+    if (reply?.type === "ERROR") throw errorFromRelayFrame(reply, "revoke failed")
+    if (reply?.type !== "REVOKED") throw new Error("expected REVOKED")
+  } finally {
+    socket.destroy()
+  }
+}
+
 export class RelayAgent {
-  constructor({ address, credentials, pluginPort, logger, onCapabilityRenewed, insecureTls = false, tlsFingerprint = "" }) {
+  constructor({ address, credentials, pluginPort, logger, onCapabilityRenewed, onRevoked, insecureTls = false, tlsFingerprint = "" }) {
     this.address = address
     this.credentials = credentials
     this.pluginPort = pluginPort
     this.logger = logger
     this.onCapabilityRenewed = onCapabilityRenewed
+    this.onRevoked = onRevoked
     this.insecureTls = insecureTls
     this.tlsFingerprint = tlsFingerprint
     this.stopped = false
@@ -284,7 +384,7 @@ export class RelayAgent {
       try { record.localSocket?.destroy() } catch {}
     }
     this.streams.clear()
-    this.status = "offline"
+    if (this.status !== "revoked") this.status = "offline"
   }
 
   async start() {
@@ -293,9 +393,17 @@ export class RelayAgent {
       try {
         await this.registerLoop()
       } catch (err) {
-        this.status = "error"
-        this.error = err?.message ?? String(err)
+        const revoked = err?.code === "REVOKED"
+        this.status = revoked ? "revoked" : "error"
+        this.error = revoked ? RELAY_REVOKED_MESSAGE : (err?.message ?? String(err))
         this.logger?.warn?.(`dsh-links relay: ${this.error}`)
+        if (revoked) {
+          this.stopped = true
+          try { await this.onRevoked?.() } catch (cbErr) {
+            this.logger?.warn?.(`dsh-links relay: ${cbErr?.message ?? cbErr}`)
+          }
+          return
+        }
       }
       if (this.stopped) return
       await new Promise((r) => setTimeout(r, 3000))
@@ -334,7 +442,7 @@ export class RelayAgent {
         proof: b64u(proof),
       })
       const registered = await readFrame(socket, MAX_REGISTERED, 8000)
-      if (registered?.type === "ERROR") throw new Error(registered.message || registered.code || "register failed")
+      if (registered?.type === "ERROR") throw errorFromRelayFrame(registered, "register failed")
       if (registered?.type !== "REGISTERED") throw new Error("expected REGISTERED")
       const heartbeatMs = normalizeHeartbeatSeconds(registered.heartbeat) * 1000
       this.status = "online"
@@ -422,7 +530,7 @@ export class RelayAgent {
           this.logger?.info?.("dsh-links relay: Agent capability 已续期")
           continue
         }
-        if (frame?.type === "ERROR") throw new Error(frame.message || frame.code || "relay error")
+        if (frame?.type === "ERROR") throw errorFromRelayFrame(frame, "relay error")
         if (frame?.type === "OPEN") {
           this.acceptOpen(frame)
         }
@@ -486,7 +594,7 @@ export class RelayAgent {
         mac: b64u(mac),
       })
       const ready = await readFrame(socket, MAX_HELLO, 10_000)
-      if (ready?.type === "ERROR") throw new Error(ready.message || ready.code || "bind failed")
+      if (ready?.type === "ERROR") throw errorFromRelayFrame(ready, "bind failed")
       if (ready?.type !== "READY") throw new Error("expected READY")
       const leftover = detachReader(socket)
       if (leftover.length) socket.unshift(leftover)

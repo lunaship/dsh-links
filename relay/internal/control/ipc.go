@@ -15,6 +15,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/lunaship/dsh-links/relay/internal/store"
 )
 
 const (
@@ -34,7 +36,8 @@ var errIPCFrameTooLarge = errors.New("ipc frame too large")
 
 // IPC via Unix socket for relay<->control
 // Messages are LF-delimited JSON with {type, payload}
-// Types: enroll, renew, lookup_host, verify_route_mac, revoke_notify
+// Types: enroll, renew, lookup_host, verify_route_mac, revoke_notify,
+// stats_report, host_heartbeat, host_offline
 
 type IPCMessage struct {
 	Type    string          `json:"type"`
@@ -49,6 +52,7 @@ type EnrollIPCRequest struct {
 	Nonce         string `json:"nonce"`
 	Proof         string `json:"proof"`
 	Challenge     string `json:"challenge"`
+	HostName      string `json:"hostName,omitempty"`
 }
 
 type EnrollIPCResponse struct {
@@ -71,6 +75,7 @@ type LookupHostIPCResponse struct {
 	HostPublicKey string `json:"hostPublicKey"`
 	MaxStreams    int    `json:"maxStreams"`
 	Revoked       bool   `json:"revoked"`
+	Suspended     bool   `json:"suspended,omitempty"`
 	Error         string `json:"error,omitempty"`
 }
 
@@ -303,6 +308,30 @@ func (s *IPCServer) handleConn(conn net.Conn) {
 				// Non-fatal: stats lag is acceptable.
 				continue
 			}
+		case "host_heartbeat":
+			var hb struct {
+				RouteID string `json:"routeId"`
+			}
+			if err := json.Unmarshal(msg.Payload, &hb); err != nil || hb.RouteID == "" {
+				continue
+			}
+			routeRaw, err := base64.RawURLEncoding.DecodeString(hb.RouteID)
+			if err != nil {
+				continue
+			}
+			_ = s.control.TouchHostByRoute(routeRaw)
+		case "host_offline":
+			var off struct {
+				RouteID string `json:"routeId"`
+			}
+			if err := json.Unmarshal(msg.Payload, &off); err != nil || off.RouteID == "" {
+				continue
+			}
+			routeRaw, err := base64.RawURLEncoding.DecodeString(off.RouteID)
+			if err != nil {
+				continue
+			}
+			_ = s.control.ClearHostHeartbeatByRoute(routeRaw)
 		default:
 			s.sendIPCError(conn, "bad_request", "unknown type")
 		}
@@ -363,7 +392,7 @@ func (s *IPCServer) handleLookupHost(conn net.Conn, payload json.RawMessage) {
 		s.sendIPCError(conn, "bad_request", "invalid routeId")
 		return
 	}
-	hostID, generation, pubKey, maxStreams, revoked, err := s.control.LookupRouteStatus(routeID)
+	hostID, generation, pubKey, maxStreams, revoked, suspended, err := s.control.LookupRouteStatus(routeID)
 	if err != nil {
 		s.sendIPCResponse(conn, "lookup_host_resp", LookupHostIPCResponse{Error: "route unavailable"})
 		return
@@ -371,7 +400,7 @@ func (s *IPCServer) handleLookupHost(conn net.Conn, payload json.RawMessage) {
 	s.sendIPCResponse(conn, "lookup_host_resp", LookupHostIPCResponse{
 		HostID: hostID, Generation: generation,
 		HostPublicKey: base64.RawURLEncoding.EncodeToString(pubKey),
-		MaxStreams:    maxStreams, Revoked: revoked,
+		MaxStreams:    maxStreams, Revoked: revoked, Suspended: suspended,
 	})
 }
 
@@ -440,9 +469,24 @@ func (s *IPCServer) BroadcastRevoke(routeId, hostId string) int {
 // received the push and will converge via the reconciliation poll. A wait of
 // zero skips the ack collection entirely.
 func (s *IPCServer) BroadcastRevokeAndWait(routeId, hostId string, wait time.Duration) (int, int) {
+	return s.broadcastRouteNotify(routeId, hostId, "", wait)
+}
+
+// BroadcastSuspend tells relays to drop live streams without REVOKED.
+func (s *IPCServer) BroadcastSuspend(routeId, hostId string) int {
+	n, _ := s.broadcastRouteNotify(routeId, hostId, "suspend", 0)
+	return n
+}
+
+func (s *IPCServer) broadcastRouteNotify(routeId, hostId, action string, wait time.Duration) (int, int) {
+	payload := map[string]string{"routeId": routeId, "hostId": hostId}
+	if action != "" {
+		payload["action"] = action
+	}
+	raw, _ := json.Marshal(payload)
 	msg := IPCMessage{
 		Type:    "revoke_notify",
-		Payload: json.RawMessage(`{"routeId":` + jsonString(routeId) + `,` + `"hostId":` + jsonString(hostId) + `}`),
+		Payload: raw,
 	}
 	line, _ := json.Marshal(msg)
 	line = append(line, '\n')
@@ -555,6 +599,7 @@ func (s *IPCServer) handleEnroll(conn net.Conn, payload json.RawMessage) {
 		Nonce:         nonce,
 		Challenge:     chal,
 		Proof:         proof,
+		HostName:      req.HostName,
 	})
 	if err != nil {
 		s.sendIPCResponse(conn, "enroll_resp", EnrollIPCResponse{Error: err.Error()})
@@ -667,6 +712,7 @@ type IPCClient struct {
 	closed chan struct{}
 	// revokeFn is called when control pushes a revoke_notify message.
 	revokeFn  func(routeId, hostId string)
+	suspendFn func(routeId, hostId string)
 	authToken string
 	responses chan ipcClientResult
 	waiting   bool
@@ -692,6 +738,13 @@ func NewIPCClient(socket string, authToken string) *IPCClient {
 func (c *IPCClient) SetRevokeFn(fn func(routeId, hostId string)) {
 	c.mu.Lock()
 	c.revokeFn = fn
+	c.mu.Unlock()
+}
+
+// SetSuspendFn registers a callback for daily-budget holds (evict streams only).
+func (c *IPCClient) SetSuspendFn(fn func(routeId, hostId string)) {
+	c.mu.Lock()
+	c.suspendFn = fn
 	c.mu.Unlock()
 }
 
@@ -781,15 +834,23 @@ func (c *IPCClient) recvLoop() {
 		case "revoke_notify":
 			c.mu.Lock()
 			fn := c.revokeFn
+			sf := c.suspendFn
 			c.mu.Unlock()
-			if fn != nil {
+			if fn != nil || sf != nil {
 				type notify struct {
 					RouteId string `json:"routeId"`
 					HostId  string `json:"hostId"`
+					Action  string `json:"action,omitempty"`
 				}
 				var n notify
 				if err := json.Unmarshal(msg.Payload, &n); err == nil && n.RouteId != "" {
-					fn(n.RouteId, n.HostId)
+					if n.Action == "suspend" {
+						if sf != nil {
+							sf(n.RouteId, n.HostId)
+						}
+					} else if fn != nil {
+						fn(n.RouteId, n.HostId)
+					}
 					// Confirm to control that the route was actually revoked
 					// locally (registry removal + stream teardown), so the admin
 					// API can report a provable ack count instead of "pushed".
@@ -857,9 +918,20 @@ func (c *IPCClient) Enroll(req EnrollIPCRequest) (*EnrollIPCResponse, error) {
 		return nil, err
 	}
 	if resp.Error != "" {
-		return nil, fmt.Errorf("%s", resp.Error)
+		return nil, enrollControlError(resp.Error)
 	}
 	return &resp, nil
+}
+
+func enrollControlError(msg string) error {
+	switch msg {
+	case store.ErrTenantHostLimit.Error():
+		return store.ErrTenantHostLimit
+	case store.ErrDeviceHostLimit.Error():
+		return store.ErrDeviceHostLimit
+	default:
+		return errors.New(msg)
+	}
 }
 
 // BootstrapIPCRequest asks control to sign a bootstrap token for a device
@@ -984,6 +1056,66 @@ func (c *IPCClient) ReportUsage(routeID []byte, rx, tx int64, connects int) erro
 		"connects": connects,
 	})
 	line, _ := json.Marshal(IPCMessage{Type: "stats_report", Payload: payload})
+	line = append(line, '\n')
+	c.writeMu.Lock()
+	_ = conn.SetWriteDeadline(time.Now().Add(ipcWriteTimeout))
+	_, err := conn.Write(line)
+	_ = conn.SetWriteDeadline(time.Time{})
+	c.writeMu.Unlock()
+	return err
+}
+
+// TouchHost pushes an Agent liveness stamp to control. Fire-and-forget:
+// a dropped heartbeat is fine because the next REGISTER or throttled PING
+// rewrites last_seen_at. Control never stores session content.
+func (c *IPCClient) TouchHost(routeID []byte) error {
+	if len(routeID) != 16 {
+		return fmt.Errorf("routeId must be 16 bytes")
+	}
+	c.StartReconnect()
+	if err := c.Connect(); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	conn := c.conn
+	c.mu.Unlock()
+	if conn == nil {
+		return fmt.Errorf("ipc not connected")
+	}
+	payload, _ := json.Marshal(map[string]string{
+		"routeId": base64.RawURLEncoding.EncodeToString(routeID),
+	})
+	line, _ := json.Marshal(IPCMessage{Type: "host_heartbeat", Payload: payload})
+	line = append(line, '\n')
+	c.writeMu.Lock()
+	_ = conn.SetWriteDeadline(time.Now().Add(ipcWriteTimeout))
+	_, err := conn.Write(line)
+	_ = conn.SetWriteDeadline(time.Time{})
+	c.writeMu.Unlock()
+	return err
+}
+
+// ClearHostHeartbeat tells Control the Agent for this route dropped its
+// control connection. Fire-and-forget like TouchHost: the next REGISTER
+// rewrites last_seen_at. Only call this when Unregister removed this session.
+func (c *IPCClient) ClearHostHeartbeat(routeID []byte) error {
+	if len(routeID) != 16 {
+		return fmt.Errorf("routeId must be 16 bytes")
+	}
+	c.StartReconnect()
+	if err := c.Connect(); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	conn := c.conn
+	c.mu.Unlock()
+	if conn == nil {
+		return fmt.Errorf("ipc not connected")
+	}
+	payload, _ := json.Marshal(map[string]string{
+		"routeId": base64.RawURLEncoding.EncodeToString(routeID),
+	})
+	line, _ := json.Marshal(IPCMessage{Type: "host_offline", Payload: payload})
 	line = append(line, '\n')
 	c.writeMu.Lock()
 	_ = conn.SetWriteDeadline(time.Now().Add(ipcWriteTimeout))

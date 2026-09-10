@@ -3,6 +3,7 @@ package ingress
 import (
 	"crypto/ed25519"
 	"crypto/tls"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -20,6 +21,7 @@ import (
 	"github.com/lunaship/dsh-links/relay/internal/metrics"
 	"github.com/lunaship/dsh-links/relay/internal/protocol"
 	"github.com/lunaship/dsh-links/relay/internal/registry"
+	"github.com/lunaship/dsh-links/relay/internal/store"
 )
 
 // ControlAPI abstracts control operations needed by ingress.
@@ -27,12 +29,16 @@ type ControlAPI interface {
 	Enroll(req *EnrollProxyRequest) (*EnrollProxyResponse, error)
 	Bootstrap(req *BootstrapProxyRequest) (string, error)
 	RevokeSelf(req *RevokeSelfProxyRequest) (string, error)
-	LookupHostByRoute(routeId []byte) (hostID string, generation uint64, pubKey []byte, maxStreams int, revoked bool, err error)
+	LookupHostByRoute(routeId []byte) (hostID string, generation uint64, pubKey []byte, maxStreams int, revoked, suspended bool, err error)
 	VerifyRouteMAC(req *RouteMACProxyRequest) error
 	VerifyCapability(cap string) (*cryptoutil.CapabilityPayload, error)
 	Renew(req *RenewProxyRequest) (string, error)
 	ReportUsage(routeId []byte, rx, tx int64, connects int) error
+	TouchHost(routeId []byte) error
+	ClearHostHeartbeat(routeId []byte) error
 }
+
+const hostTouchMinInterval = 30 * time.Second
 
 type RouteMACProxyRequest struct {
 	Operation  string
@@ -64,6 +70,7 @@ type EnrollProxyRequest struct {
 	Nonce         []byte
 	Challenge     []byte
 	Proof         []byte
+	HostName      string
 }
 type EnrollProxyResponse struct {
 	RouteId     []byte
@@ -94,12 +101,14 @@ type BootstrapProxyRequest struct {
 }
 
 type Ingress struct {
-	clientListen string
-	agentListen  string
-	tlsConfig    *tls.Config
-	registry     *registry.Registry
-	control      ControlAPI
-	metrics      *metrics.Metrics
+	clientListen  string
+	agentListen   string
+	tlsConfig     *tls.Config
+	registry      *registry.Registry
+	control       ControlAPI
+	metrics       *metrics.Metrics
+	heartbeatMu   sync.Mutex
+	lastHostTouch map[string]time.Time
 
 	issuerPub         ed25519.PublicKey
 	heartbeatInterval time.Duration
@@ -200,6 +209,7 @@ func New(clientListen, agentListen string, tlsConfig *tls.Config, reg *registry.
 		registry:          reg,
 		control:           ctrl,
 		metrics:           m,
+		lastHostTouch:     make(map[string]time.Time),
 		issuerPub:         issuerPub,
 		heartbeatInterval: heartbeat,
 		bindTimeout:       bindTimeout,
@@ -669,11 +679,16 @@ func (ing *Ingress) handleEnroll(ctx *connContext, raw []byte) {
 		Nonce:         nonce,
 		Challenge:     ctx.challenge,
 		Proof:         proof,
+		HostName:      enroll.HostName,
 	}
 	resp, err := ing.control.Enroll(req)
 	if err != nil {
 		ing.logger.Printf("enroll failed for %s: %v", logutil.Value(enroll.HostId), err)
-		// To avoid leaking existence, return AUTH_FAILED for many cases? For ENROLL we can return AUTH_FAILED
+		if store.IsHostQuotaError(err) {
+			sendError(ctx.conn, protocol.ErrQuotaExceeded, "host limit")
+			return
+		}
+		// Unknown/expired invites stay AUTH_FAILED so scanners cannot probe codes.
 		sendError(ctx.conn, protocol.ErrAuthFailed, "enroll failed")
 		return
 	}
@@ -723,7 +738,7 @@ func (ing *Ingress) handleRegister(ctx *connContext, raw []byte) {
 	// Check revocation via control lookup? Need to check host revoked and generation
 	routeIdRaw, _ := base64.RawURLEncoding.DecodeString(payload.Route)
 	// lookup host
-	_, gen, pubKey, maxStreams, revoked, err := ing.control.LookupHostByRoute(routeIdRaw)
+	_, gen, pubKey, maxStreams, revoked, _, err := ing.control.LookupHostByRoute(routeIdRaw)
 	if err != nil {
 		// Route not found -> AUTH_FAILED uniform
 		sendError(ctx.conn, protocol.ErrAuthFailed, "auth failed")
@@ -780,10 +795,13 @@ func (ing *Ingress) handleRegister(ctx *connContext, raw []byte) {
 		ing.metrics.IncOnlineHosts(1)
 	}
 	ing.logger.Printf("agent registered route=%s host=%s gen=%d", payload.Route[:8], logutil.Value(payload.Host), payload.Generation)
+	ing.noteHostSeen(routeIdRaw, payload.Route, true)
 	defer func() {
 		if ing.registry.Unregister(sess) {
 			ing.metrics.IncOnlineHosts(-1)
+			ing.noteHostGone(routeIdRaw)
 		}
+		ing.forgetHostTouch(payload.Route)
 		ing.logger.Printf("agent offline route=%s", sess.RouteIdStr[:8])
 	}()
 
@@ -843,6 +861,7 @@ func (ing *Ingress) handleRegister(ctx *connContext, raw []byte) {
 			_ = ctx.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 			_, _ = ctx.conn.Write(b)
 			ing.registry.UpdateHeartbeat(payload.Route)
+			ing.noteHostSeen(routeIdRaw, payload.Route, false)
 		case protocol.TypePong:
 			sendError(ctx.conn, protocol.ErrBadRequest, "unexpected PONG")
 			return
@@ -938,9 +957,8 @@ func (ing *Ingress) handleConnect(ctx *connContext, raw []byte) {
 		sendError(ctx.conn, protocol.ErrRateLimited, "rate limited route")
 		return
 	}
-	_, generation, _, _, revoked, err := ing.control.LookupHostByRoute(routeIdRaw)
-	if err != nil || revoked {
-		sendError(ctx.conn, protocol.ErrAuthFailed, "auth failed")
+	_, generation, _, _, revoked, suspended, err := ing.control.LookupHostByRoute(routeIdRaw)
+	if ing.rejectDeadRoute(ctx.conn, err, revoked, suspended) {
 		return
 	}
 
@@ -1055,6 +1073,43 @@ func (ing *Ingress) handleConnect(ctx *connContext, raw []byte) {
 	)
 }
 
+// noteHostSeen persists Agent liveness to Control so tenants can tell 在线
+// vs 离线. REGISTER always writes. PING is throttled; PONG is written first.
+func (ing *Ingress) noteHostSeen(routeID []byte, routeKey string, force bool) {
+	if ing == nil || ing.control == nil || len(routeID) != 16 || routeKey == "" {
+		return
+	}
+	now := time.Now()
+	ing.heartbeatMu.Lock()
+	if !force {
+		if last, ok := ing.lastHostTouch[routeKey]; ok && now.Sub(last) < hostTouchMinInterval {
+			ing.heartbeatMu.Unlock()
+			return
+		}
+	}
+	ing.lastHostTouch[routeKey] = now
+	ing.heartbeatMu.Unlock()
+	// Sync so Unregister's ClearHostHeartbeat cannot be overtaken by a late
+	// PING goroutine. PONG is already written before this call.
+	_ = ing.control.TouchHost(routeID)
+}
+
+func (ing *Ingress) noteHostGone(routeID []byte) {
+	if ing == nil || ing.control == nil || len(routeID) != 16 {
+		return
+	}
+	_ = ing.control.ClearHostHeartbeat(routeID)
+}
+
+func (ing *Ingress) forgetHostTouch(routeKey string) {
+	if ing == nil || routeKey == "" {
+		return
+	}
+	ing.heartbeatMu.Lock()
+	delete(ing.lastHostTouch, routeKey)
+	ing.heartbeatMu.Unlock()
+}
+
 // addRouteBytes / addRouteConnects accumulate per-route counters for the
 // periodic stats_report flush.
 func (ing *Ingress) addRouteBytes(routeKey string, rx, tx int64) {
@@ -1134,8 +1189,11 @@ func (ing *Ingress) handleBind(ctx *connContext, raw []byte) {
 		return
 	}
 	ing.promoteConnection(ctx)
-	_, persistedGen, _, _, revoked, err := ing.control.LookupHostByRoute(routeIdRaw)
-	if err != nil || revoked || persistedGen != bind.Generation {
+	_, persistedGen, _, _, revoked, suspended, err := ing.control.LookupHostByRoute(routeIdRaw)
+	if ing.rejectDeadRoute(ctx.conn, err, revoked, suspended) {
+		return
+	}
+	if persistedGen != bind.Generation {
 		sendError(ctx.conn, protocol.ErrAuthFailed, "auth failed")
 		return
 	}
@@ -1203,12 +1261,45 @@ func (s *agentSender) SendOpen(streamId string, generation uint64) error {
 	_, err := s.conn.Write(b)
 	return err
 }
+func (s *agentSender) NotifyRevoked() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	b := protocol.MarshalError(protocol.ErrRevoked, "revoked")
+	_ = s.conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
+	_, err := s.conn.Write(b)
+	return err
+}
 func (s *agentSender) Close() error { return s.conn.Close() }
 
 func sendError(conn net.Conn, code, msg string) {
 	b := protocol.MarshalError(code, msg)
 	_ = conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
 	_, _ = conn.Write(b)
+}
+
+// rejectDeadRoute tells a CONNECT/BIND peer whose MAC already verified that
+// this route cannot take traffic. MAC failures still return AUTH_FAILED so
+// scanners cannot tell missing routes from bad secrets. sql.ErrNoRows covers
+// 更换 rebind (old route_id is replaced). A daily-budget hold is RATE_LIMITED
+// (retryable) so the App keeps the pairing. Transient lookup errors retry.
+func (ing *Ingress) rejectDeadRoute(conn net.Conn, err error, revoked, suspended bool) bool {
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			sendError(conn, protocol.ErrRevoked, "revoked")
+			return true
+		}
+		sendError(conn, protocol.ErrServerBusy, "lookup failed")
+		return true
+	}
+	if revoked {
+		sendError(conn, protocol.ErrRevoked, "revoked")
+		return true
+	}
+	if suspended {
+		sendError(conn, protocol.ErrRateLimited, "daily budget")
+		return true
+	}
+	return false
 }
 
 func remoteIPFromConn(conn net.Conn) string {

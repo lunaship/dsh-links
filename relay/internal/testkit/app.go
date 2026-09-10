@@ -145,6 +145,10 @@ func (a *SimApp) ConnectWithTamperedMAC() error {
 
 // ConnectAndCloseWithoutBind tests BIND timeout: connects but agent not binding? Actually agent will bind, but we can test client cancel
 func (a *SimApp) ConnectExpectAgentOffline() error {
+	return a.ConnectExpectCode(protocol.ErrAgentOffline)
+}
+
+func (a *SimApp) ConnectExpectCode(code string) error {
 	conn, err := net.DialTimeout("tcp", a.ClientAddr, 5*time.Second)
 	if err != nil {
 		return err
@@ -175,12 +179,12 @@ func (a *SimApp) ConnectExpectAgentOffline() error {
 	raw, _ := fr.ReadFrame(2048)
 	var e protocol.ErrorFrame
 	if json.Unmarshal(raw, &e) == nil && e.Type == "ERROR" {
-		if e.Code == protocol.ErrAgentOffline {
+		if e.Code == code {
 			return nil
 		}
-		return fmt.Errorf("expected AGENT_OFFLINE got %s", e.Code)
+		return fmt.Errorf("expected %s got %s", code, e.Code)
 	}
-	return fmt.Errorf("expected AGENT_OFFLINE")
+	return fmt.Errorf("expected %s", code)
 }
 
 // Replay test: send same CONNECT twice on same connection? Actually CONNECT is per connection, need to test replay within same connection is impossible (only one frame). But we can test replay across connections using same nonce/challenge? Challenge changes per connection, so replay with same nonce but different challenge should still be rejected? Spec says replay within connection/window nonce duplicate. For cross-connection, challenge changes, so MAC will differ. To test replay, we send same nonce+ts+mac with same challenge on same connection - but we only send one CONNECT per conn, so replay test is for BIND/CONNECT nonce reuse on same conn (duplicate frame). We'll implement a test that sends two CONNECT frames sequentially on same conn (protocol violation) and expects REPLAY.

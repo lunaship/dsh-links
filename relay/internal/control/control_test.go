@@ -15,6 +15,38 @@ import (
 	"github.com/lunaship/dsh-links/relay/internal/store"
 )
 
+func TestClampInviteTTL(t *testing.T) {
+	if got := ClampInviteTTL(0); got != DefaultInviteTTL {
+		t.Fatalf("zero ttl=%v, want default", got)
+	}
+	if got := ClampInviteTTL(-time.Hour); got != DefaultInviteTTL {
+		t.Fatalf("negative ttl=%v, want default", got)
+	}
+	if got := ClampInviteTTL(time.Second); got != MinInviteTTL {
+		t.Fatalf("1s ttl=%v, want min", got)
+	}
+	if got := ClampInviteTTL(8760 * time.Hour); got != MaxInviteTTL {
+		t.Fatalf("year ttl=%v, want max", got)
+	}
+	if got := ClampInviteTTL(time.Hour); got != time.Hour {
+		t.Fatalf("1h ttl=%v", got)
+	}
+}
+
+func TestMintInviteClampsStoredExpiry(t *testing.T) {
+	ctrl, st := newTestControl(t)
+	defer st.Close()
+	if _, rec, err := ctrl.MintInvite("", 8760*time.Hour); err != nil || rec == nil {
+		t.Fatalf("mint: rec=%v err=%v", rec, err)
+	} else {
+		got := rec.ExpiresAt - rec.CreatedAt
+		want := int64(MaxInviteTTL.Seconds())
+		if got < want-2 || got > want+2 {
+			t.Fatalf("stored ttl=%d, want ~%d", got, want)
+		}
+	}
+}
+
 func newTestControl(t *testing.T) (*Control, *store.Store) {
 	t.Helper()
 	st, err := store.OpenMemory()
@@ -44,6 +76,42 @@ func enrollRequest(t *testing.T, invite, hostID string, priv ed25519.PrivateKey)
 	pub := priv.Public().(ed25519.PublicKey)
 	proof := ed25519.Sign(priv, cryptoutil.BuildEnrollTranscript(invite, hostID, pub, ts, nonce, challenge))
 	return &EnrollRequest{InviteCode: invite, HostId: hostID, HostPublicKey: pub, Ts: ts, Nonce: nonce, Challenge: challenge, Proof: proof}
+}
+
+func TestEnrollStoresDisplayHostName(t *testing.T) {
+	ctrl, st := newTestControl(t)
+	defer st.Close()
+	invite, err := ctrl.CreateInvite(time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := enrollRequest(t, invite, "dsh-hostlabel", priv)
+	req.HostName = " 办公 Mac\n"
+	if _, err := ctrl.Enroll(req); err != nil {
+		t.Fatal(err)
+	}
+	h, err := st.GetHostByID("dsh-hostlabel")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.HostName != "办公 Mac" {
+		t.Fatalf("hostName=%q", h.HostName)
+	}
+	list, err := ctrl.ListHosts()
+	if err != nil || len(list) != 1 || list[0].HostName != "办公 Mac" {
+		t.Fatalf("list=%+v err=%v", list, err)
+	}
+	invites, err := ctrl.ListInvites()
+	if err != nil || len(invites) != 1 {
+		t.Fatalf("invites=%+v err=%v", invites, err)
+	}
+	if invites[0].ConsumedHostID != "dsh-hostlabel" || invites[0].ConsumedHostName != "办公 Mac" || !invites[0].ConsumedHostLive {
+		t.Fatalf("consumed host %+v", invites[0])
+	}
 }
 
 func TestInvalidProofDoesNotConsumeInvite(t *testing.T) {

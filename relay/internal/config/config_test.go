@@ -49,6 +49,44 @@ ipc_auth_token_file = "/tmp/ipc.auth"
 	if cfg.AdminPassword != "change-me-now" {
 		t.Fatalf("admin_password = %q", cfg.AdminPassword)
 	}
+	if cfg.AdminSecureCookies {
+		t.Fatal("admin_secure_cookies must default false for loopback HTTP")
+	}
+	if cfg.PublicControlURL != "" {
+		t.Fatal("public_control_url must default empty for self-host")
+	}
+}
+
+func TestLoadAdminSecureCookies(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	body := `
+client_listen = "127.0.0.1:8443"
+agent_listen = "127.0.0.1:8444"
+admin_listen = "127.0.0.1:8080"
+admin_secure_cookies = true
+control_socket = "/tmp/control.sock"
+tls_cert = "/tmp/relay.crt"
+tls_key = "/tmp/relay.key"
+issuer_private_key = "/tmp/issuer.key"
+issuer_public_key = "/tmp/issuer.pub"
+route_master_key = "/tmp/route-master.key"
+admin_token_file = "/tmp/admin.token"
+admin_user = "admin"
+admin_password = "change-me-now"
+database = "/tmp/control.db"
+ipc_auth_token_file = "/tmp/ipc.auth"
+`
+	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.AdminSecureCookies {
+		t.Fatal("admin_secure_cookies = true was ignored")
+	}
 }
 
 func TestLoadAdminPasswordFromFile(t *testing.T) {
@@ -127,5 +165,63 @@ func TestIPv6PrefixLenValidation(t *testing.T) {
 		if err := c.Validate(); err != nil {
 			t.Errorf("ipv6_prefix_len=%d should validate: %v", good, err)
 		}
+	}
+}
+
+func TestNormalizePublicControlURL(t *testing.T) {
+	got, err := NormalizePublicControlURL(" https://control.example.com/panel/ ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "https://control.example.com/panel" {
+		t.Fatalf("got %q", got)
+	}
+	if got, err := NormalizePublicControlURL(""); err != nil || got != "" {
+		t.Fatalf("empty: %q %v", got, err)
+	}
+	for _, bad := range []string{
+		"http://control.example.com",
+		"https://127.0.0.1",
+		"https://localhost",
+		"https://user:pass@control.example.com",
+		"https://control.example.com/?x=1",
+		"https://control.example.com/#frag",
+		"ftp://control.example.com",
+	} {
+		if _, err := NormalizePublicControlURL(bad); err == nil {
+			t.Errorf("%q should fail", bad)
+		}
+	}
+}
+
+func TestLoadPublicControlURL(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	body := `
+client_listen = "127.0.0.1:8443"
+agent_listen = "127.0.0.1:8444"
+admin_listen = "127.0.0.1:8080"
+control_socket = "/tmp/control.sock"
+tls_cert = "/tmp/relay.crt"
+tls_key = "/tmp/relay.key"
+issuer_private_key = "/tmp/issuer.key"
+issuer_public_key = "/tmp/issuer.pub"
+route_master_key = "/tmp/route-master.key"
+admin_token_file = "/tmp/admin.token"
+admin_user = "admin"
+admin_password = "change-me-now"
+database = "/tmp/control.db"
+ipc_auth_token_file = "/tmp/ipc.auth"
+public_control_url = "https://control.example.com/"
+`
+	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.PublicControlURL != "https://control.example.com" {
+		t.Fatalf("public_control_url = %q", cfg.PublicControlURL)
 	}
 }

@@ -44,6 +44,21 @@ func TestValidateAdminTransportRequiresTLSOffLoopback(t *testing.T) {
 	}
 }
 
+func TestControlSecureCookies(t *testing.T) {
+	if controlSecureCookies(false, false) {
+		t.Fatal("loopback HTTP must not force Secure cookies")
+	}
+	if !controlSecureCookies(true, false) {
+		t.Fatal("Control TLS must mark cookies Secure")
+	}
+	if !controlSecureCookies(false, true) {
+		t.Fatal("admin_secure_cookies must mark cookies Secure behind a TLS reverse proxy")
+	}
+	if !controlSecureCookies(true, true) {
+		t.Fatal("TLS plus admin_secure_cookies must stay Secure")
+	}
+}
+
 func TestRequireAdminPassword(t *testing.T) {
 	if err := requireAdminPassword(""); err == nil {
 		t.Fatal("empty password accepted")

@@ -8,9 +8,16 @@ import (
 	"time"
 )
 
-type testSender struct{ closed atomic.Bool }
+type testSender struct {
+	closed  atomic.Bool
+	revoked atomic.Bool
+}
 
 func (s *testSender) SendOpen(string, uint64) error { return nil }
+func (s *testSender) NotifyRevoked() error {
+	s.revoked.Store(true)
+	return nil
+}
 func (s *testSender) Close() error {
 	s.closed.Store(true)
 	return nil
@@ -84,8 +91,44 @@ func TestBoundStreamRetainsBudgetsAndRevocationOwnership(t *testing.T) {
 	if !agentConn.closed.Load() || !clientConn.closed.Load() {
 		t.Fatal("revocation did not close both active stream connections")
 	}
+	if sender, ok := sess.Sender.(*testSender); !ok || !sender.revoked.Load() {
+		t.Fatal("revocation did not notify the Agent control connection")
+	}
 	if got := r.TotalActiveStreams(); got != 0 {
 		t.Fatalf("stream budget leaked after revoke: %d", got)
+	}
+}
+
+func TestEvictStreamsKeepsAgent(t *testing.T) {
+	r := New(1)
+	sess := testSession("route", 1)
+	if _, err := r.Register(sess); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := r.CreatePending("route", "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentConn := &testCloser{}
+	if _, err := r.CompleteBind("route", pending.StreamStr, 1, agentConn); err != nil {
+		t.Fatal(err)
+	}
+	clientConn := &testCloser{}
+	if !r.AttachClient(pending, clientConn) {
+		t.Fatal("attach client failed")
+	}
+	r.EvictStreams("route")
+	if !agentConn.closed.Load() || !clientConn.closed.Load() {
+		t.Fatal("hold did not close active stream connections")
+	}
+	if sender, ok := sess.Sender.(*testSender); !ok || sender.revoked.Load() || sender.closed.Load() {
+		t.Fatal("hold must not revoke or close the Agent control connection")
+	}
+	if got, ok := r.Get("route"); !ok || got != sess {
+		t.Fatal("agent must stay registered during a budget hold")
+	}
+	if _, err := r.CreatePending("route", "127.0.0.1"); err != nil {
+		t.Fatalf("agent must accept a new stream after eviction: %v", err)
 	}
 }
 

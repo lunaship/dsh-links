@@ -344,6 +344,8 @@ func (s *captureOpenSender) SendOpen(stream string, generation uint64) error {
 	return nil
 }
 
+func (s *captureOpenSender) NotifyRevoked() error { return nil }
+
 func (s *captureOpenSender) Close() error { return nil }
 
 // Test cross-host BIND: a valid Host B MAC cannot bind a pending Host A stream.
@@ -531,8 +533,8 @@ func TestStaleBindRejectedAfterReenroll(t *testing.T) {
 		t.Fatal(err)
 	}
 	var bindError protocol.ErrorFrame
-	if err := json.Unmarshal(bindResponseRaw, &bindError); err != nil || bindError.Type != protocol.TypeError || bindError.Code != protocol.ErrAuthFailed {
-		t.Fatalf("stale bind response=%s, want AUTH_FAILED", string(bindResponseRaw))
+	if err := json.Unmarshal(bindResponseRaw, &bindError); err != nil || bindError.Type != protocol.TypeError || bindError.Code != protocol.ErrRevoked {
+		t.Fatalf("stale bind response=%s, want REVOKED", string(bindResponseRaw))
 	}
 }
 
@@ -805,10 +807,11 @@ func TestHostRevokeClosesWithin1s(t *testing.T) {
 	if ing.registry.Count() != 0 {
 		t.Fatalf("registry should be empty after revoke, got %d", ing.registry.Count())
 	}
-	// New CONNECT should fail with AUTH_FAILED (revoked route)
+	// New CONNECT should fail with REVOKED (revoked route, MAC already verified)
 	routeRaw, _ := base64.RawURLEncoding.DecodeString(agent.RouteId)
 	secretRaw, _ := base64.RawURLEncoding.DecodeString(agent.RouteSecret)
-	// Even though revoked, Derive still works, but CONNECT should be AUTH_FAILED because agent offline and revoked route considered AUTH_FAILED
+	// Even though revoked, Derive still works. CONNECT MAC verifies, then
+	// Lookup sees revoked_at and returns REVOKED so the App can drop pairing.
 	c, _ := net.Dial("tcp", clientAddr)
 	fr := protocol.NewFrameReader(c)
 	helloRaw, _ := fr.ReadFrame(protocol.MaxHello)
@@ -827,8 +830,8 @@ func TestHostRevokeClosesWithin1s(t *testing.T) {
 	raw, _ := fr.ReadFrame(2048)
 	var e protocol.ErrorFrame
 	json.Unmarshal(raw, &e)
-	if e.Code != protocol.ErrAuthFailed {
-		t.Fatalf("expected AUTH_FAILED after revoke, got %s", e.Code)
+	if e.Code != protocol.ErrRevoked {
+		t.Fatalf("expected REVOKED after revoke, got %s", e.Code)
 	}
 	c.Close()
 	agent.Close()

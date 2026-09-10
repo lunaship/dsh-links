@@ -29,6 +29,9 @@ type Control struct {
 	// broadcast to relays). It reports how many relays received the push and
 	// how many confirmed the route was closed locally.
 	revokeFn func(routeId, hostId string) (delivered, acked int)
+	// suspendFn closes live streams without REVOKED. Daily budget must not
+	// wipe plugin credentials or App pairings; midnight restores the route.
+	suspendFn func(routeId, hostId string)
 
 	// capTTL is the lifetime of newly issued capabilities (config
 	// capability_ttl). Set explicitly by main.go; New defaults to 30 days to
@@ -50,6 +53,27 @@ type Control struct {
 // maxCredentialsPerHost caps stored credentials per host so repeated renewals
 // (legitimate or abusive) cannot grow the table without bound.
 const maxCredentialsPerHost = 8
+
+const (
+	DefaultInviteTTL = store.DefaultInviteTTL
+	MinInviteTTL     = store.MinInviteTTL
+	MaxInviteTTL     = store.MaxInviteTTL
+)
+
+// ClampInviteTTL bounds a one-time enroll code. Hosted tenants must not mint
+// year-long unused codes; zero or negative values use the default.
+func ClampInviteTTL(ttl time.Duration) time.Duration {
+	if ttl <= 0 {
+		return DefaultInviteTTL
+	}
+	if ttl < MinInviteTTL {
+		return MinInviteTTL
+	}
+	if ttl > MaxInviteTTL {
+		return MaxInviteTTL
+	}
+	return ttl
+}
 
 // New creates control.
 func New(st *store.Store, issuerPriv []byte, routeMasterKey []byte, defaultMaxStreams int) (*Control, error) {
@@ -179,6 +203,7 @@ type EnrollRequest struct {
 	Nonce         []byte // 16
 	Challenge     []byte // 32
 	Proof         []byte // 64
+	HostName      string
 }
 
 // EnrollResult
@@ -205,7 +230,11 @@ func (c *Control) Enroll(req *EnrollRequest) (*EnrollResult, error) {
 	// verification, random ID generation, capability signing, or writes. The
 	// final atomic EnrollHost call revalidates and consumes the invite.
 	if isBootstrapToken(req.InviteCode) {
-		return c.enrollWithBootstrap(req)
+		res, err := c.enrollWithBootstrap(req)
+		if err == nil && res != nil {
+			c.noteHostEnroll(res.HostId)
+		}
+		return res, err
 	}
 	if err := c.store.ValidateInvite(req.InviteCode); err != nil {
 		return nil, errors.New("invite unavailable")
@@ -240,7 +269,7 @@ func (c *Control) Enroll(req *EnrollRequest) (*EnrollResult, error) {
 		return nil, err
 	}
 	host := &store.Host{
-		ID: req.HostId, RouteID: routeId, HostName: req.HostId,
+		ID: req.HostId, RouteID: routeId, HostName: protocol.SanitizeHostName(req.HostName, req.HostId),
 		HostPubKey: req.HostPublicKey,
 		MaxStreams: c.defaultMaxStreams, Version: "v0.1.0",
 	}
@@ -275,6 +304,7 @@ func (c *Control) Enroll(req *EnrollRequest) (*EnrollResult, error) {
 	if len(replacedRouteID) > 0 && c.revokeFn != nil {
 		c.revokeFn(base64.RawURLEncoding.EncodeToString(replacedRouteID), req.HostId)
 	}
+	c.noteHostEnroll(host.ID)
 	return &EnrollResult{
 		RouteId:     routeId,
 		RouteSecret: secret,
@@ -441,8 +471,9 @@ func (c *Control) PurgeRevokedHosts() (int64, error) {
 // ReportUsage accumulates routed byte/connect counters into stats_daily for
 // the host owning the route. Unknown routes are ignored (they may have been
 // purged since the relay last synced). Anonymous hosts whose accumulated
-// daily usage crossed the budget get suspended until the next UTC midnight
-// and their routes are pushed revoked immediately.
+// daily usage crossed the budget get suspended until the next UTC midnight.
+// Live streams are evicted; the Agent stays enrolled so CONNECT can resume
+// after the window without a new access code.
 func (c *Control) ReportUsage(routeID []byte, rx, tx int64, connects int) error {
 	h, err := c.store.GetHostByRoute(routeID)
 	if err != nil || h == nil {
@@ -470,10 +501,28 @@ func (c *Control) ReportUsage(routeID []byte, rx, tx int64, connects int) error 
 		return err
 	}
 	routeStr := base64.RawURLEncoding.EncodeToString(h.RouteID)
-	if c.revokeFn != nil {
-		c.revokeFn(routeStr, h.ID)
+	if c.suspendFn != nil {
+		c.suspendFn(routeStr, h.ID)
 	}
 	return nil
+}
+
+// TouchHostByRoute records that the Agent for this route is still connected.
+// Used so Control tenants can tell 在线 vs 离线. Unknown/revoked routes are ignored.
+func (c *Control) TouchHostByRoute(routeID []byte) error {
+	if c == nil || c.store == nil || len(routeID) != 16 {
+		return nil
+	}
+	return c.store.UpdateHostHeartbeatByRoute(routeID)
+}
+
+// ClearHostHeartbeatByRoute marks the Agent for this route offline immediately.
+// Called when the control connection drops; unknown/revoked routes are ignored.
+func (c *Control) ClearHostHeartbeatByRoute(routeID []byte) error {
+	if c == nil || c.store == nil || len(routeID) != 16 {
+		return nil
+	}
+	return c.store.ClearHostHeartbeatByRoute(routeID)
 }
 
 // SetRevokeFn sets the post-revoke callback (called from main.go with IPC server).
@@ -481,23 +530,137 @@ func (c *Control) SetRevokeFn(fn func(routeId, hostId string) (int, int)) {
 	c.revokeFn = fn
 }
 
+// SetSuspendFn evicts live streams when a route hits a temporary budget hold.
+func (c *Control) SetSuspendFn(fn func(routeId, hostId string)) {
+	c.suspendFn = fn
+}
+
+// SuspendHostUntil holds a route until unix time without revoking credentials.
+func (c *Control) SuspendHostUntil(hostID string, until int64) error {
+	return c.store.SuspendHostUntil(hostID, until)
+}
+
 // ListHosts returns hosts for admin API
 func (c *Control) ListHosts() ([]store.Host, error) {
 	return c.store.ListHosts()
 }
 
-// CreateInvite admin
+// CreateInvite mints an invite on the default admin ledger (self-host).
 func (c *Control) CreateInvite(ttl time.Duration) (string, error) {
-	uid, err := c.store.EnsureDefaultUser()
-	if err != nil {
-		return "", err
-	}
-	code, _, err := c.store.CreateInvite(uid, ttl)
+	return c.CreateInviteFor("", ttl)
+}
+
+// CreateInviteFor mints an invite owned by userID. Empty userID uses the
+// default admin row so existing tests and self-host stay unchanged.
+func (c *Control) CreateInviteFor(userID string, ttl time.Duration) (string, error) {
+	code, _, err := c.MintInvite(userID, ttl)
 	return code, err
+}
+
+func (c *Control) MintInvite(userID string, ttl time.Duration) (string, *store.Invite, error) {
+	code, rec, _, err := c.mintInvite(userID, ttl, false)
+	return code, rec, err
+}
+
+func (c *Control) mintInvite(userID string, ttl time.Duration, replaceOldestUnused bool) (string, *store.Invite, *store.Invite, error) {
+	ttl = ClampInviteTTL(ttl)
+	if userID == "" {
+		var err error
+		userID, err = c.store.EnsureDefaultUser()
+		if err != nil {
+			return "", nil, nil, err
+		}
+	}
+	if replaceOldestUnused {
+		return c.store.CreateInviteReplacingOldestUnused(userID, ttl)
+	}
+	code, rec, err := c.store.CreateInvite(userID, ttl)
+	return code, rec, nil, err
+}
+
+func (c *Control) GetInvite(id string) (*store.Invite, error) {
+	return c.store.GetInvite(id)
+}
+
+func (c *Control) GetHost(id string) (*store.Host, error) {
+	return c.store.GetHostByID(id)
+}
+
+func (c *Control) UserLogin(userID string) string {
+	u, err := c.store.GetUser(userID)
+	if err != nil {
+		return ""
+	}
+	return u.LoginName
+}
+
+func (c *Control) AppendControlEvent(ev store.ControlEvent) {
+	if c == nil || c.store == nil {
+		return
+	}
+	_ = c.store.AppendControlEvent(ev)
+}
+
+func (c *Control) ListControlEvents(userID string, all bool) ([]store.ControlEvent, error) {
+	return c.store.ListControlEvents(userID, all)
+}
+
+func (c *Control) noteHostSelfRevoke(h *store.Host) {
+	if h == nil || h.ID == "" {
+		return
+	}
+	c.AppendControlEvent(store.ControlEvent{
+		ActorLogin:    "plugin",
+		Action:        store.ControlEventHostRevoke,
+		TargetKind:    "host",
+		TargetID:      h.ID,
+		SubjectUserID: h.UserID,
+		Detail:        protocol.SanitizeHostName(h.HostName, h.ID),
+	})
+}
+
+func (c *Control) noteHostEnroll(hostID string) {
+	if hostID == "" {
+		return
+	}
+	subject := ""
+	detail := ""
+	if h, err := c.store.GetHostByID(hostID); err == nil {
+		subject = h.UserID
+		detail = protocol.SanitizeHostName(h.HostName, h.ID)
+	}
+	c.AppendControlEvent(store.ControlEvent{
+		ActorLogin:    "enroll",
+		Action:        store.ControlEventHostEnroll,
+		TargetKind:    "host",
+		TargetID:      hostID,
+		SubjectUserID: subject,
+		Detail:        detail,
+	})
 }
 
 func (c *Control) ListInvites() ([]store.Invite, error) {
 	return c.store.ListInvites()
+}
+
+func (c *Control) ListInvitesFor(userID string, all bool) ([]store.Invite, error) {
+	if all {
+		return c.store.ListInvites()
+	}
+	if userID == "" {
+		return nil, nil
+	}
+	return c.store.ListInvitesByUser(userID)
+}
+
+func (c *Control) ListHostsFor(userID string, all bool) ([]store.Host, error) {
+	if all {
+		return c.store.ListHosts()
+	}
+	if userID == "" {
+		return nil, nil
+	}
+	return c.store.ListHostsByUser(userID)
 }
 
 func (c *Control) RevokeInvite(id string) error {
@@ -508,35 +671,206 @@ func (c *Control) DeleteInvite(id string) error {
 	return c.store.DeleteInvite(id)
 }
 
+func (c *Control) requireInviteOwner(id, userID string, all bool) error {
+	if all {
+		return nil
+	}
+	inv, err := c.store.GetInvite(id)
+	if err != nil {
+		return store.ErrInviteNotFound
+	}
+	if inv.UserID != userID {
+		return store.ErrInviteNotFound
+	}
+	return nil
+}
+
+func (c *Control) RevokeInviteOwned(id, userID string, all bool) error {
+	if err := c.requireInviteOwner(id, userID, all); err != nil {
+		return err
+	}
+	return c.store.RevokeInvite(id)
+}
+
+func (c *Control) DeleteInviteOwned(id, userID string, all bool) error {
+	if err := c.requireInviteOwner(id, userID, all); err != nil {
+		return err
+	}
+	return c.store.DeleteInvite(id)
+}
+
+func (c *Control) requireHostOwner(id, userID string, all bool) error {
+	if all {
+		return nil
+	}
+	h, err := c.store.GetHostByID(id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return store.ErrHostNotFound
+		}
+		return err
+	}
+	if h.UserID != userID {
+		return store.ErrHostNotFound
+	}
+	return nil
+}
+
+func (c *Control) RevokeHostOwned(id, userID string, all bool) (int, int, error) {
+	if err := c.requireHostOwner(id, userID, all); err != nil {
+		return 0, 0, err
+	}
+	return c.RevokeHost(id)
+}
+
+func (c *Control) DeleteHostOwned(id, userID string, all bool) (int, int, error) {
+	if err := c.requireHostOwner(id, userID, all); err != nil {
+		return 0, 0, err
+	}
+	return c.DeleteHost(id)
+}
+
+func (c *Control) CreateTenant(loginName, displayName, password, reservedAdminUser string) (*store.User, error) {
+	return c.store.CreateTenant(loginName, displayName, password, reservedAdminUser)
+}
+
+func (c *Control) SetTenantLimits(liveHosts, unusedInvites int) {
+	c.store.SetTenantLimits(liveHosts, unusedInvites)
+}
+
+func (c *Control) ListTenants() ([]store.User, error) {
+	return c.store.ListTenants()
+}
+
+func (c *Control) DisableTenant(id string) error {
+	u, err := c.store.GetUser(id)
+	if err != nil {
+		return err
+	}
+	if u.Role != store.RoleTenant {
+		return store.ErrUserNotFound
+	}
+	if u.DisabledAt == nil {
+		if err := c.store.DisableUser(id); err != nil {
+			return err
+		}
+	}
+	if _, err := c.store.RevokeUnusedInvitesByUser(id); err != nil {
+		return err
+	}
+	hosts, err := c.store.ListHostsByUser(id)
+	if err != nil {
+		return err
+	}
+	var first error
+	for _, h := range hosts {
+		if h.RevokedAt != nil {
+			continue
+		}
+		if _, _, err := c.RevokeHost(h.ID); err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
+}
+
+func (c *Control) EnableTenant(id string) error {
+	return c.store.EnableUser(id)
+}
+
+func (c *Control) TenantActive(userID string) bool {
+	if c == nil || c.store == nil || userID == "" {
+		return false
+	}
+	u, err := c.store.GetUser(userID)
+	return err == nil && u.Role == store.RoleTenant && u.DisabledAt == nil
+}
+
+func (c *Control) PasswordMustChange(userID string) bool {
+	if c == nil || c.store == nil || userID == "" {
+		return false
+	}
+	u, err := c.store.GetUser(userID)
+	return err == nil && u.Role == store.RoleTenant && u.PasswordMustChange
+}
+
+func (c *Control) AuthenticateTenant(loginName, password string) (*store.User, error) {
+	return c.store.AuthenticateTenant(loginName, password)
+}
+
+// LookupTenantByLogin returns a tenant row without the password hash.
+// Unknown logins and the admin account are omitted so failed-login audit
+// cannot be used to enumerate accounts that do not exist.
+func (c *Control) LookupTenantByLogin(loginName string) *store.User {
+	if c == nil || c.store == nil {
+		return nil
+	}
+	u, err := c.store.GetUserByLogin(loginName)
+	if err != nil || u.Role != store.RoleTenant {
+		return nil
+	}
+	u.PasswordHash = ""
+	return u
+}
+
+func (c *Control) ChangeTenantPassword(id, current, next string) error {
+	return c.store.ChangeTenantPassword(id, current, next)
+}
+
+func (c *Control) SetTenantPassword(id, password string) error {
+	return c.store.SetTenantPassword(id, password)
+}
+
+func (c *Control) TenantQuota(userID string) (*store.TenantQuota, error) {
+	return c.store.TenantQuota(userID)
+}
+
+func (c *Control) TenantLimits() (liveHosts, unusedInvites int) {
+	return c.store.TenantLimits()
+}
+
 func (c *Control) PurgeStaleInvites() (int64, error) {
 	return c.store.PurgeStaleInvites(time.Now().Unix())
+}
+
+func (c *Control) PurgeStaleInvitesOwned(userID string, all bool) (int64, error) {
+	if all {
+		return c.PurgeStaleInvites()
+	}
+	return c.store.PurgeStaleInvitesByUser(userID, time.Now().Unix())
+}
+
+func (c *Control) PurgeRevokedHostsOwned(userID string, all bool) (int64, error) {
+	if all {
+		return c.PurgeRevokedHosts()
+	}
+	return c.store.PurgeRevokedHostsByUser(userID)
 }
 
 func (c *Control) GetHostByRoute(routeId []byte) (*store.Host, error) {
 	return c.store.GetHostByRoute(routeId)
 }
 
-// LookupRouteStatus is the data-plane route status: a host whose device was
-// disabled or whose daily budget was exhausted is immediately treated as
-// revoked so relays stop serving its streams without waiting for an explicit
-// revoke. Expired suspensions are cleared lazily here.
-func (c *Control) LookupRouteStatus(routeId []byte) (hostID string, generation uint64, pubKey []byte, maxStreams int, revoked bool, err error) {
+// LookupRouteStatus is the data-plane route status. Device disable and
+// Control revoke are permanent (revoked). Daily budget is a hold
+// (suspended) that must not be confused with REVOKED. Expired holds are
+// cleared lazily here.
+func (c *Control) LookupRouteStatus(routeId []byte) (hostID string, generation uint64, pubKey []byte, maxStreams int, revoked, suspended bool, err error) {
 	l, err := c.store.GetHostByRouteWithDevice(routeId)
 	if err != nil {
-		return "", 0, nil, 0, false, err
+		return "", 0, nil, 0, false, false, err
 	}
 	h := l.Host
 	revoked = h.RevokedAt != nil || !l.DeviceEnabled
 	if h.SuspendedUntil != nil {
 		now := time.Now().Unix()
 		if *h.SuspendedUntil > now {
-			revoked = true
+			suspended = true
 		} else {
-			// Window elapsed: budget resets, remove the flag lazily.
 			_ = c.store.ClearSuspendedUntil(h.ID)
 		}
 	}
-	return h.ID, uint64(h.Generation), h.HostPubKey, h.MaxStreams, revoked, nil
+	return h.ID, uint64(h.Generation), h.HostPubKey, h.MaxStreams, revoked, suspended, nil
 }
 
 // nextMidnightUTC returns the unix time of the next 00:00 UTC, when a new
@@ -638,7 +972,7 @@ func (c *Control) enrollWithBootstrap(req *EnrollRequest) (*EnrollResult, error)
 		streams = c.anonymousMaxStreams
 	}
 	host := &store.Host{
-		ID: hostID, RouteID: routeId, HostName: hostID,
+		ID: hostID, RouteID: routeId, HostName: protocol.SanitizeHostName(req.HostName, hostID),
 		HostPubKey: req.HostPublicKey,
 		MaxStreams: streams, Version: "v0.1.0",
 	}
@@ -694,13 +1028,17 @@ func (c *Control) RevokeSelf(routeId []byte, ts int64, nonce, challenge, proof [
 	if !ed25519.Verify(ed25519.PublicKey(h.HostPubKey), transcript, proof) {
 		return "", errors.New("revoke-self proof invalid")
 	}
-	if _, _, err := c.RevokeHost(h.ID); err != nil {
-		return "", err
+	if h.RevokedAt == nil {
+		if _, _, err := c.RevokeHost(h.ID); err != nil {
+			return "", err
+		}
+		c.noteHostSelfRevoke(h)
 	}
 	// Self-revocation means "I no longer use this host": drop the record
 	// (cascade: credentials/renewal replays/stats) so the device can enroll a
 	// fresh host with the same key later — the host_pubkey UNIQUE constraint
-	// would otherwise pin a revoked row forever.
+	// would otherwise pin a revoked row forever. Invite tenants also get the
+	// live-host slot back without opening Control.
 	if err := c.store.DeleteHost(h.ID); err != nil {
 		return "", err
 	}

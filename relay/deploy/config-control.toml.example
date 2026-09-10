@@ -3,6 +3,11 @@
 # owner root:dsh-ctl, mode 0640. Never point the relay at this file.
 
 admin_listen = "127.0.0.1:8080"
+# When a TLS reverse proxy terminates HTTPS and talks HTTP to this loopback
+# Control, set true so login cookies are marked Secure. Leave false for
+# ssh -L / http://127.0.0.1 self-host. Control TLS (admin_tls_cert) already
+# implies Secure cookies.
+# admin_secure_cookies = true
 control_socket = "/run/dsh-links-relay/control.sock"
 ipc_auth_token_file = "/etc/dsh-links-relay/ipc.auth"
 
@@ -24,5 +29,14 @@ database = "/var/lib/dsh-links-relay/control.db"
 
 # Hostname the plugin should dial for Agent TLS (8444).
 # public_host = "relay.example.com"
+# HTTPS URL hosted tenants open for Control (TLS reverse proxy to
+# 127.0.0.1:8080). Leave empty for self-host. Do not publish 8080.
+# public_control_url = "https://control.example.com"
 
 default_max_streams_per_route = 8
+# Hosted Control tenants only: unrevoked enrolled hosts / unused live invites
+# (expired unused codes do not occupy mint quota). At the unused-invite cap,
+# Control can void the oldest live unused code after confirm. Self-host admin
+# ledger is not capped.
+tenant_max_live_hosts = 8
+tenant_max_unused_invites = 4

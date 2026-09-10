@@ -516,6 +516,27 @@ test("吊销全部设备后列表为空，可重新配对", async () => {
   globalThis.__testDevice = { token: body.token, deviceId: body.deviceId }
 })
 
+test("bootstrap 未接入 Relay 时带 relay: null，旧 App 可忽略", async () => {
+  const { bindLocalRpcRuntime, unbindLocalRpcRuntime } = await import("../src/local-rpc.js")
+  bindLocalRpcRuntime({
+    invoke: async ({ method }) => {
+      if (method === "list") return { items: [] }
+      throw new Error(`unexpected ${method}`)
+    },
+  })
+  try {
+    const r = await proxyFetch(`/dsh-link/mobile/bootstrap`, {
+      headers: tokenHeaders(globalThis.__testDevice.token),
+    })
+    assert.equal(r.status, 200)
+    const boot = await r.json()
+    assert.equal(Object.hasOwn(boot, "relay"), true)
+    assert.equal(boot.relay, null)
+  } finally {
+    unbindLocalRpcRuntime()
+  }
+})
+
 test("POST pair 非 JSON content-type → 415", async () => {
   const r = await proxyFetch(`/dsh-link/pair`, {
     method: "POST",

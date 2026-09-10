@@ -6,16 +6,27 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { PassThrough } from "node:stream"
 import { loadOrCreateTls } from "../src/tls.js"
-import { b64u, capabilityExpiry, generateHostKey, parseEnrollText, renewTranscript, resolveEnrollText, OFFICIAL_RELAY_HOST, OFFICIAL_RELAY_TLS_SHA256 } from "../src/relay/crypto.js"
+import { b64u, capabilityExpiry, generateHostKey, parseEnrollText, rememberedRelayExtras, renewTranscript, resolveEnrollText, OFFICIAL_RELAY_HOST, OFFICIAL_RELAY_TLS_SHA256 } from "../src/relay/crypto.js"
 import {
   detachReader,
+  applyRelayRouteRevoked,
   enroll,
+  errorFromRelayFrame,
+  isRelayQuotaFrame,
+  isRelayRevokedFrame,
   MAX_ACTIVE_STREAMS,
   MAX_CONTROL_WRITE_QUEUE,
   normalizeHeartbeatSeconds,
   normalizeTlsFingerprint,
   readFrame,
+  RELAY_PAUSED_MESSAGE,
+  RELAY_QUOTA_MESSAGE,
+  RELAY_RELEASED_MESSAGE,
+  RELAY_REVOKED_MESSAGE,
   RelayAgent,
+  relayAgentShouldRun,
+  relayPluginView,
+  revokeSelf,
 } from "../src/relay/agent.js"
 
 test("Relay 帧在换行前超过上限即拒绝并关闭连接", async () => {
@@ -215,6 +226,10 @@ test("接入信息 URI 解析主机、邀请码和指纹", () => {
   const publicCa = parseEnrollText("dsh-relay://relay.dshlinks.com/?i=INVITECODE")
   assert.equal(publicCa.insecureTls, false)
   assert.equal(publicCa.tlsFingerprint, "")
+  assert.equal(publicCa.controlUrl, "")
+  const hosted = parseEnrollText("dsh-relay://relay.example.com/?i=INVITECODE&c=https%3A%2F%2Fcontrol.example.com%2Fpanel")
+  assert.equal(hosted.controlUrl, "https://control.example.com/panel")
+  assert.equal(parseEnrollText("dsh-relay://relay.example.com/?i=INVITECODE&c=https%3A%2F%2F127.0.0.1%3A8080").controlUrl, "")
   assert.equal(parseEnrollText("INVITECODE"), null)
   const invite = "INVITECODEINVITECODEINVITECODE12"
   const official = resolveEnrollText(invite)
@@ -225,4 +240,275 @@ test("接入信息 URI 解析主机、邀请码和指纹", () => {
   const fromUri = resolveEnrollText(`dsh-relay://relay.dshlinks.com/?i=${invite}&fp=${fp}`)
   assert.equal(fromUri.inviteCode, invite)
   assert.equal(fromUri.tlsFingerprint, fp)
+  const publicCaSelf = resolveEnrollText(`dsh-relay://relay.example/?i=${invite}`)
+  assert.equal(publicCaSelf.address, "relay.example")
+  assert.equal(publicCaSelf.insecureTls, false)
+  const remembered = rememberedRelayExtras({
+    inactiveReason: "revoked",
+    agentAddress: "relay.example:8444",
+    insecureTls: true,
+    tlsFingerprint: fp,
+  })
+  const reenroll = resolveEnrollText(invite, remembered)
+  assert.equal(reenroll.address, "relay.example:8444")
+  assert.equal(reenroll.inviteCode, invite)
+  assert.equal(reenroll.tlsFingerprint, fp)
+  assert.deepEqual(rememberedRelayExtras({ status: "online", agentAddress: "relay.example:8444" }), {})
+  assert.deepEqual(rememberedRelayExtras({ inactiveReason: "revoked", agentAddress: OFFICIAL_RELAY_HOST }), {})
+})
+
+test("QUOTA_EXCEEDED 告诉租户去吊销，而不是再签发接入码", () => {
+  assert.equal(isRelayQuotaFrame({ type: "ERROR", code: "QUOTA_EXCEEDED", message: "host limit" }), true)
+  assert.equal(isRelayQuotaFrame({ type: "ERROR", code: "AUTH_FAILED", message: "enroll failed" }), false)
+  const err = errorFromRelayFrame({ type: "ERROR", code: "QUOTA_EXCEEDED", message: "host limit" })
+  assert.equal(err.code, "QUOTA_EXCEEDED")
+  assert.equal(err.message, RELAY_QUOTA_MESSAGE)
+  assert.match(err.message, /仍有效/)
+  assert.doesNotMatch(err.message, /签发新接入码/)
+  assert.equal(errorFromRelayFrame({ type: "ERROR", code: "AUTH_FAILED", message: "enroll failed" }).message, "enroll failed")
+})
+
+test("REVOKED 帧是终态，面板不再当作已接入", () => {
+  assert.equal(isRelayRevokedFrame({ type: "ERROR", code: "REVOKED", message: "revoked" }), true)
+  assert.equal(isRelayRevokedFrame({ type: "ERROR", code: "AUTH_FAILED", message: "revoked" }), false)
+  const err = errorFromRelayFrame({ type: "ERROR", code: "REVOKED", message: "revoked" })
+  assert.equal(err.code, "REVOKED")
+  assert.equal(err.message, RELAY_REVOKED_MESSAGE)
+  assert.deepEqual(relayPluginView({
+    agent: { status: "revoked", error: "revoked" },
+    routeId: "route",
+    routeSecret: "secret",
+  }), {
+    status: "revoked",
+    error: RELAY_REVOKED_MESSAGE,
+    enrolled: false,
+  })
+  assert.deepEqual(relayPluginView({
+    inactiveReason: "revoked",
+    routeId: undefined,
+    routeSecret: undefined,
+  }), {
+    status: "revoked",
+    error: RELAY_REVOKED_MESSAGE,
+    enrolled: false,
+  })
+  assert.match(
+    relayPluginView({
+      inactiveReason: "revoked",
+      controlUrl: "https://control.example.com/panel",
+    }).error,
+    /打开 https:\/\/control\.example\.com\/panel/,
+  )
+})
+
+test("RATE_LIMITED 日流量挂起不是终态", () => {
+  assert.equal(isRelayRevokedFrame({ type: "ERROR", code: "RATE_LIMITED", message: "daily budget" }), false)
+  const err = errorFromRelayFrame({ type: "ERROR", code: "RATE_LIMITED", message: "daily budget" })
+  assert.notEqual(err.code, "REVOKED")
+  assert.equal(err.message, "daily budget")
+})
+
+test("插件断开保留路由凭据，暂停 Agent 而不是作废接入", () => {
+  assert.equal(relayPluginView({ controlUrl: "https://control.example.com/panel" }).enrolled, false)
+  assert.deepEqual(relayPluginView({
+    paused: true,
+    routeId: "route",
+    routeSecret: "secret",
+  }), {
+    status: "paused",
+    error: RELAY_PAUSED_MESSAGE,
+    enrolled: true,
+  })
+  assert.equal(relayAgentShouldRun({
+    routeSecret: "secret",
+    agentAddress: "relay.example:8444",
+    paused: true,
+  }), false)
+  assert.equal(relayAgentShouldRun({
+    routeSecret: "secret",
+    agentAddress: "relay.example:8444",
+  }), true)
+  assert.equal(relayAgentShouldRun({
+    routeSecret: "secret",
+    agentAddress: "relay.example:8444",
+    inactiveReason: "revoked",
+  }), false)
+  assert.equal(relayAgentShouldRun({
+    routeSecret: "secret",
+    agentAddress: "relay.example:8444",
+    inactiveReason: "released",
+  }), false)
+  const pausedRemembered = rememberedRelayExtras({
+    paused: true,
+    agentAddress: "relay.example:8444",
+    insecureTls: true,
+    tlsFingerprint: "a".repeat(64),
+  })
+  assert.equal(pausedRemembered.address, "relay.example:8444")
+})
+
+test("同一电脑换新码时旧路由 REVOKED 不得清掉新凭据", () => {
+  const relay = { routeId: "new-route", routeSecret: "new-secret", capability: "cap", generation: 2 }
+  assert.equal(applyRelayRouteRevoked(relay, "old-route"), false)
+  assert.equal(relay.routeId, "new-route")
+  assert.equal(relay.routeSecret, "new-secret")
+  assert.equal(applyRelayRouteRevoked(relay, "new-route"), true)
+  assert.equal(relay.routeId, undefined)
+  assert.equal(relay.routeSecret, undefined)
+  assert.equal(relay.inactiveReason, "revoked")
+  const released = { routeId: "route-2", routeSecret: "secret-2" }
+  assert.equal(applyRelayRouteRevoked(released, "route-2", { released: true }), true)
+  assert.equal(released.inactiveReason, "released")
+  assert.deepEqual(relayPluginView({ inactiveReason: "released" }), {
+    status: "revoked",
+    error: RELAY_RELEASED_MESSAGE,
+    enrolled: false,
+  })
+  const releasedRemembered = rememberedRelayExtras({
+    inactiveReason: "released",
+    agentAddress: "relay.example:8444",
+  })
+  assert.equal(releasedRemembered.address, "relay.example:8444")
+  assert.equal(applyRelayRouteRevoked(undefined, "new-route"), false)
+})
+
+test("REGISTER 收到 REVOKED 后停止重连并回调", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "dsh-relay-revoked-"))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const material = await loadOrCreateTls(dir)
+  const challenge = Buffer.alloc(32, 7)
+  let registers = 0
+  let frames = ""
+  const server = createTlsServer({ key: material.key, cert: material.cert }, (socket) => {
+    socket.write(`${JSON.stringify({ type: "HELLO", challenge: b64u(challenge) })}\n`)
+    socket.on("data", (chunk) => {
+      frames += chunk.toString("utf8")
+      for (;;) {
+        const nl = frames.indexOf("\n")
+        if (nl < 0) break
+        const frame = JSON.parse(frames.slice(0, nl))
+        frames = frames.slice(nl + 1)
+        if (frame.type === "REGISTER") {
+          registers++
+          socket.write(`${JSON.stringify({ type: "ERROR", code: "REVOKED", message: "revoked" })}\n`)
+        }
+      }
+    })
+  })
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve))
+  t.after(() => server.close())
+  let revokedCalls = 0
+  const agent = new RelayAgent({
+    address: `127.0.0.1:${server.address().port}`,
+    credentials: { keys: generateHostKey(), capability: "x", generation: 1 },
+    pluginPort: 1,
+    insecureTls: true,
+    tlsFingerprint: material.fingerprint,
+    onRevoked: async () => { revokedCalls++ },
+  })
+  await agent.start()
+  assert.equal(agent.status, "revoked")
+  assert.equal(agent.error, RELAY_REVOKED_MESSAGE)
+  assert.equal(agent.stopped, true)
+  assert.equal(registers, 1)
+  assert.equal(revokedCalls, 1)
+})
+
+test("已注册控制连接收到 REVOKED 后也停止重连", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "dsh-relay-revoked-live-"))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const material = await loadOrCreateTls(dir)
+  const challenge = Buffer.alloc(32, 3)
+  let registers = 0
+  let frames = ""
+  const server = createTlsServer({ key: material.key, cert: material.cert }, (socket) => {
+    socket.write(`${JSON.stringify({ type: "HELLO", challenge: b64u(challenge) })}\n`)
+    socket.on("data", (chunk) => {
+      frames += chunk.toString("utf8")
+      for (;;) {
+        const nl = frames.indexOf("\n")
+        if (nl < 0) break
+        const frame = JSON.parse(frames.slice(0, nl))
+        frames = frames.slice(nl + 1)
+        if (frame.type === "REGISTER") {
+          registers++
+          socket.write(`${JSON.stringify({ type: "REGISTERED", generation: 1, heartbeat: 30 })}\n`)
+          socket.write(`${JSON.stringify({ type: "ERROR", code: "REVOKED", message: "revoked" })}\n`)
+        }
+      }
+    })
+  })
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve))
+  t.after(() => server.close())
+  const agent = new RelayAgent({
+    address: `127.0.0.1:${server.address().port}`,
+    credentials: { keys: generateHostKey(), capability: "x", generation: 1 },
+    pluginPort: 1,
+    insecureTls: true,
+    tlsFingerprint: material.fingerprint,
+  })
+  await agent.start()
+  assert.equal(agent.status, "revoked")
+  assert.equal(agent.stopped, true)
+  assert.equal(registers, 1)
+})
+
+test("REVOKE_SELF 成功即释放控制台名额", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "dsh-relay-release-"))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const material = await loadOrCreateTls(dir)
+  const challenge = Buffer.alloc(32, 9)
+  const keys = generateHostKey()
+  const routeId = b64u(Buffer.alloc(16, 4))
+  let saw = false
+  let frames = ""
+  const server = createTlsServer({ key: material.key, cert: material.cert }, (socket) => {
+    socket.write(`${JSON.stringify({ type: "HELLO", challenge: b64u(challenge) })}\n`)
+    socket.on("data", (chunk) => {
+      frames += chunk.toString("utf8")
+      for (;;) {
+        const nl = frames.indexOf("\n")
+        if (nl < 0) break
+        const frame = JSON.parse(frames.slice(0, nl))
+        frames = frames.slice(nl + 1)
+        if (frame.type === "REVOKE_SELF") {
+          saw = true
+          assert.equal(frame.routeId, routeId)
+          socket.write(`${JSON.stringify({ type: "REVOKED" })}\n`)
+        }
+      }
+    })
+  })
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve))
+  t.after(() => server.close())
+  await revokeSelf({
+    address: `127.0.0.1:${server.address().port}`,
+    routeId,
+    keys,
+    insecureTls: true,
+    tlsFingerprint: material.fingerprint,
+  })
+  assert.equal(saw, true)
+})
+
+test("REVOKE_SELF 被拒绝时接入仍保留", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "dsh-relay-release-fail-"))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const material = await loadOrCreateTls(dir)
+  const challenge = Buffer.alloc(32, 5)
+  const server = createTlsServer({ key: material.key, cert: material.cert }, (socket) => {
+    socket.write(`${JSON.stringify({ type: "HELLO", challenge: b64u(challenge) })}\n`)
+    socket.on("data", () => {
+      socket.write(`${JSON.stringify({ type: "ERROR", code: "AUTH_FAILED", message: "revoke failed" })}\n`)
+    })
+  })
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve))
+  t.after(() => server.close())
+  await assert.rejects(revokeSelf({
+    address: `127.0.0.1:${server.address().port}`,
+    routeId: b64u(Buffer.alloc(16, 8)),
+    keys: generateHostKey(),
+    insecureTls: true,
+    tlsFingerprint: material.fingerprint,
+  }), /revoke failed/)
 })

@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +15,9 @@ import (
 type Store struct {
 	db *sql.DB
 
+	tenantMaxLiveHosts     int
+	tenantMaxUnusedInvites int
+
 	// SQLite transactions used by enrollment start deferred. Concurrent
 	// enrollments can all acquire a read lock and then deadlock while trying
 	// to promote it to a write lock; SQLite reports that state as a
@@ -22,6 +26,14 @@ type Store struct {
 	// store boundary while leaving ordinary reads and other operations
 	// concurrent.
 	enrollMu sync.Mutex
+}
+
+func newStore(db *sql.DB) *Store {
+	return &Store{
+		db:                     db,
+		tenantMaxLiveHosts:     DefaultTenantMaxLiveHosts,
+		tenantMaxUnusedInvites: DefaultTenantMaxUnusedInvites,
+	}
 }
 
 func Open(path string) (*Store, error) {
@@ -37,7 +49,7 @@ func Open(path string) (*Store, error) {
 	if err := db.Ping(); err != nil {
 		return nil, err
 	}
-	s := &Store{db: db}
+	s := newStore(db)
 	if err := s.migrate(); err != nil {
 		db.Close()
 		return nil, err
@@ -53,7 +65,7 @@ func OpenMemory() (*Store, error) {
 	if _, err := db.Exec(`PRAGMA foreign_keys=ON`); err != nil {
 		return nil, err
 	}
-	s := &Store{db: db}
+	s := newStore(db)
 	if err := s.migrate(); err != nil {
 		db.Close()
 		return nil, err
@@ -80,6 +92,8 @@ CREATE TABLE IF NOT EXISTS invites (
   code_hash BLOB NOT NULL UNIQUE,
   expires_at INTEGER NOT NULL,
   consumed_at INTEGER,
+  consumed_host_id TEXT,
+  consumed_host_name TEXT,
   revoked_at INTEGER,
   created_at INTEGER NOT NULL
 );
@@ -137,7 +151,20 @@ CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS control_events (
+  id TEXT PRIMARY KEY,
+  at INTEGER NOT NULL,
+  actor_id TEXT NOT NULL DEFAULT '',
+  actor_login TEXT NOT NULL DEFAULT '',
+  action TEXT NOT NULL,
+  target_kind TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  subject_user_id TEXT NOT NULL DEFAULT '',
+  detail TEXT NOT NULL DEFAULT ''
+);
 CREATE INDEX IF NOT EXISTS idx_invites_expires ON invites(expires_at);
+CREATE INDEX IF NOT EXISTS idx_control_events_at ON control_events(at DESC);
+CREATE INDEX IF NOT EXISTS idx_control_events_subject ON control_events(subject_user_id, at DESC);
 CREATE INDEX IF NOT EXISTS idx_hosts_route ON hosts(route_id);
 CREATE INDEX IF NOT EXISTS idx_hosts_pubkey ON hosts(host_pubkey);
 CREATE INDEX IF NOT EXISTS idx_renewal_replays_expires ON renewal_replays(expires_at);
@@ -153,6 +180,27 @@ CREATE INDEX IF NOT EXISTS idx_renewal_replays_expires ON renewal_replays(expire
 		return err
 	}
 	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_hosts_device ON hosts(device_id)`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("invites", "consumed_host_id", "TEXT"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("invites", "consumed_host_name", "TEXT"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("users", "login_name", "TEXT"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("users", "password_hash", "TEXT"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("users", "role", "TEXT NOT NULL DEFAULT 'admin'"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("users", "password_must_change", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS users_login_name ON users(login_name) WHERE login_name IS NOT NULL AND login_name != ''`); err != nil {
 		return err
 	}
 	return nil
@@ -182,20 +230,25 @@ func (s *Store) ensureColumn(table, column, decl string) error {
 	return err
 }
 
-// EnsureDefaultUser creates a default user if not exists
+const defaultUserID = "user-default"
+
+// EnsureDefaultUser returns the self-host / admin ledger row. It must not
+// pick an arbitrary tenant: hosted Control can have tenant users before any
+// admin invite is minted.
 func (s *Store) EnsureDefaultUser() (string, error) {
 	var id string
-	err := s.db.QueryRow(`SELECT id FROM users LIMIT 1`).Scan(&id)
+	err := s.db.QueryRow(`SELECT id FROM users WHERE id=?`, defaultUserID).Scan(&id)
 	if err == nil {
 		return id, nil
 	}
-	// create default
-	id = "user-default"
-	_, err = s.db.Exec(`INSERT INTO users(id, display_name, created_at) VALUES(?,?,?)`, id, "default", nowSec())
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
+	_, err = s.db.Exec(`INSERT INTO users(id, display_name, role, created_at) VALUES(?,?,?,?)`, defaultUserID, "default", RoleAdmin, nowSec())
 	if err != nil {
 		return "", err
 	}
-	return id, nil
+	return defaultUserID, nil
 }
 
 func nowSec() int64 {
@@ -203,8 +256,7 @@ func nowSec() int64 {
 }
 
 // SuspendHostUntil marks a host suspended until the given unix time. While
-// suspended the route lookup reports it as revoked and the operator's push
-// (via revokeFn) evicts active streams.
+// suspended, CONNECT is RATE_LIMITED (retryable). Credentials stay valid.
 func (s *Store) SuspendHostUntil(hostID string, until int64) error {
 	_, err := s.db.Exec(`UPDATE hosts SET suspended_until = ? WHERE id = ?`, until, hostID)
 	return err

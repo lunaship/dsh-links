@@ -233,6 +233,27 @@ func TestValidHostID(t *testing.T) {
 	}
 }
 
+func TestSanitizeHostName(t *testing.T) {
+	if got := SanitizeHostName("  办公 Mac\n", "host-1"); got != "办公 Mac" {
+		t.Fatalf("got %q", got)
+	}
+	if got := SanitizeHostName("", "dsh-abc"); got != "dsh-abc" {
+		t.Fatalf("empty fallback got %q", got)
+	}
+	if got := SanitizeHostName("\x00\x01", "fallback"); got != "fallback" {
+		t.Fatalf("control chars got %q", got)
+	}
+	long := strings.Repeat("电脑", 40)
+	got := SanitizeHostName(long, "x")
+	n := 0
+	for range got {
+		n++
+	}
+	if n != 64 {
+		t.Fatalf("truncated runes=%d want 64", n)
+	}
+}
+
 func TestValidateEnrollRejectsUnaddressableHostID(t *testing.T) {
 	mk := func(hostId string) []byte {
 		return []byte(`{"type":"ENROLL","inviteCode":"` + base64.RawURLEncoding.EncodeToString(make([]byte, 24)) + `","hostId":"` + hostId + `","hostPublicKey":"` + base64.RawURLEncoding.EncodeToString(make([]byte, 32)) + `","ts":` + jsonNumberNow() + `,"nonce":"` + base64.RawURLEncoding.EncodeToString(make([]byte, 16)) + `","proof":"` + base64.RawURLEncoding.EncodeToString(make([]byte, 64)) + `"}`)
@@ -281,5 +302,14 @@ func TestFrameReaderCarry(t *testing.T) {
 	carry := fr.DrainedBuffered()
 	if string(carry) != "HELLO WORLD" {
 		t.Fatalf("carry mismatch: %q", carry)
+	}
+}
+
+func TestQuotaExceededIsNotRetryable(t *testing.T) {
+	if IsRetryable(ErrQuotaExceeded) || IsRetryable(ErrRevoked) || IsRetryable(ErrAuthFailed) {
+		t.Fatal("quota/revoke/auth must not be retryable")
+	}
+	if !IsRetryable(ErrAgentOffline) {
+		t.Fatal("agent offline is retryable")
 	}
 }
