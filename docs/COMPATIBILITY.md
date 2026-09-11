@@ -13,15 +13,16 @@ published.
 
 | Component | Source baseline | Published / released status | Verified compatibility status |
 |---|---|---|---|
-| DSH | `0.1.5-alpha.2` | Upstream dependency; npm dist-tag `alpha` as of 2026-09-09. `latest` / `next` are `0.1.2-rc.1` | Host smoke below; full phone end-to-end remains in the closed-beta scope |
-| Plugin `dsh-links` | package `0.1.0-beta.14`; GitHub tag `v0.1.0-beta.14`; working tree follows DSH `0.1.5-alpha.2` (V3 session log path; omit null session fields; produced files + workspace file GET) | npm dist-tag `beta` is `0.1.0-beta.14` as of 2026-09-07 (`npm view` in the release environment). `latest` remains `0.1.0-beta.1` | Unit tests locally; 2026-09-09 host smoke + LAN phone send/history/SSE |
-| Android `dsh-links-app` | `versionName 0.5.0-beta.16`; GitHub tag `v0.5.0-beta.16`; working tree adds produced-files row, authenticated workspace file GET, `/feedback` palette | Official signed APK on the private App GitHub Release; SHA-256 `83a84b30236e586621721fb343ed7ef1800e902b4347f190242f9dd49c16556e` | Unit/lint/debug assemble plus this signed Release build; phone end-to-end remains in the closed-beta scope |
+| DSH | `0.1.5-rc.1` | Upstream dependency; npm dist-tag `latest` as of 2026-09-12 (`next` is `0.1.5-rc.2`). Host smoke below; full phone end-to-end remains in the closed-beta scope |
+| Plugin `dsh-links` | package `0.1.0-beta.14`; GitHub tag `v0.1.0-beta.14`; working tree follows DSH `0.1.5-rc.1` (V3 session log path; omit null session fields; produced files + workspace file GET; terminal approvals/questions session-bound; `@deepseek-ai/schemastery` 3.18.2) | npm dist-tag `beta` is `0.1.0-beta.14` as of 2026-09-07 (`npm view` in the release environment). `latest` remains `0.1.0-beta.1` | Unit tests locally; 2026-09-12 host smoke on 0.1.5-rc.1 (below); 2026-09-09 LAN phone send/history/SSE |
+| Android `dsh-links-app` | `versionName 0.5.0-beta.16`; GitHub tag `v0.5.0-beta.16`; working tree adds produced-files row, authenticated workspace file GET, `/feedback` palette, and math/markdown rendering hardening (pixel-budgeted math cache, dimension guards) | Official signed APK on the private App GitHub Release; SHA-256 `83a84b30236e586621721fb343ed7ef1800e902b4347f190242f9dd49c16556e` | Unit/lint/debug assemble plus this signed Release build; 299 unit tests green 2026-09-12; instrumented renderer tests require an emulator (not installed on the current host); phone end-to-end remains in the closed-beta scope |
 | Relay (`relay/` in this repo) | Same GitHub tag as the plugin (`v0.1.0-beta.14`) | No separate Relay package or public deployment is asserted here | DLR/1 remains invite-only test scope; source is public in this repository |
 
 ## Verified combination and scope
 
 | DSH | Plugin | Android App | Relay | Verified path |
 |---|---|---|---|---|
+| `0.1.5-rc.1` | `0.1.0-beta.14` working tree (schemastery 3.18.2, session-bound terminals) | `0.5.0-beta.16` working tree | `v0.1.0-beta.14` `relay/` | 2026-09-12: host smoke on a scratch profile. Note: the smoke ran with the plugin's default global state dir, which shared pairing state with the operator's real profile and revoked two real phone pairings during teardown (see warning below; recovered by re-pairing) and reset the workspace registry (recovered by resetting `storages/workspace.json` to `initialized: false` so the host re-bootstraps from session history). Verified: plugin load + port bind, loopback `pair-info`/`qr.png`, LAN pairing with one-time code + requestId replay + host approval, `bootstrap`/`sessions`/`models`/`llm-models`/`workspaces`/`settings`/`agent-presets`/`devices` 200, session history tail + `maxMessages` paging + `nextBeforeSeq` on V3 `session.v3.jsonl.zstd` logs, prompt accepted with model reply, workspace register (absolute path, existing dir) + list, session file GET with 403 on workspace-escape, SSE `ready` frame with protocol caps, client bundle serves the `settings.section` panel. `session.list` items may omit `projections` for cold sessions (projection cache miss), so paged history must not rely on `list.projections.asOfSeq`; the plugin's list+page fallback handles it. Content `session.search` degrades to title match when the query provider is absent (by design). Phone end-to-end not rerun. |
 | `0.1.5-alpha.2` | `0.1.0-beta.14` working tree (V3 log path + omit null + produced files) | `0.5.0-beta.16` working tree | `v0.1.0-beta.14` `relay/` | 2026-09-09: host upgraded to alpha.2; plugin/App source aligned for produced files, workspace file GET, `/feedback`. Phone APK still `0.5.0-beta.15` until a new build is installed. |
 | `0.1.5-alpha.1` | `0.1.0-beta.14` working tree (V3 log path + omit null session fields) | `0.5.0-beta.16` | `v0.1.0-beta.14` `relay/` | 2026-09-09: host smoke plus LAN phone (installed `0.5.0-beta.15`): pairing persisted, session list, send prompt, SSE/history, V3 log. Approval not exercised (full access). Model 401 is host API key, not plugin. |
 | `0.1.2-alpha.5` | `0.1.0-beta.14` | `0.5.0-beta.16` | `v0.1.0-beta.14` `relay/` | 2026-09-07 published source: plugin npm `beta` + GitHub Release, App signed APK `v0.5.0-beta.16`. Unit gates for catchup integrity, multi-question validation, approval grace/idempotency, history terminal state, and unidirectional Bridge idle. Trusted LAN smoke and Android→Relay→Plugin were **not** rerun. Previous LAN smoke remains the last phone-path evidence and used App `0.5.0-beta.14` with plugin `0.1.0-beta.13`. |
@@ -140,6 +141,28 @@ recorded explicitly.
   promise.
 - **Not supported:** direct public exposure of plugin port `18640`, frp, or
   public self-service Relay enrollment.
+
+## Smoke-isolation warning (plugin state is global by default)
+
+The plugin stores pairing, device, and Relay route state in
+`~/.dsh/dsh-links/state.json` **globally** — not per DSH profile — and
+migrates legacy dirs into it. Any profile that loads the plugin (including a
+throwaway smoke profile) therefore shares devices, Relay credentials, and the
+workspace-facing pairing surface with the operator's real setup:
+
+- Revoking devices or clicking teardown actions in a smoke host revokes the
+  real phones too; phone pairings cannot be restored from disk (tokens are
+  HMAC-hashed at rest), so the phones must re-scan the QR.
+- The Relay Agent in a smoke host connects to the production Relay with the
+  real route credentials under the real host identity.
+- The host-level `~/.dsh/storages/workspace.json` registry is also global; a
+  smoke host that registers workspaces writes it. Reset it to
+  `initialized: false` with empty `workspaceIds`/`workspaces` to make the
+  host re-derive workspaces from session history on the next boot.
+
+Any future host smoke must set the plugin's `stateDir` config (scratch
+directory, 0700) via a `--patch` config overlay in the smoke profile, and
+must not exercise device revocation against shared state.
 
 ## Release-status rule
 

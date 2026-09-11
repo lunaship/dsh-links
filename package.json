@@ -38,7 +38,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@deepseek-ai/schemastery": "3.18.1",
+    "@deepseek-ai/schemastery": "3.18.2",
     "qrcode": "1.5.4",
     "selfsigned": "5.5.0"
   },
@@ -63,6 +63,12 @@
     "package.json",
     "pnpm-lock.yaml",
     "README.md",
+    "SECURITY.md",
+    "PRIVACY.md",
+    "REMOTE_ACCESS.md",
+    "THIRD_PARTY_NOTICES.md",
+    "docs/*.md",
+    "docs/images/*-latest*.png",
     "LICENSE"
   ]
 }

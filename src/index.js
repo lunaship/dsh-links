@@ -48,6 +48,7 @@ import {
   canDeviceHandle,
   createRequestRegistry,
   mapApprovalUiStatus,
+  requestBelongsToSession,
 } from "./request-lifecycle.js"
 import { deriveAddresses, generateHostKey, hostKeyFromSeed, nextRelayControlURL, attachRelayControlUrl, previousRelayReleaseTarget, rememberedRelayExtras, rememberReplacedRelayControlURL, rememberReplacedRelayHost, relayPairSnapshot, relayRouteRotated, cloudPairStamp, resolveEnrollText, relaySwitchConflict, decorateRelayConsoleMessage, unb64u } from "./relay/crypto.js"
 import { applyRelayRouteRevoked, enroll as enrollRelay, normalizeTlsFingerprint, RelayAgent, relayAgentShouldRun, relayPluginView, revokeSelf as revokeSelfRelay } from "./relay/agent.js"
@@ -1484,6 +1485,9 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
       }
       const terminal = rt.requests.getTerminal(approvalId)
       if (terminal?.type === "approval") {
+        if (!requestBelongsToSession(terminal, sessionId)) {
+          return json(res, 409, { ok: false, accepted: false, error: "审批会话不匹配" })
+        }
         return json(res, 200, {
           ok: true,
           accepted: true,
@@ -1530,6 +1534,9 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
       }
       const terminal = rt.requests.getTerminal(rpcId)
       if (terminal?.type === "question") {
+        if (!requestBelongsToSession(terminal, sessionId)) {
+          return json(res, 409, { ok: false, accepted: false, error: "澄清会话不匹配" })
+        }
         return json(res, 200, {
           ok: true,
           accepted: true,

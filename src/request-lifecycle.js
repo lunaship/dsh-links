@@ -24,6 +24,11 @@ export function canDeviceHandle(rec, { deviceId, authorized, subscribed, inGrace
   return Boolean(inGrace && rec.eligibleDeviceIds?.has(deviceId))
 }
 
+/** 请求 ID 可能来自另一个会话；终态幂等响应也必须绑定 URL 会话。 */
+export function requestBelongsToSession(request, sessionId) {
+  return Boolean(request?.sessionId) && request.sessionId === sessionId
+}
+
 export function mapApprovalUiStatus(outcome) {
   if (!outcome) return "pending"
   if (outcome === "allowed-once" || outcome === "rejected") return "resolved"

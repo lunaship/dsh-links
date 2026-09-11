@@ -7,6 +7,7 @@ import {
   mapApprovalUiStatus,
   APPROVAL_TIMEOUT_MS,
   RECONNECT_GRACE_MS,
+  requestBelongsToSession,
 } from "../src/request-lifecycle.js"
 
 function pending({ id = "a1", sessionId = "s1", type = "approval", now = 1_000, extra = {} } = {}) {
@@ -39,6 +40,13 @@ test("宽限内原设备可处理，吊销后立即拒绝", () => {
   assert.equal(canDeviceHandle(rec, { deviceId: "dev-1", authorized: false, subscribed: false, inGrace: true }), false)
   assert.equal(canDeviceHandle(rec, { deviceId: "dev-2", authorized: true, subscribed: false, inGrace: true }), false)
   assert.equal(canDeviceHandle(rec, { deviceId: "dev-1", authorized: true, subscribed: true, inGrace: false }), true)
+})
+
+test("终态幂等响应仍绑定原会话", () => {
+  const terminal = { id: "a1", sessionId: "s1", type: "approval" }
+  assert.equal(requestBelongsToSession(terminal, "s1"), true)
+  assert.equal(requestBelongsToSession(terminal, "s2"), false)
+  assert.equal(requestBelongsToSession({ id: "a1", type: "approval" }, "s1"), false)
 })
 
 test("终态只 settle 一次，重试返回已记录结果", () => {
