@@ -34,6 +34,36 @@ export const RPC_METHOD_ALLOWLIST = Object.freeze([
 const ALLOWED_METHODS = new Set(RPC_METHOD_ALLOWLIST)
 
 const MAX_RPC_RESPONSE_BYTES = 8 * 1024 * 1024
+const STREAM_FIRST_FRAME_TIMEOUT_MS = 15_000
+
+async function nextStreamFrame(iter, controller, deadline, label) {
+  const remaining = deadline - Date.now()
+  if (remaining <= 0) {
+    controller.abort()
+    throw new Error(`${label} timed out`)
+  }
+  let timeout
+  try {
+    return await Promise.race([
+      iter.next(),
+      new Promise((_, reject) => {
+        timeout = setTimeout(() => {
+          controller.abort()
+          reject(new Error(`${label} timed out`))
+        }, remaining)
+      }),
+    ])
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+function closeAsyncIterator(iter) {
+  try {
+    const closing = iter?.return?.()
+    if (closing && typeof closing.catch === "function") closing.catch(() => {})
+  } catch {}
+}
 
 /** 保留 DSH typed RPC error，供 mobile HTTP 层映射为可操作的状态码与提示。 */
 export class LocalRpcError extends Error {
@@ -165,12 +195,15 @@ async function firstStreamValue(request) {
     throw new Error("stream Remote methods require typertGateway")
   }
   const ac = new AbortController()
+  const deadline = Date.now() + STREAM_FIRST_FRAME_TIMEOUT_MS
+  let iter
   try {
-    const iter = await runtime.stream({ ...request, signal: request.signal ?? ac.signal })
-    const first = await iter.next()
+    iter = await runtime.stream({ ...request, signal: request.signal ?? ac.signal })
+    const first = await nextStreamFrame(iter, ac, deadline, "stream first frame")
     return first.value
   } finally {
     ac.abort()
+    closeAsyncIterator(iter)
   }
 }
 
@@ -343,15 +376,33 @@ async function adaptSessionHistory(targetPort, payload) {
 async function adaptWorkspaceList(targetPort) {
   if (typeof runtime?.stream === "function") {
     try {
-      const frame = await firstStreamValue({
-        namespace: "workspace",
-        method: "follow",
-        args: {},
-      })
-      if (frame?.type === "baseline") {
-        return { items: frame.value?.items ?? [] }
+      const ac = new AbortController()
+      const deadline = Date.now() + STREAM_FIRST_FRAME_TIMEOUT_MS
+      let iter
+      try {
+        iter = await runtime.stream({
+          namespace: "workspace",
+          method: "follow",
+          args: {},
+          signal: ac.signal,
+        })
+        // Runtime adapters may emit a status frame before the durable baseline.
+        // Never turn that transient frame into an authoritative empty snapshot.
+        for (let index = 0; index < 32; index += 1) {
+          const next = await nextStreamFrame(iter, ac, deadline, "workspace.follow baseline")
+          if (next.done) break
+          if (next.value?.type === "baseline") {
+            return {
+              items: next.value.value?.items ?? [],
+              archivedSessionIds: next.value.value?.archivedSessionIds ?? [],
+            }
+          }
+        }
+        throw new Error("workspace.follow did not yield a baseline")
+      } finally {
+        ac.abort()
+        closeAsyncIterator(iter)
       }
-      return { items: [] }
     } catch (error) {
       throw toLocalRpcError("workspace.list", error)
     }

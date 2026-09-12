@@ -523,6 +523,18 @@ test("bootstrap 未接入 Relay 时带 relay: null，旧 App 可忽略", async (
       if (method === "list") return { items: [] }
       throw new Error(`unexpected ${method}`)
     },
+    stream: async ({ namespace, method }) => {
+      assert.equal(namespace, "workspace")
+      assert.equal(method, "follow")
+      return {
+        next: async () => ({
+          value: {
+            type: "baseline",
+            value: { items: [], archivedSessionIds: ["archived-from-web"] },
+          },
+        }),
+      }
+    },
   })
   try {
     const r = await proxyFetch(`/dsh-link/mobile/bootstrap`, {
@@ -532,6 +544,112 @@ test("bootstrap 未接入 Relay 时带 relay: null，旧 App 可忽略", async (
     const boot = await r.json()
     assert.equal(Object.hasOwn(boot, "relay"), true)
     assert.equal(boot.relay, null)
+    assert.deepEqual(boot.archivedSessionIds, ["archived-from-web"])
+  } finally {
+    unbindLocalRpcRuntime()
+  }
+})
+
+test("mobile sessions carries the Web archive snapshot", async () => {
+  const { bindLocalRpcRuntime, unbindLocalRpcRuntime } = await import("../src/local-rpc.js")
+  bindLocalRpcRuntime({
+    invoke: async ({ namespace, method }) => {
+      assert.equal(namespace, "session")
+      if (method === "list") return { items: [] }
+      throw new Error(`unexpected ${method}`)
+    },
+    stream: async ({ namespace, method }) => {
+      assert.equal(namespace, "workspace")
+      assert.equal(method, "follow")
+      return {
+        next: async () => ({
+          value: {
+            type: "baseline",
+            value: { items: [], archivedSessionIds: ["archived-from-web"] },
+          },
+        }),
+      }
+    },
+  })
+  try {
+    const r = await proxyFetch(`/dsh-link/mobile/sessions`, {
+      headers: tokenHeaders(globalThis.__testDevice.token),
+    })
+    assert.equal(r.status, 200)
+    const body = await r.json()
+    assert.deepEqual(body.archivedSessionIds, ["archived-from-web"])
+  } finally {
+    unbindLocalRpcRuntime()
+  }
+})
+
+test("workspace status frames do not become an empty archive snapshot", async () => {
+  const { bindLocalRpcRuntime, unbindLocalRpcRuntime } = await import("../src/local-rpc.js")
+  let streamSignal
+  const frames = [
+    { value: { type: "ready", value: {} } },
+    {
+      value: {
+        type: "baseline",
+        value: { items: [{ path: "/workspace" }], archivedSessionIds: ["archived-after-status"] },
+      },
+    },
+  ]
+  bindLocalRpcRuntime({
+    stream: async ({ namespace, method, signal }) => {
+      assert.equal(namespace, "workspace")
+      assert.equal(method, "follow")
+      assert.equal(signal?.aborted, false)
+      streamSignal = signal
+      return { next: async () => frames.shift() ?? { done: true } }
+    },
+  })
+  try {
+    const value = await (await import("../src/local-rpc.js")).callLocalRpc(0, "workspace.list", {})
+    assert.deepEqual(value.items, [{ path: "/workspace" }])
+    assert.deepEqual(value.archivedSessionIds, ["archived-after-status"])
+  } finally {
+    unbindLocalRpcRuntime()
+  }
+  assert.equal(streamSignal?.aborted, true)
+})
+
+test("mobile session search excludes sessions archived in Web", async () => {
+  const { bindLocalRpcRuntime, unbindLocalRpcRuntime } = await import("../src/local-rpc.js")
+  bindLocalRpcRuntime({
+    invoke: async ({ namespace, method }) => {
+      assert.equal(namespace, "session")
+      assert.equal(method, "search")
+      return {
+        items: [
+          { sessionId: "active-from-search", snippet: "keep" },
+          { sessionId: "archived-from-web", snippet: "drop" },
+        ],
+        hasMore: true,
+      }
+    },
+    stream: async ({ namespace, method }) => {
+      assert.equal(namespace, "workspace")
+      assert.equal(method, "follow")
+      return {
+        next: async () => ({
+          value: {
+            type: "baseline",
+            value: { items: [], archivedSessionIds: ["archived-from-web"] },
+          },
+        }),
+      }
+    },
+  })
+  try {
+    const r = await proxyFetch(`/dsh-link/mobile/sessions/search?q=needle`, {
+      headers: tokenHeaders(globalThis.__testDevice.token),
+    })
+    assert.equal(r.status, 200)
+    const body = await r.json()
+    assert.deepEqual(body.items, [{ sessionId: "active-from-search", snippet: "keep" }])
+    assert.equal(body.hasMore, true)
+    assert.equal(body.degraded, false)
   } finally {
     unbindLocalRpcRuntime()
   }

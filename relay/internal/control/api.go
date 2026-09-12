@@ -428,7 +428,7 @@ func (s *Server) handleInvites(w http.ResponseWriter, r *http.Request) {
 				ID: iv.ID, ExpiresAt: iv.ExpiresAt, ConsumedAt: iv.ConsumedAt,
 				ConsumedHostID: iv.ConsumedHostID, ConsumedHostName: iv.ConsumedHostName,
 				ConsumedHostLive: iv.ConsumedHostLive,
-				RevokedAt: iv.RevokedAt, CreatedAt: iv.CreatedAt,
+				RevokedAt:        iv.RevokedAt, CreatedAt: iv.CreatedAt,
 			}
 			if p.Admin {
 				row.UserID = iv.UserID
@@ -1082,8 +1082,8 @@ func (s *Server) handleTenants(w http.ResponseWriter, r *http.Request) {
 			res = append(res, out{
 				ID: u.ID, LoginName: u.LoginName, DisplayName: u.DisplayName, DisabledAt: u.DisabledAt, CreatedAt: u.CreatedAt,
 				LiveHosts: u.LiveHosts, UnusedInvites: u.UnusedInvites, MaxLiveHosts: maxHosts, MaxUnusedInvites: maxInvites,
-				HostFull: maxHosts > 0 && u.LiveHosts >= maxHosts,
-				InviteFull: maxInvites > 0 && u.UnusedInvites >= maxInvites,
+				HostFull:           maxHosts > 0 && u.LiveHosts >= maxHosts,
+				InviteFull:         maxInvites > 0 && u.UnusedInvites >= maxInvites,
 				PasswordMustChange: u.PasswordMustChange,
 			})
 		}

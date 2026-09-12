@@ -1217,14 +1217,45 @@ function activatePendingDevice(state, stateFile, deviceId) {
   return { status: 200, body: { ok: true, deviceId: target.deviceId, name: target.name } }
 }
 
+/**
+ * Return the session list together with the Web workspace archive set.
+ * DSH keeps archived logs in session.list so they can be restored; the mobile
+ * client needs the set in the same bootstrap response to filter before select.
+ */
+async function mobileSessionList(targetPort) {
+  const [sessions, workspace] = await Promise.all([
+    callLocalRpc(targetPort, "session.list", {}),
+    callLocalRpc(targetPort, "workspace.list", {}),
+  ])
+  const archivedSessionIds = normalizeArchivedSessionIds(workspace.archivedSessionIds)
+  return {
+    // Keep archived rows in the transport for Settings restore. The App owns
+    // the visible projection after applying this authoritative set.
+    items: sessions.items ?? [],
+    archivedSessionIds,
+  }
+}
+
+function normalizeArchivedSessionIds(ids) {
+  return [...new Set((Array.isArray(ids) ? ids : [])
+    .map((id) => String(id ?? "").trim())
+    .filter(Boolean))]
+}
+
+function filterArchivedMobileSearchItems(items, archivedSessionIds) {
+  const archived = new Set(normalizeArchivedSessionIds(archivedSessionIds))
+  return (Array.isArray(items) ? items : [])
+    .filter((item) => !archived.has(String(item?.sessionId ?? "").trim()))
+}
+
 async function handleMobileApi(req, res, targetPort, state, stateFile, device, pathname, rt) {
   try {
     if (req.method !== "GET" && req.method !== "HEAD") {
       if (!requireJsonWrite(req, res)) return
     }
     if (req.method === "GET" && pathname === "/dsh-link/mobile/bootstrap") {
-      const value = await callLocalRpc(targetPort, "session.list", {})
-      const sessions = (value.items ?? []).map(mobileSessionSummary)
+      const { items, archivedSessionIds } = await mobileSessionList(targetPort)
+      const sessions = items.map(mobileSessionSummary)
       return json(res, 200, {
         version: 1,
         protocol: PLUGIN_PROTOCOL,
@@ -1232,14 +1263,19 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
         host: { name: hostname(), deviceId: state.deviceId },
         device: { name: device.name },
         sessions,
+        archivedSessionIds,
         webPath: "/",
         relay: relayPairSnapshot(state.relay),
       })
     }
 
     if (req.method === "GET" && pathname === "/dsh-link/mobile/sessions") {
-      const value = await callLocalRpc(targetPort, "session.list", {})
-      return json(res, 200, { version: 1, sessions: (value.items ?? []).map(mobileSessionSummary) })
+      const { items, archivedSessionIds } = await mobileSessionList(targetPort)
+      return json(res, 200, {
+        version: 1,
+        sessions: items.map(mobileSessionSummary),
+        archivedSessionIds,
+      })
     }
 
     if (req.method === "GET" && pathname === "/dsh-link/mobile/sessions/search") {
@@ -1247,16 +1283,23 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
       if (!query) return json(res, 400, { error: "缺少搜索关键词" })
       try {
         const value = await callLocalRpc(targetPort, "session.search", { query })
-        return json(res, 200, { version: 1, items: value.items ?? [], hasMore: Boolean(value.hasMore), degraded: false })
+        const workspace = await callLocalRpc(targetPort, "workspace.list", {})
+        const items = filterArchivedMobileSearchItems(value.items, workspace.archivedSessionIds)
+        return json(res, 200, { version: 1, items, hasMore: Boolean(value.hasMore), degraded: false })
       } catch (err) {
         // 内容搜索不可用（索引禁用）时降级为名称匹配（DSH search.unavailable 行为）
-        const list = await callLocalRpc(targetPort, "session.list", {})
-        const withTitle = (list.items ?? []).map((s) => ({ ...s, title: mobileSessionSummary(s).title }))
+        const { items: listItems, archivedSessionIds } = await mobileSessionList(targetPort)
+        const withTitle = listItems.map((s) => ({ ...s, title: mobileSessionSummary(s).title }))
         const items = withTitle
           .filter((s) => String(s.title ?? "").toLowerCase().includes(query.toLowerCase()))
           .slice(0, 20)
           .map((s) => ({ sessionId: s.sessionId, snippet: s.title ?? "" }))
-        return json(res, 200, { version: 1, items, hasMore: false, degraded: true })
+        return json(res, 200, {
+          version: 1,
+          items: filterArchivedMobileSearchItems(items, archivedSessionIds),
+          hasMore: false,
+          degraded: true,
+        })
       }
     }
 
