@@ -308,12 +308,13 @@ function pairInfo(config, state, certFingerprint, via = "lan") {
   return info
 }
 
-function json(res, code, obj) {
+function json(res, code, obj, extraHeaders) {
   const body = Buffer.from(JSON.stringify(obj), "utf8")
   res.writeHead(code, {
     "content-type": "application/json; charset=utf-8",
     "content-length": String(body.length),
     connection: "close",
+    ...extraHeaders,
   })
   res.end(body)
 }
@@ -1748,6 +1749,13 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
     return json(res, 404, { error: "mobile endpoint not found" })
   } catch (error) {
     console.error(`dsh-links: mobile API error: ${error?.message ?? error}`)
+    // 主机运行时对被占用的会话拒绝 resume：给手机端可读的 409，而不是笼统的 502。
+    if (/SessionAlreadyOwnedError|already owned by an active write handle/i.test(String(error?.message ?? error))) {
+      return json(res, 409, {
+        error: "这个会话正被网页端或其他设备使用，手机暂时无法继续。请换一个会话，或在网页端关掉该会话后重试。",
+        code: "session_busy",
+      })
+    }
     return json(res, 502, { error: "mobile API unavailable" })
   }
 }
@@ -1781,15 +1789,24 @@ function sessionEvents(session) {
 function findApprovalId(req) {
   const events = sessionEvents(req?.agent?.session)
   const decided = new Set()
+  // 无 callId 的 waterfall 请求（如沙箱升级审批）没有可关联字段，
+  // 回退绑定最近一条未决 approval/asked：它就是本次请求对应的卡。
+  let latestUndecidedWithCallId = null
   for (let i = events.length - 1; i >= 0; i--) {
     const event = events[i]
     if (event?.type === "approval/decided") decided.add(event.data?.id)
     else if (event?.type === "approval/asked") {
       if (decided.has(event.data?.id)) continue
-      if ((req.callId ?? null) !== (event.data?.callId ?? null)) continue
+      if ((req.callId ?? null) !== (event.data?.callId ?? null)) {
+        if ((req.callId ?? null) === null && latestUndecidedWithCallId === null && event.data?.callId != null) {
+          latestUndecidedWithCallId = event.data.id
+        }
+        continue
+      }
       return event.data.id
     }
   }
+  if ((req.callId ?? null) === null && latestUndecidedWithCallId) return latestUndecidedWithCallId
   return req?.id ?? req?.approvalId ?? req?.payload?.id ?? null
 }
 
@@ -1830,6 +1847,12 @@ export function apply(ctx, config) {
   if (migrated) ctx.logger.info("dsh-links: 已为旧设备补发 deviceId")
 
   const fp = () => tlsHolder.fingerprint
+  // 启动就绪状态：TLS 异步加载/生成完成且 HTTPS 端口真正 listen 之后才允许
+  // pair-info / qr.png 返回可扫码内容，避免冷启动窗口吐出 certFingerprint 为空的
+  // 配对信息。未就绪返回面板与冒烟脚本可识别的 503；失败后保持不可用，不假就绪。
+  const readiness = { phase: "starting", error: "" }
+  const proxyPending = (res) =>
+    json(res, 503, { error: "proxy_not_ready", phase: readiness.phase }, { "retry-after": "1" })
   let relayAgent = null
   const stopRelayAgent = () => {
     try { relayAgent?.stop() } catch {}
@@ -1891,6 +1914,7 @@ export function apply(ctx, config) {
       path: "/dsh-link/pair-info",
       handler: (req, res) => {
         if (!requireLoopbackSameOrigin(req, res)) return
+        if (readiness.phase !== "ready") return proxyPending(res)
         sweepExpiredPending(state, stateFile, rt)
         json(res, 200, pairInfo(config, state, fp(), pairVia(req)))
       },
@@ -1900,6 +1924,7 @@ export function apply(ctx, config) {
       path: "/dsh-link/qr.png",
       handler: (req, res) => {
         if (!requireLoopbackSameOrigin(req, res)) return
+        if (readiness.phase !== "ready") return proxyPending(res)
         return qrPng(res, config, state, fp(), pairVia(req))
       },
     }),
@@ -2213,9 +2238,16 @@ export function apply(ctx, config) {
     if (req?.signal?.aborted === true) return Promise.resolve("cancelled")
     const sessionId = req?.agent?.session?.id
     const writers = sessionId ? rt.sessionStreams.get(sessionId) : null
-    if (!writers || writers.size === 0) return next()
+    if (!writers || writers.size === 0) {
+      ctx.logger.info(`dsh-links: approval/request passthrough（无手机订阅）session=${String(sessionId ?? "?").slice(0, 8)} tool=${req?.toolName ?? req?.name ?? "?"}`)
+      return next()
+    }
     const id = findApprovalId(req)
-    if (!id) return next()
+    if (!id) {
+      ctx.logger.info(`dsh-links: approval/request passthrough（无法解析审批 id）session=${String(sessionId ?? "?").slice(0, 8)} callId=${req?.callId ?? "无"} reqId=${req?.id ?? "无"} tool=${req?.toolName ?? req?.name ?? "?"}`)
+      return next()
+    }
+    ctx.logger.info(`dsh-links: approval/request 接管 session=${String(sessionId).slice(0, 8)} id=${String(id).slice(0, 24)} callId=${req?.callId ?? "无"} tool=${req?.toolName ?? req?.name ?? "?"}`)
     return new Promise((resolve) => {
       const rec = {
         id,
@@ -2390,10 +2422,22 @@ export function apply(ctx, config) {
         resolve(tls)
       })
     })
+  }).then((tls) => {
+    // 只有 listen 成功才算就绪；仅证书生成完成还不够。
+    readiness.phase = "ready"
+    return tls
+  }).catch((err) => {
+    readiness.phase = "failed"
+    readiness.error = String(err?.message ?? err)
+    ctx.logger.warn(`dsh-links: 手机接入代理启动失败（${readiness.error}），配对面板保持不可用`)
+    throw err
   })
+  // 宿主未必 await 该 promise：挂 no-op catch 避免 unhandled rejection；宿主自行处理 ready 不受影响。
+  ready.catch(() => {})
 
   ctx.effect(
     () => () => {
+      readiness.phase = "stopped"
       for (const dispose of disposers) dispose()
       if (pollTimer) clearInterval(pollTimer)
       if (keepAliveTimer) clearInterval(keepAliveTimer)

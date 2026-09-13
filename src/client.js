@@ -895,9 +895,10 @@ const createPanelModule = (require) => {
     })
   }
 
-  function ConnectionBody({ info, devices, err, revoke, approve, revokeAll, setRequireConfirm, relay, onEnroll, onDisconnect, onReconnect, onRelease, onAckReplaced, load, phoneHint }) {
+  function ConnectionBody({ info, devices, err, starting, revoke, approve, revokeAll, setRequireConfirm, relay, onEnroll, onDisconnect, onReconnect, onRelease, onAckReplaced, load, phoneHint }) {
     const [active, setActive] = React.useState('lan')
     React.useEffect(() => { load?.() }, [active, load])
+    if (starting) return jsx('div', { className: 'dshlink-status', children: '手机连接正在启动…' })
     if (err) return jsx('div', { className: 'dshlink-status is-error', children: `加载失败：${err}` })
     if (!info) return jsx('div', { className: 'dshlink-status', children: '加载中…' })
     return jsxs('div', {
@@ -918,10 +919,37 @@ const createPanelModule = (require) => {
     const [relay, setRelay] = React.useState(null)
     const [err, setErr] = React.useState('')
     const [phoneHint, setPhoneHint] = React.useState('')
+    // 启动就绪窗口：pair-info 503(proxy_not_ready) 表示 HTTPS 尚未 listen。
+    // 有限重试后升级为明确失败；服务端报 phase=failed 时立即给出失败提示。
+    const [starting, setStarting] = React.useState(false)
+    const startRetries = React.useRef(0)
+    const START_RETRY_LIMIT = 20
 
     const load = React.useCallback(async () => {
       try {
         const resInfo = await fetch('/dsh-link/pair-info')
+        if (resInfo.status === 503) {
+          const data = await resInfo.json().catch(() => ({}))
+          if (data?.error === 'proxy_not_ready') {
+            if (data.phase === 'failed') {
+              setStarting(false)
+              setErr('手机连接启动失败，HTTPS 端口未能就绪。请查看 DSH 日志或重启 DSH 后重试。')
+              return
+            }
+            if (startRetries.current >= START_RETRY_LIMIT) {
+              setStarting(false)
+              setErr('手机连接启动超时，HTTPS 端口长时间未就绪。请查看 DSH 日志或重启 DSH 后重试。')
+              return
+            }
+            startRetries.current += 1
+            setStarting(true)
+            setErr('')
+            return
+          }
+          throw new Error(`HTTP ${resInfo.status}`)
+        }
+        startRetries.current = 0
+        setStarting(false)
         const resDevices = await fetch('/dsh-link/devices')
         const resRelay = await fetch('/dsh-link/relay-status')
         if (!resInfo.ok || !resDevices.ok) throw new Error(`HTTP ${resInfo.status}/${resDevices.status}`)
@@ -931,6 +959,7 @@ const createPanelModule = (require) => {
         if (resRelay.ok) setRelay(await resRelay.json())
         setErr('')
       } catch (e) {
+        setStarting(false)
         setErr(String(e?.message ?? e))
       }
     }, [])
@@ -940,9 +969,9 @@ const createPanelModule = (require) => {
     React.useEffect(() => {
       if (!active) return undefined
       load()
-      const timer = setInterval(load, pendingCount > 0 ? 2000 : 8000)
+      const timer = setInterval(load, starting ? 1500 : (pendingCount > 0 ? 2000 : 8000))
       return () => clearInterval(timer)
-    }, [active, load, pendingCount])
+    }, [active, load, pendingCount, starting])
 
     const revoke = async (target) => {
       const body = typeof target === 'string' ? { name: target } : (target ?? {})
@@ -1041,7 +1070,7 @@ const createPanelModule = (require) => {
 
   function LinkPanel() {
     const [open, setOpen] = React.useState(false)
-    const { info, devices, err, revoke, approve, revokeAll, setRequireConfirm, relay, onEnroll, onDisconnect, onReconnect, onRelease, onAckReplaced, load, phoneHint } = usePairData(open)
+    const { info, devices, err, starting, revoke, approve, revokeAll, setRequireConfirm, relay, onEnroll, onDisconnect, onReconnect, onRelease, onAckReplaced, load, phoneHint } = usePairData(open)
 
     React.useEffect(() => {
       window.__dshlinkOpenPanel = () => setOpen(true)
@@ -1071,7 +1100,7 @@ const createPanelModule = (require) => {
                 onClick: (e) => e.stopPropagation(),
                 children: [
                   jsx(BrandHeader, { status: connectionStatus(info, relay) }),
-                  jsx(ConnectionBody, { info, devices, err, revoke, approve, revokeAll, setRequireConfirm, relay, onEnroll, onDisconnect, onReconnect, onRelease, onAckReplaced, load, phoneHint }),
+                  jsx(ConnectionBody, { info, devices, err, starting, revoke, approve, revokeAll, setRequireConfirm, relay, onEnroll, onDisconnect, onReconnect, onRelease, onAckReplaced, load, phoneHint }),
                   jsx('button', {
                     type: 'button',
                     className: 'dshlink-close',
@@ -1087,7 +1116,7 @@ const createPanelModule = (require) => {
   }
 
   function DshLinkSettingsSection() {
-    const { info, devices, err, revoke, approve, revokeAll, setRequireConfirm, relay, onEnroll, onDisconnect, onReconnect, onRelease, onAckReplaced, load, phoneHint } = usePairData(true)
+    const { info, devices, err, starting, revoke, approve, revokeAll, setRequireConfirm, relay, onEnroll, onDisconnect, onReconnect, onRelease, onAckReplaced, load, phoneHint } = usePairData(true)
 
     return jsxs(React.Fragment, {
       children: [
@@ -1096,7 +1125,7 @@ const createPanelModule = (require) => {
           className: 'dshlink-settings dshlink-root',
           children: [
             jsx(BrandHeader, { status: connectionStatus(info, relay) }),
-            jsx(ConnectionBody, { info, devices, err, revoke, approve, revokeAll, setRequireConfirm, relay, onEnroll, onDisconnect, onReconnect, onRelease, onAckReplaced, load, phoneHint }),
+            jsx(ConnectionBody, { info, devices, err, starting, revoke, approve, revokeAll, setRequireConfirm, relay, onEnroll, onDisconnect, onReconnect, onRelease, onAckReplaced, load, phoneHint }),
           ],
         }),
       ],

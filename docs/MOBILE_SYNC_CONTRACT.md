@@ -90,6 +90,7 @@ DSH 结果映射：`allowed-once`/`rejected` → `resolved`；`cancelled` → `c
 - 校验失败（未知题目 ID、无效选项、缺必填、超长）返回 400，请求保持可处理。
 - 已结束且无终态缓存：409。
 - 非当前会话 / 非授权设备：403/409。
+- 目标会话已被其他写方占用（Web 端或另一设备正持有写句柄）：`POST .../prompt` 返回 409 `{"error", "code": "session_busy"}`；App 提示换会话，不得自动重试或转排队。
 - 非幂等 prompt 不自动重放。
 
 ## 后台通知
