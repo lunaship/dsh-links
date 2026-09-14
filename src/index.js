@@ -34,7 +34,11 @@ import {
   ensureMobileWorkspaceDirectory,
   planMobileWorkspaceCreate,
 } from "./workspace-create.js"
-import { DeviceMutationGate } from "./device-mutation-gate.js"
+import {
+  DEVICE_MUTATION_REVOKED,
+  DeviceMutationGate,
+  runAuthorizedDeviceMutation,
+} from "./device-mutation-gate.js"
 import {
   PLUGIN_PROTOCOL,
   parseClientCaps,
@@ -875,6 +879,23 @@ async function readAuthorizedJson(req, res, state, device, limit) {
   return body
 }
 
+function runMobileDeviceMutation(rt, state, device, operation) {
+  return runAuthorizedDeviceMutation(
+    rt.deviceMutations,
+    device.deviceId,
+    () => isDeviceAuthorized(state, device),
+    operation,
+  )
+}
+
+function mobileMutationWasRevoked(value) {
+  return value === DEVICE_MUTATION_REVOKED
+}
+
+function respondDeviceRevoked(res) {
+  return json(res, 401, { error: "设备已被吊销" })
+}
+
 function afterWritersChanged(rt, sessionId, { immediate = false } = {}) {
   const writers = rt.sessionStreams.get(sessionId)
   if (writers && writers.size > 0) {
@@ -1311,7 +1332,9 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
       if (typeof body.workspaceId === "string" && body.workspaceId.trim()) payload.workspaceId = body.workspaceId.trim()
       else if (typeof body.cwd === "string" && body.cwd.trim()) payload.cwd = body.cwd.trim()
       if (typeof body.agentPreset === "string" && body.agentPreset.trim()) payload.agentPreset = body.agentPreset.trim()
-      const value = await callLocalRpc(targetPort, "session.create", payload)
+      const value = await runMobileDeviceMutation(rt, state, device, () =>
+        callLocalRpc(targetPort, "session.create", payload))
+      if (mobileMutationWasRevoked(value)) return respondDeviceRevoked(res)
       return json(res, 201, omitNullFields({
         version: 1,
         sessionId: value.sessionId,
@@ -1348,7 +1371,9 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
       const provider = String(body.provider ?? "").trim()
       const model = String(body.model ?? "").trim()
       if (!provider || !model) return json(res, 400, { error: "缺少 provider 或 model" })
-      const value = await selectSessionModel(targetPort, sessionId, provider, model, body.reasoningEffort, () => isDeviceAuthorized(state, device))
+      const value = await runMobileDeviceMutation(rt, state, device, () =>
+        selectSessionModel(targetPort, sessionId, provider, model, body.reasoningEffort, () => isDeviceAuthorized(state, device)))
+      if (mobileMutationWasRevoked(value)) return respondDeviceRevoked(res)
       return json(res, 200, { ok: true, selected: value.selected ?? null })
     }
 
@@ -1362,17 +1387,18 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
   if (!body) return
       try {
         const list = await callLocalRpc(targetPort, "workspace.list", {})
-        if (!isDeviceAuthorized(state, device)) return json(res, 401, { error: "设备已被吊销" })
         const plan = planMobileWorkspaceCreate({
           input: body.input ?? body.path,
           parentWorkspaceId: body.parentWorkspaceId,
           workspaces: list.items ?? [],
         })
-        const { directoryCreated, value } = await rt.deviceMutations.run(device.deviceId, async () => {
+        const result = await runMobileDeviceMutation(rt, state, device, async () => {
           const { directoryCreated } = await ensureMobileWorkspaceDirectory(plan)
           const value = await callLocalRpc(targetPort, "workspace.create", { path: plan.path })
           return { directoryCreated, value }
         })
+        if (mobileMutationWasRevoked(result)) return respondDeviceRevoked(res)
+        const { directoryCreated, value } = result
         return json(res, 200, {
           ok: true,
           workspace: value.workspace ?? null,
@@ -1406,11 +1432,16 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
   if (!body) return
       const path = String(body.path ?? "").trim()
       if (!path) return json(res, 400, { error: "缺少工作区路径" })
-      const list = await callLocalRpc(targetPort, "workspace.list", {})
-      if (!isDeviceAuthorized(state, device)) return json(res, 401, { error: "设备已被吊销" })
-      const item = (list.items ?? []).find((w) => w.path === path)
-      if (!item) return json(res, 404, { error: "工作区不存在" })
-      const value = await callLocalRpc(targetPort, "workspace.delete", { workspaceId: item.workspaceId })
+      const result = await runMobileDeviceMutation(rt, state, device, async () => {
+        const list = await callLocalRpc(targetPort, "workspace.list", {})
+        const item = (list.items ?? []).find((w) => w.path === path)
+        if (!item) return { missing: true }
+        const value = await callLocalRpc(targetPort, "workspace.delete", { workspaceId: item.workspaceId })
+        return { item, value }
+      })
+      if (mobileMutationWasRevoked(result)) return respondDeviceRevoked(res)
+      if (result.missing) return json(res, 404, { error: "工作区不存在" })
+      const { item, value } = result
       return json(res, 200, { ok: true, deleted: Boolean(value?.deleted), workspaceId: item.workspaceId })
     }
 
@@ -1445,7 +1476,9 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
       if (filtered.error) return json(res, 403, { error: filtered.error })
       const payload = { ns, patch }
       if (Number.isInteger(body.expectedRevision)) payload.expectedRevision = body.expectedRevision
-      const value = await callLocalRpc(targetPort, "settings.update", payload)
+      const value = await runMobileDeviceMutation(rt, state, device, () =>
+        callLocalRpc(targetPort, "settings.update", payload))
+      if (mobileMutationWasRevoked(value)) return respondDeviceRevoked(res)
       const nsView = value
       return json(res, 200, {
         version: 1,
@@ -1498,14 +1531,18 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
   if (!body) return
       const title = String(body.title ?? "").trim()
       if (!title) return json(res, 400, { error: "缺少会话名称" })
-      const value = await callLocalRpc(targetPort, "session.rename", { sessionId, title })
+      const value = await runMobileDeviceMutation(rt, state, device, () =>
+        callLocalRpc(targetPort, "session.rename", { sessionId, title }))
+      if (mobileMutationWasRevoked(value)) return respondDeviceRevoked(res)
       return json(res, 200, { ok: true, title: value.title ?? title })
     }
 
     const forkMatch = pathname.match(/^\/dsh-link\/mobile\/sessions\/([^/]+)\/fork$/)
     if (req.method === "POST" && forkMatch) {
       const sessionId = decodeURIComponent(forkMatch[1])
-      const value = await callLocalRpc(targetPort, "session.fork", { sessionId })
+      const value = await runMobileDeviceMutation(rt, state, device, () =>
+        callLocalRpc(targetPort, "session.fork", { sessionId }))
+      if (mobileMutationWasRevoked(value)) return respondDeviceRevoked(res)
       return json(res, 200, { ok: true, sessionId: value.sessionId ?? null })
     }
 
@@ -1513,7 +1550,9 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
     const archiveMatch = pathname.match(/^\/dsh-link\/mobile\/sessions\/([^/]+)\/archive$/)
     if (req.method === "POST" && archiveMatch) {
       const sessionId = decodeURIComponent(archiveMatch[1])
-      const value = await callLocalRpc(targetPort, "workspace.archiveSession", { sessionId })
+      const value = await runMobileDeviceMutation(rt, state, device, () =>
+        callLocalRpc(targetPort, "workspace.archiveSession", { sessionId }))
+      if (mobileMutationWasRevoked(value)) return respondDeviceRevoked(res)
       return json(res, 200, { ok: true, archived: Boolean(value?.ok), sessionId })
     }
 
@@ -1556,7 +1595,9 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
       })) {
         return json(res, 403, { ok: false, accepted: false, error: "仅该会话的当前连接设备可处理审批" })
       }
-      const result = rt.requests.finishApproval(pending, outcome)
+      const result = await runMobileDeviceMutation(rt, state, device, () =>
+        rt.requests.finishApproval(pending, outcome))
+      if (mobileMutationWasRevoked(result)) return respondDeviceRevoked(res)
       return json(res, 200, {
         ok: true,
         accepted: true,
@@ -1612,7 +1653,9 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
       if (!checked.ok) {
         return json(res, 400, { ok: false, accepted: false, error: checked.error, code: checked.code })
       }
-      rt.requests.finishQuestion(pending, checked.answer)
+      const result = await runMobileDeviceMutation(rt, state, device, () =>
+        rt.requests.finishQuestion(pending, checked.answer))
+      if (mobileMutationWasRevoked(result)) return respondDeviceRevoked(res)
       return json(res, 200, { ok: true, accepted: true, handledBy: "plugin" })
     }
 
@@ -1730,19 +1773,22 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
       }
       if (!text && content.length === 0) return json(res, 400, { error: "消息内容不能为空" })
       if (text) content.push({ type: "text", text })
-      const resVal = await callLocalRpc(targetPort, "session.prompt", {
+      const resVal = await runMobileDeviceMutation(rt, state, device, () => callLocalRpc(targetPort, "session.prompt", {
         sessionId,
         requestId: "mobile-" + randomBytes(12).toString("hex"),
         mode: body.mode || "queue",
         content,
-      })
+      }))
+      if (mobileMutationWasRevoked(resVal)) return respondDeviceRevoked(res)
       return json(res, 200, { ok: true, result: resVal })
     }
 
     const cancel = pathname.match(/^\/dsh-link\/mobile\/sessions\/([^/]+)\/cancel$/)
     if (req.method === "POST" && cancel) {
       const sessionId = decodeURIComponent(cancel[1])
-      await callLocalRpc(targetPort, "session.cancel", { sessionId })
+      const result = await runMobileDeviceMutation(rt, state, device, () =>
+        callLocalRpc(targetPort, "session.cancel", { sessionId }))
+      if (mobileMutationWasRevoked(result)) return respondDeviceRevoked(res)
       return json(res, 200, { ok: true, sessionId })
     }
 
@@ -2359,11 +2405,15 @@ export function apply(ctx, config) {
           try {
             const sessions = ctx.get("sessions")
             const session = typeof sessions?.get === "function" ? await sessions.get(sessionId) : undefined
-            if (!isDeviceAuthorized(state, device)) return json(res, 401, { error: "设备已被吊销" })
-            if (!session) return json(res, 404, { error: "会话不存在" })
-            session.append("permission/preset", { preset })
-            session.append("approval/policy", { policy: spec.approval })
-            session.append("sandbox/mode", { mode: spec.sandbox })
+            const result = await runMobileDeviceMutation(rt, state, device, () => {
+              if (!session) return { missing: true }
+              session.append("permission/preset", { preset })
+              session.append("approval/policy", { policy: spec.approval })
+              session.append("sandbox/mode", { mode: spec.sandbox })
+              return { missing: false }
+            })
+            if (mobileMutationWasRevoked(result)) return respondDeviceRevoked(res)
+            if (result.missing) return json(res, 404, { error: "会话不存在" })
             return json(res, 200, { ok: true, preset, approval: spec.approval, sandbox: spec.sandbox })
           } catch (err) {
             ctx.logger.warn(`dsh-links: permission update: ${err?.message ?? err}`)

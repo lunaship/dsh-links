@@ -1,3 +1,6 @@
+/** Returned when a mutation was registered but the device was revoked first. */
+export const DEVICE_MUTATION_REVOKED = Symbol("deviceMutationRevoked")
+
 /**
  * Tracks device-authorized mutations that may outlive their HTTP request.
  * Revocation drains this gate before it acknowledges success, so callers never
@@ -37,4 +40,16 @@ export class DeviceMutationGate {
       await Promise.allSettled([...operations])
     }
   }
+}
+
+/**
+ * Register before checking authorization. This closes the gap between the
+ * outer HTTP auth check and revocation: a mutation admitted before revocation
+ * is drained, while one admitted after revocation is rejected inside the gate.
+ */
+export function runAuthorizedDeviceMutation(gate, deviceId, isAuthorized, operation) {
+  return gate.run(deviceId, async () => {
+    if (!isAuthorized()) return DEVICE_MUTATION_REVOKED
+    return operation()
+  })
 }
