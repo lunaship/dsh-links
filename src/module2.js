@@ -704,19 +704,17 @@ const createPanelModule = (require) => {
         })
         const data = await res.json().catch(() => ({}))
         if (res.status === 429) {
-          const wait = data?.retryAfter ? `（\${Math.ceil(data.retryAfter / 3600)} 小时后再试）` : ''
-          throw new Error(data?.error === 'already_issued' ? `今天已领取过接入码，请用已有的码\${wait}` : '领取太频繁，请稍后再试')
+          const seconds = Number(data?.retryAfter) || 0
+          const wait = seconds > 0
+            ? `（约 ${seconds >= 3600 ? `${Math.ceil(seconds / 3600)} 小时` : `${Math.max(1, Math.ceil(seconds / 60))} 分钟`}后再试）`
+            : ''
+          throw new Error(data?.error === 'already_issued' ? `今天已领取过接入码，请用已有的码${wait}` : '领取太频繁，请稍后再试')
         }
         if (res.status === 503) throw new Error('接入名额已满，请稍后再试')
-        if (!res.ok || !data?.enroll) throw new Error(data?.error ? String(data.error) : `领取失败（HTTP \${res.status}）`)
-        const text = String(data.enroll)
-        setPaste(text)
+        if (!res.ok || !data?.enroll) throw new Error(data?.error ? String(data.error) : `领取失败（HTTP ${res.status}）`)
+        setPaste(String(data.enroll))
         setMessage('')
-        try {
-          const parsed = parseEnrollText(text)
-          void parsed
-          setFetchedAt('已填入插件接入码。请在 24 小时内点「接入」；接入成功后长期有效，不用再领。')
-        } catch { setFetchedAt('已填入插件接入码。请在 24 小时内点「接入」；接入成功后长期有效。') }
+        setFetchedAt('已填入插件接入码。请在 24 小时内点「接入」；接入成功后长期有效，不用再领。')
       } catch (err) {
         setFetchedAt('')
         setMessage(String(err?.message ?? err))
