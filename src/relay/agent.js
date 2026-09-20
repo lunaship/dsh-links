@@ -354,6 +354,42 @@ export async function revokeSelf({ address, routeId, keys, insecureTls = false, 
   }
 }
 
+/**
+ * 问 Control 这条路由是否还有效，但不留在线上。
+ *
+ * Control 没有只读的状态帧，最便宜的真话就是走一遍 REGISTER：已吊销的路由回
+ * ERROR/REVOKED，仍有效的回 REGISTERED，我们立刻断掉（线上状态约毫秒级一闪）。
+ * 只在 Agent 暂停时用：暂停意味着不连 Control，控制台的吊销没有任何途径能传过来。
+ *
+ * 网络/TLS 故障按异常抛出，由调用方决定是否降级为「状态未知」。
+ */
+export async function probeRoute({ address, credentials, insecureTls = false, tlsFingerprint = "", timeoutMs = 8000 }) {
+  const socket = await connectTls(address, { insecureTls, tlsFingerprint })
+  try {
+    const challenge = await readHello(socket)
+    const nonce = randomBytes(16)
+    const ts = Math.floor(Date.now() / 1000)
+    const transcript = registerTranscript(credentials.capability, ts, nonce, challenge)
+    const proof = signEd25519(credentials.keys.seed, credentials.keys.publicKey, transcript)
+    await writeFrame(socket, {
+      type: "REGISTER",
+      capability: credentials.capability,
+      ts,
+      nonce: b64u(nonce),
+      proof: b64u(proof),
+    })
+    const reply = await readFrame(socket, MAX_REGISTERED, timeoutMs)
+    if (reply?.type === "REGISTERED") return { status: "ok" }
+    if (reply?.type === "ERROR") {
+      if (reply.code === "REVOKED") return { status: "revoked" }
+      return { status: "unknown", error: reply.message || reply.code || "relay error" }
+    }
+    return { status: "unknown", error: "unexpected probe reply" }
+  } finally {
+    socket.destroy()
+  }
+}
+
 export class RelayAgent {
   constructor({ address, credentials, pluginPort, logger, onCapabilityRenewed, onRevoked, insecureTls = false, tlsFingerprint = "" }) {
     this.address = address

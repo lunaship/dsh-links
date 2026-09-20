@@ -405,7 +405,7 @@ const createPanelModule = (require) => {
           className: 'dshlink-brand-copy',
           children: [
             jsx('div', { className: 'dshlink-brand-title', children: '手机连接' }),
-            jsx('div', { className: 'dshlink-brand-sub', children: 'DeepSeek 官方手机入口' }),
+            jsx('div', { className: 'dshlink-brand-sub', children: 'dsh-links 手机连接入口' }),
           ],
         }),
         status
@@ -854,7 +854,7 @@ const createPanelModule = (require) => {
             }),
           ],
         }),
-        (enrolled || revoked) ? null : jsxs('div', {
+        jsxs('div', {
           className: 'dshlink-steps',
           children: [
             jsxs('div', {

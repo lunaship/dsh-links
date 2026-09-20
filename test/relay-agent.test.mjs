@@ -18,6 +18,7 @@ import {
   MAX_CONTROL_WRITE_QUEUE,
   normalizeHeartbeatSeconds,
   normalizeTlsFingerprint,
+  probeRoute,
   readFrame,
   RELAY_PAUSED_MESSAGE,
   RELAY_QUOTA_MESSAGE,
@@ -451,6 +452,100 @@ test("已注册控制连接收到 REVOKED 后也停止重连", async (t) => {
   assert.equal(agent.status, "revoked")
   assert.equal(agent.stopped, true)
   assert.equal(registers, 1)
+})
+
+test("暂停期间探测：已吊销的路由回 revoked，不等长连接推送", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "dsh-relay-probe-revoked-"))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const material = await loadOrCreateTls(dir)
+  const challenge = Buffer.alloc(32, 11)
+  let registers = 0
+  let closed = false
+  const server = createTlsServer({ key: material.key, cert: material.cert }, (socket) => {
+    socket.on("close", () => { closed = true })
+    socket.write(`${JSON.stringify({ type: "HELLO", challenge: b64u(challenge) })}\n`)
+    let frames = ""
+    socket.on("data", (chunk) => {
+      frames += chunk.toString("utf8")
+      for (;;) {
+        const nl = frames.indexOf("\n")
+        if (nl < 0) break
+        const frame = JSON.parse(frames.slice(0, nl))
+        frames = frames.slice(nl + 1)
+        if (frame.type === "REGISTER") {
+          registers++
+          socket.write(`${JSON.stringify({ type: "ERROR", code: "REVOKED", message: "revoked" })}\n`)
+        }
+      }
+    })
+  })
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve))
+  t.after(() => server.close())
+  const result = await probeRoute({
+    address: `127.0.0.1:${server.address().port}`,
+    credentials: { keys: generateHostKey(), capability: "x", generation: 1 },
+    insecureTls: true,
+    tlsFingerprint: material.fingerprint,
+  })
+  assert.deepEqual(result, { status: "revoked" })
+  assert.equal(registers, 1)
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  assert.equal(closed, true)
+})
+
+test("暂停期间探测：仍有效的路由回 ok 并立刻断线，不占长连接", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "dsh-relay-probe-ok-"))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const material = await loadOrCreateTls(dir)
+  const challenge = Buffer.alloc(32, 12)
+  const server = createTlsServer({ key: material.key, cert: material.cert }, (socket) => {
+    socket.write(`${JSON.stringify({ type: "HELLO", challenge: b64u(challenge) })}\n`)
+    let frames = ""
+    socket.on("data", (chunk) => {
+      frames += chunk.toString("utf8")
+      for (;;) {
+        const nl = frames.indexOf("\n")
+        if (nl < 0) break
+        const frame = JSON.parse(frames.slice(0, nl))
+        frames = frames.slice(nl + 1)
+        if (frame.type === "REGISTER") {
+          socket.write(`${JSON.stringify({ type: "REGISTERED", generation: 1, heartbeat: 30 })}\n`)
+        }
+      }
+    })
+  })
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve))
+  t.after(() => server.close())
+  const result = await probeRoute({
+    address: `127.0.0.1:${server.address().port}`,
+    credentials: { keys: generateHostKey(), capability: "x", generation: 1 },
+    insecureTls: true,
+    tlsFingerprint: material.fingerprint,
+  })
+  assert.deepEqual(result, { status: "ok" })
+})
+
+test("暂停期间探测：非 REVOKED 的拒绝按未知处理，不误清凭据", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "dsh-relay-probe-unknown-"))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const material = await loadOrCreateTls(dir)
+  const challenge = Buffer.alloc(32, 13)
+  const server = createTlsServer({ key: material.key, cert: material.cert }, (socket) => {
+    socket.write(`${JSON.stringify({ type: "HELLO", challenge: b64u(challenge) })}\n`)
+    socket.on("data", () => {
+      socket.write(`${JSON.stringify({ type: "ERROR", code: "AUTH_FAILED", message: "cap expired" })}\n`)
+    })
+  })
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve))
+  t.after(() => server.close())
+  const result = await probeRoute({
+    address: `127.0.0.1:${server.address().port}`,
+    credentials: { keys: generateHostKey(), capability: "x", generation: 1 },
+    insecureTls: true,
+    tlsFingerprint: material.fingerprint,
+  })
+  assert.equal(result.status, "unknown")
+  assert.equal(result.error, "cap expired")
 })
 
 test("REVOKE_SELF 成功即释放控制台名额", async (t) => {

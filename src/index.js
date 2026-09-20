@@ -55,7 +55,7 @@ import {
   requestBelongsToSession,
 } from "./request-lifecycle.js"
 import { deriveAddresses, generateHostKey, hostKeyFromSeed, nextRelayControlURL, attachRelayControlUrl, previousRelayReleaseTarget, rememberedRelayExtras, rememberReplacedRelayControlURL, rememberReplacedRelayHost, relayPairSnapshot, relayRouteRotated, cloudPairStamp, resolveEnrollText, relaySwitchConflict, decorateRelayConsoleMessage, unb64u } from "./relay/crypto.js"
-import { applyRelayRouteRevoked, enroll as enrollRelay, normalizeTlsFingerprint, RelayAgent, relayAgentShouldRun, relayPluginView, revokeSelf as revokeSelfRelay } from "./relay/agent.js"
+import { applyRelayRouteRevoked, enroll as enrollRelay, normalizeTlsFingerprint, probeRoute, RelayAgent, relayAgentShouldRun, relayPluginView, revokeSelf as revokeSelfRelay } from "./relay/agent.js"
 
 export const name = "dsh-links"
 export const inject = ["webServer", "typertGateway"]
@@ -1988,6 +1988,47 @@ export function apply(ctx, config) {
     relayAgent.start().catch((err) => ctx.logger.warn(`dsh-links relay: ${err?.message ?? err}`))
   }
 
+  // 暂停期间 Agent 按设计不连 Control，所以控制台的吊销收不到任何推送；面板会一直
+  // 声称「仍占用名额」并把自助领取入口藏起来。定期探一次让视图能翻成 revoked。
+  const RELAY_PAUSED_PROBE_INTERVAL_MS = 60_000
+  let relayProbeAt = 0
+  let relayProbeInFlight = false
+  const probePausedRelayRoute = () => {
+    const relay = state.relay
+    if (relayProbeInFlight) return
+    if (!relay?.paused || relay.inactiveReason) return
+    if (!relay.routeId || !relay.routeSecret || !relay.capability || !relay.agentAddress) return
+    if (!relay.hostSeed || !relay.hostPublicKey) return
+    const now = Date.now()
+    if (now - relayProbeAt < RELAY_PAUSED_PROBE_INTERVAL_MS) return
+    relayProbeAt = now
+    relayProbeInFlight = true
+    // 不 await：网络不通时探测能拖到超时，而面板在轮询这个接口，等不起。
+    probeRoute({
+      address: relay.agentAddress,
+      credentials: {
+        keys: hostKeyFromSeed(unb64u(relay.hostSeed), unb64u(relay.hostPublicKey)),
+        routeId: relay.routeId,
+        routeSecret: relay.routeSecret,
+        capability: relay.capability,
+        generation: relay.generation || 1,
+      },
+      insecureTls: Boolean(relay.insecureTls),
+      tlsFingerprint: relay.tlsFingerprint ?? "",
+    }).then((result) => {
+      if (result?.status !== "revoked") return
+      if (state.relay !== relay) return
+      if (applyRelayRouteRevoked(state.relay, relay.routeId)) {
+        saveState(stateFile, state)
+        ctx.logger.info("dsh-links relay: 控制台已吊销该接入，已清除本地凭据（暂停期间探测）")
+      }
+    }).catch((err) => {
+      ctx.logger.warn(`dsh-links relay: 暂停期间状态探测失败：${err?.message ?? err}`)
+    }).finally(() => {
+      relayProbeInFlight = false
+    })
+  }
+
   // ---------- 主 web 服务上的路由（网页界面「手机连接」面板用；回环同源围栏） ----------
   const disposers = [
     web.register({
@@ -2082,6 +2123,7 @@ export function apply(ctx, config) {
       path: "/dsh-link/relay-status",
       handler: (req, res) => {
         if (!requireLoopbackSameOrigin(req, res)) return
+        probePausedRelayRoute()
         json(res, 200, {
           ...relayPluginView({
             agent: relayAgent,
