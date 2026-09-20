@@ -1,0 +1,21 @@
+[Unit]
+Description=DSH Links enroll sidecar (public invite dispenser)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/enroll-sidecar
+ExecStart=/usr/bin/python3 /opt/enroll-sidecar/enroll-sidecar.py
+Restart=on-failure
+RestartSec=3s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/enroll-sidecar
+EnvironmentFile=-/opt/enroll-sidecar/enroll-sidecar.env
+
+[Install]
+WantedBy=multi-user.target

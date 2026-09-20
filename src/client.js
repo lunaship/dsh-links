@@ -81,6 +81,7 @@ const createPanelModule = (require) => {
   }
 
   const OFFICIAL_RELAY_HOST = 'relay.dshlinks.com'
+  const OFFICIAL_ENROLL_API = 'https://enroll.dshlinks.com/api/official-invite'
   const OFFICIAL_RELAY_TLS_SHA256 = '6fbe09cb8809714ec1c9eec1b982212bdc78e06870abd5ed21442bd4e6d3f9ea'
 
   function looksLikeInviteCode(raw) {
@@ -129,31 +130,31 @@ const createPanelModule = (require) => {
 
   const STYLE = `
     .dshlink-root {
-      /* Hallmark · component: settings panel · genre: editorial-warm · theme: custom "Claude"
+      /* Hallmark · component: settings panel · genre: editorial-warm · theme: DeepSeek blue
        *   macrostructure: grouped-settings-document (underline tabs · centered pair hero · hairline-divided lists)
-       *   paper: warm ivory · accent: clay/terracotta · display: serif-touch · spacing: 4pt
+       *   paper: cool mist · accent: DeepSeek blue #4D6BFE · display: grotesk-sans · spacing: 4pt
        * states: default · hover · focus-visible · active · disabled · loading · error · success
        * pre-emit critique: P5 H5 E5 S5 R5 V5 · contrast: pass */
-      --cl-bg: #faf9f5;
+      --cl-bg: #f7f8fc;
       --cl-surface: #ffffff;
-      --cl-inset: #f5f3ec;
-      --cl-ink: #1f1e1d;
-      --cl-muted: #6b6a63;
-      --cl-faint: #9a978c;
-      --cl-line: #e7e3d8;
-      --cl-line-strong: #d8d3c4;
-      --cl-accent: #c96442;
-      --cl-accent-deep: #b0522f;
-      --cl-accent-bright: #d97757;
-      --cl-accent-soft: #f5e7df;
-      --cl-accent-line: #e6c9b9;
+      --cl-inset: #eef1f9;
+      --cl-ink: #1a1d29;
+      --cl-muted: #5b6172;
+      --cl-faint: #8b91a5;
+      --cl-line: #e3e6f0;
+      --cl-line-strong: #c9cede;
+      --cl-accent: #4D6BFE;
+      --cl-accent-deep: #3a56d4;
+      --cl-accent-bright: #6b86ff;
+      --cl-accent-soft: #e8edff;
+      --cl-accent-line: #b9c4fa;
       --cl-accent-text: var(--cl-accent-deep);
       --cl-ok: #4f7a52; --cl-ok-soft: #e8efe4; --cl-ok-line: #cfe0cb;
       --cl-danger: #b0432f; --cl-danger-soft: #f6e5df; --cl-danger-line: #e8cabf;
       --cl-warn: #a5751f; --cl-warn-soft: #f5ecd6; --cl-warn-line: #e6d3a8;
       --cl-radius-s: 9px; --cl-radius-m: 13px; --cl-radius-l: 16px;
       --cl-ease: cubic-bezier(0.22, 1, 0.36, 1);
-      --cl-serif: "Tiempos Headline", "Copernicus", "Songti SC", "STSong", "Georgia", serif;
+      --cl-serif: var(--cl-sans);
       --cl-sans: ui-sans-serif, -apple-system, "Segoe UI", "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
       font-family: var(--cl-sans);
       color: var(--cl-ink);
@@ -161,19 +162,19 @@ const createPanelModule = (require) => {
     }
     @media (prefers-color-scheme: dark) {
       .dshlink-root {
-        --cl-bg: #262624;
-        --cl-surface: #302f2d;
-        --cl-inset: #211f1e;
-        --cl-ink: #f4f2ea;
-        --cl-muted: #b7b3a7;
-        --cl-faint: #8a877c;
-        --cl-line: #403e39;
-        --cl-line-strong: #524f48;
-        --cl-accent: #dd8461;
-        --cl-accent-deep: #c96b48;
-        --cl-accent-bright: #e69675;
-        --cl-accent-soft: rgba(217, 119, 87, 0.15);
-        --cl-accent-line: rgba(217, 119, 87, 0.32);
+        --cl-bg: #12141d;
+        --cl-surface: #1a1d29;
+        --cl-inset: #0e1017;
+        --cl-ink: #eef0f8;
+        --cl-muted: #a2a8bd;
+        --cl-faint: #6e7488;
+        --cl-line: #262b3d;
+        --cl-line-strong: #353b52;
+        --cl-accent: #6b86ff;
+        --cl-accent-deep: #4D6BFE;
+        --cl-accent-bright: #93a5ff;
+        --cl-accent-soft: rgba(77, 107, 254, 0.16);
+        --cl-accent-line: rgba(107, 134, 255, 0.4);
         --cl-accent-text: var(--cl-accent-bright);
         --cl-ok: #86a986; --cl-ok-soft: rgba(134, 169, 134, 0.15); --cl-ok-line: rgba(134, 169, 134, 0.3);
         --cl-danger: #d98a76; --cl-danger-soft: rgba(217, 138, 118, 0.14); --cl-danger-line: rgba(217, 138, 118, 0.3);
@@ -318,6 +319,18 @@ const createPanelModule = (require) => {
     .dshlink-field:hover { border-color: var(--cl-accent-line); }
     .dshlink-field:focus { outline: none; border-color: var(--cl-accent); box-shadow: 0 0 0 3px var(--cl-accent-soft); }
     .dshlink-relay-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .dshlink-steps { display: flex; flex-direction: column; gap: 0; border: 1px solid var(--cl-line); border-radius: var(--cl-radius-l); background: var(--cl-surface); overflow: hidden; }
+    .dshlink-step { display: flex; gap: 12px; padding: 14px 16px; }
+    .dshlink-step + .dshlink-step { border-top: 1px solid var(--cl-line); }
+    .dshlink-step-num { flex: none; width: 22px; height: 22px; border-radius: 50%; background: var(--cl-accent-soft); color: var(--cl-accent-text); font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; margin-top: 1px; }
+    .dshlink-step-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+    .dshlink-step-title { font-size: 13px; font-weight: 700; color: var(--cl-ink); margin: 0; }
+    .dshlink-step-desc { font-size: 12px; line-height: 1.55; color: var(--cl-muted); margin: 0; }
+    .dshlink-fetch { align-self: flex-start; appearance: none; cursor: pointer; border: 1px solid var(--cl-accent-line); border-radius: 8px; padding: 6px 12px; background: var(--cl-accent-soft); color: var(--cl-accent-text); font: inherit; font-size: 12.5px; font-weight: 600; transition: background 0.15s ease, border-color 0.15s ease; }
+    .dshlink-fetch:hover:not(:disabled) { background: var(--cl-accent-line); }
+    .dshlink-fetch:active:not(:disabled) { transform: translateY(1px); }
+    .dshlink-fetch:disabled { opacity: 0.55; cursor: not-allowed; }
+    .dshlink-fetch:focus-visible { outline: 2px solid var(--cl-accent); outline-offset: 2px; }
     .dshlink-relay-control {
       appearance: none; cursor: pointer; border: 0; background: transparent;
       color: var(--cl-accent-text); font: inherit; font-size: 12.5px; font-weight: 600;
@@ -392,7 +405,7 @@ const createPanelModule = (require) => {
           className: 'dshlink-brand-copy',
           children: [
             jsx('div', { className: 'dshlink-brand-title', children: '手机连接' }),
-            jsx('div', { className: 'dshlink-brand-sub', children: '扫码把手机接入这台电脑' }),
+            jsx('div', { className: 'dshlink-brand-sub', children: 'DeepSeek 官方手机入口' }),
           ],
         }),
         status
@@ -683,6 +696,40 @@ const createPanelModule = (require) => {
     const [busy, setBusy] = React.useState(false)
     const [message, setMessage] = React.useState('')
     const [replace, setReplace] = React.useState(false)
+    const [fetching, setFetching] = React.useState(false)
+    const [fetchedAt, setFetchedAt] = React.useState('')
+    const fetchInvite = async () => {
+      if (fetching || busy) return
+      setFetching(true)
+      setMessage('')
+      try {
+        const res = await fetch(OFFICIAL_ENROLL_API, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: '{}',
+        })
+        const data = await res.json().catch(() => ({}))
+        if (res.status === 429) {
+          const wait = data?.retryAfter ? `（\${Math.ceil(data.retryAfter / 3600)} 小时后再试）` : ''
+          throw new Error(data?.error === 'already_issued' ? `今天已领取过接入码，请用已有的码\${wait}` : '领取太频繁，请稍后再试')
+        }
+        if (res.status === 503) throw new Error('接入名额已满，请稍后再试')
+        if (!res.ok || !data?.enroll) throw new Error(data?.error ? String(data.error) : `领取失败（HTTP \${res.status}）`)
+        const text = String(data.enroll)
+        setPaste(text)
+        setMessage('')
+        try {
+          const parsed = parseEnrollText(text)
+          void parsed
+          setFetchedAt('已填入插件接入码。请在 24 小时内点「接入」；接入成功后长期有效，不用再领。')
+        } catch { setFetchedAt('已填入插件接入码。请在 24 小时内点「接入」；接入成功后长期有效。') }
+      } catch (err) {
+        setFetchedAt('')
+        setMessage(String(err?.message ?? err))
+      } finally {
+        setFetching(false)
+      }
+    }
     const online = relay?.status === 'online'
     const paused = relay?.status === 'paused'
     const revoked = relay?.status === 'revoked'
@@ -807,13 +854,52 @@ const createPanelModule = (require) => {
             }),
           ],
         }),
+        (enrolled || revoked) ? null : jsxs('div', {
+          className: 'dshlink-steps',
+          children: [
+            jsxs('div', {
+              className: 'dshlink-step',
+              children: [
+                jsx('span', { className: 'dshlink-step-num', children: '1' }),
+                jsxs('div', {
+                  className: 'dshlink-step-body',
+                  children: [
+                    jsx('p', { className: 'dshlink-step-title', children: '获取接入码' }),
+                    jsx('p', { className: 'dshlink-step-desc', children: '码 24 小时内有效，每天限领 1 次；接入成功后长期有效，管理员可在控制台随时吊销。' }),
+                    jsx('button', {
+                      type: 'button',
+                      className: 'dshlink-fetch',
+                      disabled: fetching || busy,
+                      onClick: fetchInvite,
+                      children: fetching ? '获取中…' : '获取dshlinks插件接入码',
+                    }),
+                    fetchedAt ? jsx('p', { className: 'dshlink-relay-status is-ok', children: fetchedAt }) : null,
+                  ],
+                }),
+              ],
+            }),
+            jsxs('div', {
+              className: 'dshlink-step',
+              children: [
+                jsx('span', { className: 'dshlink-step-num', children: '2' }),
+                jsxs('div', {
+                  className: 'dshlink-step-body',
+                  children: [
+                    jsx('p', { className: 'dshlink-step-title', children: '粘贴并接入' }),
+                    jsx('p', { className: 'dshlink-step-desc', children: '接入码来自 Relay 控制台自动签发。手机扫的是插件配对码，不是登录账号。' }),
+                  ],
+                }),
+              ],
+            }),
+          ],
+        }),
         jsx('p', {
           className: 'dshlink-relay-status' + (revoked ? ' is-error' : ''),
           children: revoked
-            ? (relay?.error || '接入已被控制台吊销。请到控制台签发新接入码后再接入。')
+            ? (relay?.error || '接入已被控制台吊销。请重新获取接入码后再接入。')
             : enrolled
               ? '同一电脑贴新码会换新路由，不占额外名额。换到别的 Relay 会先确认；插件会尝试从原控制台移除这台电脑。'
-              : '接入码来自 Relay 控制台。手机扫的是插件配对码，不是登录账号。',
+              : '已有接入码可直接粘贴（接入码来自 Relay 控制台自动签发，24 小时内有效；接入成功后长期有效）。',
         }),
         jsxs('div', {
           className: 'dshlink-relay-actions',
