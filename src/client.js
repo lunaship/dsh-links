@@ -1009,10 +1009,12 @@ const createPanelModule = (require) => {
       className: 'dshlink-connection',
       children: [
         jsx(ConnectionTabs, { active, onChange: setActive }),
-        jsx(ExposureBanner, { exposure: info.exposure }),
         active === 'lan'
           ? jsx(LanBody, { info, devices, approve, revoke, revokeAll, setRequireConfirm })
           : jsx(RemoteBody, { info, devices, approve, revoke, revokeAll, relay, onEnroll, onDisconnect, onReconnect, onRelease, onAckReplaced, phoneHint }),
+        // 网卡告警压在最下面：它是常驻提示（这台机器一直有 Tailscale 地址），
+        // 放顶部会把配对卡片整个往下顶，挡住这一屏真正要用的东西。
+        jsx(ExposureBanner, { exposure: info.exposure }),
       ],
     })
   }
