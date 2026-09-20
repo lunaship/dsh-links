@@ -1,5 +1,14 @@
 # Changelog
 
+## dsh-links 0.1.0-beta.17 — 2026-09-20
+
+- 安全加固（手机 API）：权限预设与 `settings.update` 的 `permission.defaultPreset` 拒绝原型键；新增宿主开关 `allowMobileDangerFullAccess`（默认关闭），手机端 `danger-full-access` 一律 403 拒绝而非静默降级；权限变更与文件下载要求该设备正持有对应会话的活跃 SSE 订阅。
+- `POST /mobile/sessions` 的 `cwd` / `workspaceId` 必须落在 `workspace.list` 已注册工作区内，列表不可用时 fail-closed。
+- 文件下载响应补 `X-Content-Type-Options: nosniff`，`html`/`svg` 改为 `Content-Disposition: attachment`；插件 JSON 响应补 nosniff / frame-options / referrer-policy；`tls.json` 读取时 `chmod 0600`。
+- 工作区创建与文件接口不再回显 OS 原始报错；设备吊销与权限预设变更记录审计日志（短 id，不含 token）。合同与威胁模型见 `SECURITY.md`。
+- Relay 控制面：控制 API 不再回显内部错误（服务端日志经 `logutil` 转义）；IPC 握手绑定服务端一次性 challenge（HMAC(token, challenge)）防重放，token 不再经过 socket；`init` 不再把管理员密码打印到 stdout，只写入 `admin.password`（0600）。
+- Android App 配套版本 `0.5.0-beta.19`（Mermaid 11.17.2 + WebView 加固、分享仅收 `content://`、release 日志脱敏并 R8 剥离、`FLAG_SECURE`、Gradle wrapper SHA-256 校验）。
+
 ## dsh-links 0.1.0-beta.16 — 2026-09-14
 
 - 冷启动配对就绪门控：`pair-info` / `qr.png` 在 TLS 加载完成且 HTTPS 端口真正 listen 之前返回可识别的 503（`proxy_not_ready`，附 `phase` 与 `Retry-After`），不再返回可用于扫码但 `certFingerprint` 为空的配对信息；TLS 初始化失败或端口被占用保持 failed 态，不假就绪、无未处理 rejection。Web 面板（`src/client.js` 同步重建）按 `phase` 区分「启动中（有限重试）」与「启动失败」。
