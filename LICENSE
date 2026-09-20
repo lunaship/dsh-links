@@ -24,5 +24,5 @@ SOFTWARE.
 Related projects (not part of this repository)
 -------------------------------------------------------------------------------
 
-- `dsh-links-app` — Android client (private; signed APK only)
+- `deeplinks` — Android client (private; signed APK only)
 - Relay source lives in `relay/` of this repository

@@ -2,7 +2,7 @@
 
 This is the single compatibility reference for the public `dsh-links`
 repository (plugin plus Relay under `relay/`) and the private
-`dsh-links-app`. Update this file when a source baseline, tag, release,
+`deeplinks`. Update this file when a source baseline, tag, release,
 or verified combination changes.
 
 ## Current source baseline
@@ -15,7 +15,7 @@ published.
 |---|---|---|---|
 | DSH | `0.1.5-rc.2` (host package updated 2026-09-20; published `lib/*.js` are byte-identical to `0.1.5-rc.1` and the resolved sub-packages were already `rc.2`, so this is a version-string bump with no code change) | Upstream dependency; npm dist-tag `latest` as of 2026-09-20. 2026-09-20: `dsh-plugin-upgrade-016` five-seam scanner (E1–E5, `0.1.5-rc.2 → 0.1.6-alpha.2` corridor) over this repo: 56 files, 0 hits — necessary but not sufficient; `0.1.6-alpha` remains an unverified upstream channel. Host smoke below; full phone end-to-end remains in the closed-beta scope |
 | Plugin `dsh-links` | package `0.1.0-beta.16`; GitHub tag `v0.1.0-beta.16`; working tree follows DSH `0.1.5-rc.1` (V3 session log path; omit null session fields; produced files + workspace file GET; terminal approvals/questions session-bound; mobile archive-set contract; pairing readiness gate 503 `proxy_not_ready` before HTTPS listen; no-callId approval waterfall fallback binding; mobile `session_busy` 409 mapping; `@deepseek-ai/schemastery` 3.18.2) | npm dist-tag `beta` is `0.1.0-beta.16` (`latest` remains `0.1.0-beta.1`) | Unit tests 167 green locally 2026-09-14; e2e arch smoke 35/35 with readiness gating 2026-09-14; 2026-09-13/14 real-device LAN e2e with the fixed plugin (below) |
-| Android `dsh-links-app` | `versionName 0.5.0-beta.18`; GitHub tag `v0.5.0-beta.18`; working tree adds SSE cursor reset on resync + running-but-silent stream watchdog, image-attach openStream fallback chain with diagnostics, device-list reload after manual pairing, per-turn thinking-timer reset, semantic haptics + spring press scale, 264dp sidebar, denser device card | Official signed APK on the private App GitHub Release `v0.5.0-beta.18`; SHA-256 recorded on the release | Unit tests green 2026-09-14; phone e2e with this build: pairing (TOFU fingerprint match), session list/history, send + model reply, generation-time Wi-Fi outage recovery, background/force-stop restore (below; approval in-window decision and image attach verification pending device) |
+| Android `deeplinks` | `versionName 0.5.0-beta.18`; GitHub tag `v0.5.0-beta.18`; working tree adds SSE cursor reset on resync + running-but-silent stream watchdog, image-attach openStream fallback chain with diagnostics, device-list reload after manual pairing, per-turn thinking-timer reset, semantic haptics + spring press scale, 264dp sidebar, denser device card | Official signed APK on the private App GitHub Release `v0.5.0-beta.18`; SHA-256 recorded on the release | Unit tests green 2026-09-14; phone e2e with this build: pairing (TOFU fingerprint match), session list/history, send + model reply, generation-time Wi-Fi outage recovery, background/force-stop restore (below; approval in-window decision and image attach verification pending device) |
 | Relay (`relay/` in this repo) | Same source baseline as the plugin (`v0.1.0-beta.16`) | No separate Relay package or public deployment is asserted here | DLR/1 remains invite-only test scope; source is public in this repository |
 
 ## Verified combination and scope

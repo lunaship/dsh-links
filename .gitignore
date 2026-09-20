@@ -15,4 +15,6 @@ state.json
 *.key
 secrets*
 .env
+.env.*
+!.env.example
 .local/

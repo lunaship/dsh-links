@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url"
 const root = resolve(process.argv[2] ?? fileURLToPath(new URL("../", import.meta.url)))
 const repos = {
   plugin: root,
-  app: resolve(root, "../dsh-links-app"),
+  app: resolve(root, "../deeplinks"),
   relay: resolve(root, "relay"),
 }
 
