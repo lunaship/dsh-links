@@ -499,10 +499,34 @@ function touchDevice(state, device, file) {
   }
 }
 
+/**
+ * 二维码只编码客户端真正解析的字段。
+ *
+ * 面板用的 `exposure`（网卡告警文案）和 `infos`（地址标签）没有任何客户端读，
+ * 但它们把载荷从 ~300 字符推到 800+，模块数从 69 涨到 113 —— 码密到手机扫不出来
+ * （App 解成乱码后就报「不是 dsh 连接二维码」）。面板自己走 /dsh-link/pair-info
+ * 拿完整对象，不受影响。
+ */
+export function qrPayload(info) {
+  const out = {
+    v: info.v,
+    type: info.type,
+    name: info.name,
+    pairingCode: info.pairingCode,
+    urls: info.urls,
+    certFingerprint: info.certFingerprint,
+  }
+  if (info.relay) out.relay = info.relay
+  if (info.requireConfirm !== undefined) out.requireConfirm = info.requireConfirm
+  return out
+}
+
 async function qrPng(res, config, state, certFingerprint, via = "lan") {
   try {
-    const payload = pairInfo(config, state, certFingerprint, via)
-    const buf = await QRCode.toBuffer(JSON.stringify(payload), { type: "png", margin: 2, width: 320 })
+    // 720px：面板内联底托约 142 CSS px（Retina 284 物理 px），点击放大后约 360 CSS px
+    // （Retina 720 物理 px）—— 源码分辨率不低于两者，才不会被浏览器补糊。
+    const payload = qrPayload(pairInfo(config, state, certFingerprint, via))
+    const buf = await QRCode.toBuffer(JSON.stringify(payload), { type: "png", margin: 2, width: 720 })
     res.writeHead(200, { "content-type": "image/png", "cache-control": "no-store" })
     res.end(buf)
   } catch (err) {

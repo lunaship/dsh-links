@@ -243,8 +243,11 @@ const createPanelModule = (require) => {
 
     /* ---- pairing (horizontal) ---- */
     .dshlink-pair { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 20px; align-items: center; padding: 18px; border-radius: var(--cl-radius-l); background: var(--cl-surface); border: 1px solid var(--cl-line); }
-    .dshlink-qr-plate { width: 120px; height: 120px; border-radius: var(--cl-radius-m); background: #fff; padding: 9px; border: 1px solid var(--cl-line); }
+    .dshlink-qr-plate { appearance: none; cursor: zoom-in; width: 160px; height: 160px; border-radius: var(--cl-radius-m); background: #fff; padding: 9px; border: 1px solid var(--cl-line); }
     .dshlink-qr { display: block; width: 100%; height: 100%; border-radius: 4px; }
+    .dshlink-qr-zoom { position: fixed; inset: 0; z-index: 9999; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; background: rgba(12, 14, 20, 0.55); cursor: zoom-out; }
+    .dshlink-qr-zoom img { width: min(72vmin, 360px); height: auto; padding: 14px; border-radius: var(--cl-radius-l); background: #fff; box-shadow: 0 18px 48px rgba(0, 0, 0, 0.3); }
+    .dshlink-qr-zoom-hint { color: #fff; font-size: 12.5px; font-weight: 600; opacity: 0.9; }
     .dshlink-pair-meta { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
     .dshlink-pair-label { font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--cl-faint); }
     .dshlink-pair-code-row { display: flex; align-items: baseline; gap: 12px; min-width: 0; flex-wrap: wrap; }
@@ -586,6 +589,7 @@ const createPanelModule = (require) => {
 
   function PairCard({ via, code, label, hint, stamp }) {
     const [copied, setCopied] = React.useState(false)
+    const [zoom, setZoom] = React.useState(false)
     const copyTimer = React.useRef(0)
     React.useEffect(() => () => clearTimeout(copyTimer.current), [])
     const copyCode = async () => {
@@ -603,8 +607,12 @@ const createPanelModule = (require) => {
     return jsxs('div', {
       className: 'dshlink-pair',
       children: [
-        jsx('div', {
+        jsx('button', {
+          type: 'button',
           className: 'dshlink-qr-plate',
+          onClick: () => setZoom(true),
+          title: '点击放大二维码',
+          'aria-label': `放大${label}二维码`,
           children: jsx('img', {
             className: 'dshlink-qr',
             key: qrKey,
@@ -612,6 +620,18 @@ const createPanelModule = (require) => {
             alt: label,
           }),
         }),
+        zoom
+          ? jsxs('div', {
+              className: 'dshlink-qr-zoom',
+              role: 'button',
+              tabIndex: -1,
+              onClick: () => setZoom(false),
+              children: [
+                jsx('img', { src: qrSrc, alt: label }),
+                jsx('div', { className: 'dshlink-qr-zoom-hint', children: '轻触任意位置关闭' }),
+              ],
+            })
+          : null,
         jsxs('div', {
           className: 'dshlink-pair-meta',
           children: [
