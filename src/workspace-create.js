@@ -93,10 +93,10 @@ export async function ensureMobileWorkspaceDirectory(plan) {
       try {
         const existing = await stat(plan.path)
         if (existing.isDirectory()) return { directoryCreated: false }
-      } catch (statError) {
+      } catch {
         throw new MobileWorkspaceCreateError(
           "workspace-directory-check-failed",
-          `无法检查同名目录：${statError?.message ?? statError}`,
+          "无法检查同名目录",
           400,
           { path: plan.path },
         )
@@ -110,7 +110,7 @@ export async function ensureMobileWorkspaceDirectory(plan) {
     }
     throw new MobileWorkspaceCreateError(
       "workspace-directory-create-failed",
-      `无法创建工作区目录：${error?.message ?? error}`,
+      "无法创建工作区目录",
       400,
       { path: plan.path },
     )

@@ -8,7 +8,10 @@ If you use an intranet-tunnelling product yourself, treat it as an **experimenta
 
 ## Threat model (short)
 
-- Pairing yields a long-lived device token (`x-dsh-link-token`). Anyone with an **active** token can call the mobile API on that host. Optional host confirmation keeps a newly paired token inert until you approve it on the「手机连接」panel. Active pairing codes live only in process memory; `state.json` must not contain a recoverable pairing code.
+- Pairing yields a long-lived device token (`x-dsh-link-token`). **Any active paired device is a privileged console**: anyone holding that token can prompt/cancel sessions, switch models, read files, and (subject to the session-scoped rules below) change a session's permission level on that host. Optional host confirmation keeps a newly paired token inert until you approve it on the「手机连接」panel. Active pairing codes live only in process memory; `state.json` must not contain a recoverable pairing code.
+- **Session-scoped actions are limited to the device currently subscribed.** Permission-preset changes and session file downloads are refused with `403` unless the requesting device holds an active SSE subscription (`GET .../sessions/:id/stream`) for that exact session — i.e. it is the device currently viewing it. A token alone is not enough to retarget another session.
+- **Mobile `danger-full-access` is refused by default.** The phone may switch a session to `read-only` or `workspace-write`; `danger-full-access` returns `403` unless the host explicitly sets `allowMobileDangerFullAccess: true` in the plugin config. The value is never silently downgraded: the request fails and the host config key is named in the error. The same gate validates `settings.update` for namespace `permission`, key `defaultPreset`.
+- **Session creation is confined to registered workspaces.** A client-supplied `cwd`/`workspaceId` on `POST /mobile/sessions` must resolve inside a currently-registered workspace root; otherwise the request is rejected (`4xx`), and if the workspace list is unavailable or unparseable the plugin fails closed.
 - Port `18640` is an HTTPS reverse proxy with self-signed TLS. On LAN, the app **must pin the certificate fingerprint from the QR / pair-info payload before sending the pairing code**. A first connection that submits the code over an unpinned TLS session can be MITM'd on the same LAN.
 - Private-network requests fail closed if the certificate fingerprint is missing or does not match. After a successful pair, the app should persist that pin (Keystore / prefs) for later requests.
 - The loopback/same-origin fence on the desktop panel does not stop another process running as the same user from calling `127.0.0.1`. If the host is compromised, this plugin cannot save you; run dsh as a least-privilege user and keep `18640` off untrusted networks.
@@ -22,6 +25,8 @@ If you use an intranet-tunnelling product yourself, treat it as an **experimenta
 - Keep `18640` off the public Internet. The panel shows the listen address and reachable networks — treat a red warning as “this is not a trusted LAN”.
 - Prefer short-lived pairing codes; do not paste tokens into chat logs or screenshots.
 - After uninstalling the app, still revoke the device on the host.
+- Leave `allowMobileDangerFullAccess` off unless you specifically need mobile「完全访问」and accept that the paired phone can then run with full host access.
+- Watch the host log for the audit lines `dsh-links: device revoke device=<8>`, `dsh-links: device revoke-all removed=<n>`, and `dsh-links: permission preset -> <preset> session=<8> device=<8>`; they record revocations and permission-preset changes (short ids only, never tokens).
 
 ## Do not
 
@@ -31,6 +36,8 @@ If you use an intranet-tunnelling product yourself, treat it as an **experimenta
 - Paste invite codes into README, issues, screenshots, or pull requests.
 - Screenshot or share the **cloud pairing QR**: it embeds the Relay route credential (`routeSecret`) and is as sensitive as an invite code. If it leaks, disconnect Relay on the「手机连接」panel to invalidate the credential.
 - Rely on Host/Origin rewriting as authentication — auth is the device token.
+- Expect a mobile permission change or file download to succeed from a device that is not currently viewing that session: both require an active SSE subscription for the session, and will fail with `403` otherwise.
+- Assume a valid token grants mobile `danger-full-access`: it is refused unless the host enables `allowMobileDangerFullAccess`.
 
 ## Android pairing (client checklist)
 

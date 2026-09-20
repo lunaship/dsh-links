@@ -8,9 +8,9 @@
  *      开启「配对需本机确认」后，token 先发、API 要等面板点批准才放行。
  */
 import { createServer as createHttpsServer } from "node:https"
-import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs"
+import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs"
 import { readFile as readFileAsync } from "node:fs/promises"
-import { dirname, join } from "node:path"
+import { dirname, isAbsolute, join, resolve, sep } from "node:path"
 import { homedir, hostname, networkInterfaces } from "node:os"
 import { randomBytes } from "node:crypto"
 import { zstdDecompressSync } from "node:zlib"
@@ -77,7 +77,18 @@ export const Config = z.object({
   eventPollIntervalMs: z.natural().min(100).default(1000),
   /** 重连补发最大历史条数（session.history maxMessages，按消息边界计数） */
   reconnectHistoryLimit: z.natural().default(50),
+  /**
+   * 是否允许手机把会话权限切换为 danger-full-access（手机端「完全访问」）。
+   * 默认关闭：手机只能选 read-only / workspace-write；danger 请求被拒绝而不是降级。
+   * 只在宿主配置显式开启时才放行。
+   */
+  allowMobileDangerFullAccess: z.boolean().default(false),
 })
+
+/** 手机 danger-full-access 是否被宿主显式放行（默认 false：拒绝而不是静默降级）。 */
+function mobileDangerFullAccessAllowed(config) {
+  return config?.allowMobileDangerFullAccess === true
+}
 
 /** App 实际会写的 settings.update 键路径（反查 AppSettingsStore / SettingsActivity）。未知 ns/键一律拒绝。 */
 const SETTINGS_WRITE_ALLOWLIST = {
@@ -420,7 +431,10 @@ function requireJsonWrite(req, res) {
   return true
 }
 
-function filterSettingsPatch(ns, patch) {
+/** 手机端 permission.defaultPreset 的安全取值；danger 需宿主显式开启。 */
+const SAFE_PERMISSION_PRESETS = new Set(["read-only", "workspace-write"])
+
+function filterSettingsPatch(ns, patch, config) {
   const allowed = Object.prototype.hasOwnProperty.call(SETTINGS_WRITE_ALLOWLIST, ns)
     ? SETTINGS_WRITE_ALLOWLIST[ns]
     : undefined
@@ -429,7 +443,51 @@ function filterSettingsPatch(ns, patch) {
   if (keys.length === 0) return { error: "patch 为空" }
   const unknown = keys.filter((k) => !allowed.includes(k))
   if (unknown.length > 0) return { error: "包含不允许写入的键" }
+  // 值校验：permission.defaultPreset 只接受安全预设；danger-full-access 需宿主开启配置。
+  if (ns === "permission" && Object.prototype.hasOwnProperty.call(patch, "defaultPreset")) {
+    const value = patch.defaultPreset
+    if (typeof value !== "string" || !SAFE_PERMISSION_PRESETS.has(value)) {
+      if (value === "danger-full-access" && !mobileDangerFullAccessAllowed(config)) {
+        return { error: "danger-full-access 已被宿主禁用；请先在宿主开启 allowMobileDangerFullAccess" }
+      }
+      return { error: "defaultPreset 取值不允许" }
+    }
+  }
   return { ok: true }
+}
+
+/** 归一化客户端路径用于工作区包含性校验：优先 realpath，失败时退回 resolve。 */
+function canonicalClientPath(p) {
+  const resolved = resolve(p)
+  try { return realpathSync(resolved) } catch { return resolved }
+}
+
+/** target 是否等于 root 或位于 root 之内（两者均已归一化）。 */
+function isPathWithinRoot(target, root) {
+  if (target === root) return true
+  const prefix = root.endsWith(sep) ? root : root + sep
+  return target.startsWith(prefix)
+}
+
+/**
+ * 校验手机端 session.create 的 cwd / workspaceId 必须落在当前已注册工作区内。
+ * 两者都未提供时保持原语义：交给 DSH 决定默认工作区。
+ * 返回值：{ ok:true } / { cwd } / { workspaceId } / { error }。
+ */
+function validateSessionCreateWorkspace({ cwd, workspaceId, workspaces }) {
+  const roots = (Array.isArray(workspaces) ? workspaces : [])
+    .map((item) => ({ workspaceId: String(item?.workspaceId ?? "").trim(), path: optionalString(item?.path) }))
+    .filter((w) => w.path && isAbsolute(w.path))
+  if (workspaceId) {
+    const hit = roots.find((w) => w.workspaceId && w.workspaceId === workspaceId)
+    if (!hit) return { error: "workspaceId 未注册或不可用" }
+    return { workspaceId }
+  }
+  if (!cwd) return { ok: true }
+  const target = canonicalClientPath(cwd)
+  const inside = roots.some((w) => isPathWithinRoot(target, canonicalClientPath(w.path)))
+  if (!inside) return { error: "cwd 不在已注册工作区内" }
+  return { cwd: target }
 }
 
 class HttpBodyError extends Error {
@@ -1299,7 +1357,7 @@ function filterArchivedMobileSearchItems(items, archivedSessionIds) {
     .filter((item) => !archived.has(String(item?.sessionId ?? "").trim()))
 }
 
-async function handleMobileApi(req, res, targetPort, state, stateFile, device, pathname, rt) {
+async function handleMobileApi(req, res, targetPort, state, stateFile, device, pathname, rt, config, logger) {
   try {
     if (req.method !== "GET" && req.method !== "HEAD") {
       if (!requireJsonWrite(req, res)) return
@@ -1357,9 +1415,28 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
     if (req.method === "POST" && pathname === "/dsh-link/mobile/sessions") {
       const body = await readAuthorizedJson(req, res, state, device)
   if (!body) return
+      const requestedWorkspaceId = typeof body.workspaceId === "string" && body.workspaceId.trim()
+        ? body.workspaceId.trim()
+        : ""
+      const requestedCwd = typeof body.cwd === "string" && body.cwd.trim() ? body.cwd.trim() : ""
       const payload = {}
-      if (typeof body.workspaceId === "string" && body.workspaceId.trim()) payload.workspaceId = body.workspaceId.trim()
-      else if (typeof body.cwd === "string" && body.cwd.trim()) payload.cwd = body.cwd.trim()
+      if (requestedWorkspaceId || requestedCwd) {
+        // cwd/workspaceId 必须落在当前已注册工作区内（不接受任意路径）；列表缺失/不可用时拒绝。
+        let list
+        try {
+          list = await callLocalRpc(targetPort, "workspace.list", {})
+        } catch (err) {
+          return json(res, 503, { error: "无法获取已注册工作区列表，已拒绝创建会话" })
+        }
+        const items = list?.items
+        if (!Array.isArray(items)) {
+          return json(res, 503, { error: "无法解析已注册工作区列表，已拒绝创建会话" })
+        }
+        const checked = validateSessionCreateWorkspace({ cwd: requestedCwd, workspaceId: requestedWorkspaceId, workspaces: items })
+        if (checked.error) return json(res, 400, { error: checked.error })
+        if (requestedWorkspaceId) payload.workspaceId = requestedWorkspaceId
+        else payload.cwd = checked.cwd
+      }
       if (typeof body.agentPreset === "string" && body.agentPreset.trim()) payload.agentPreset = body.agentPreset.trim()
       const value = await runMobileDeviceMutation(rt, state, device, () =>
         callLocalRpc(targetPort, "session.create", payload))
@@ -1501,7 +1578,7 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
       if (typeof patch !== "object" || patch === null || Array.isArray(patch)) {
         return json(res, 400, { error: "patch 必须是对象" })
       }
-      const filtered = filterSettingsPatch(ns, patch)
+      const filtered = filterSettingsPatch(ns, patch, config)
       if (filtered.error) return json(res, 403, { error: filtered.error })
       const payload = { ns, patch }
       if (Number.isInteger(body.expectedRevision)) payload.expectedRevision = body.expectedRevision
@@ -1550,6 +1627,9 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
         name: body.name,
         deviceId: body.deviceId,
       }, req)
+      if (result.status === 200 && logger) {
+        logger.info(`dsh-links: device revoke device=${String(result.body?.deviceId ?? body.deviceId ?? "").slice(0, 8)}`)
+      }
       return json(res, result.status, result.body)
     }
 
@@ -1702,6 +1782,10 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
     const fileMatch = pathname.match(/^\/dsh-link\/mobile\/sessions\/([^/]+)\/file$/)
     if (req.method === "GET" && fileMatch) {
       const sessionId = decodeURIComponent(fileMatch[1])
+      // 只有正在查看该会话（持有活跃 SSE 订阅）的设备才能下载其文件。
+      if (!isDeviceSubscribedToSession(rt, sessionId, device.deviceId)) {
+        return json(res, 403, { error: "仅正在查看该会话的设备可下载文件" })
+      }
       const requested = String(new URL(req.url ?? "/", "http://x").searchParams.get("path") ?? "").trim()
       try {
         const list = await callLocalRpc(targetPort, "session.list", {})
@@ -1729,7 +1813,10 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
         res.end(body)
       } catch (err) {
         const status = Number.isInteger(err?.status) ? err.status : 500
-        return json(res, status, { error: err?.message || "读取文件失败" })
+        // Only the endpoint's own validation messages (4xx) are safe to echo; an
+        // unexpected 5xx (e.g. an fs error) must not leak its internal text.
+        const message = status >= 500 ? "读取文件失败" : (err?.message || "读取文件失败")
+        return json(res, status, { error: message })
       }
       return
     }
@@ -2096,6 +2183,9 @@ export function apply(ctx, config) {
         const targetId = String(body.deviceId ?? "").trim()
         if (!targetName && !targetId) return json(res, 400, { error: "缺少设备名或 deviceId" })
         const result = await revokeDeviceEntry(state, stateFile, rt, { name: targetName, deviceId: targetId })
+        if (result.status === 200) {
+          ctx.logger.info(`dsh-links: device revoke device=${String(result.body?.deviceId ?? targetId).slice(0, 8)}`)
+        }
         json(res, result.status, result.body)
       },
     }),
@@ -2108,6 +2198,9 @@ export function apply(ctx, config) {
         const body = await readJson(req, res)
         if (!body) return
         const result = await revokeAllDevices(state, stateFile, rt)
+        if (result.status === 200) {
+          ctx.logger.info(`dsh-links: device revoke-all removed=${result.body?.removed ?? 0}`)
+        }
         json(res, result.status, result.body)
       },
     }),
@@ -2505,6 +2598,10 @@ export function apply(ctx, config) {
           const sessionId = decodeURIComponent(permissionMatch[1])
           const body = await readAuthorizedJson(req, res, state, device)
   if (!body) return
+          // 与审批请求同规则：只有正在查看该会话（活跃 SSE 订阅）的设备才能改权限。
+          if (!isDeviceSubscribedToSession(rt, sessionId, device.deviceId)) {
+            return json(res, 403, { error: "仅正在查看该会话的设备可修改权限" })
+          }
           const preset = String(body.preset ?? "").trim()
           const PRESET_SPECS = {
             "read-only": { sandbox: "read-only", approval: "ask" },
@@ -2513,6 +2610,10 @@ export function apply(ctx, config) {
           }
           const spec = Object.prototype.hasOwnProperty.call(PRESET_SPECS, preset) ? PRESET_SPECS[preset] : undefined
           if (!spec) return json(res, 400, { error: "preset 无效" })
+          // 手机 danger-full-access 默认关闭：拒绝而不是静默降级。
+          if (preset === "danger-full-access" && !mobileDangerFullAccessAllowed(config)) {
+            return json(res, 403, { error: "danger-full-access 已被宿主禁用；请先在宿主开启 allowMobileDangerFullAccess" })
+          }
           try {
             const sessions = ctx.get("sessions")
             const session = typeof sessions?.get === "function" ? await sessions.get(sessionId) : undefined
@@ -2525,6 +2626,7 @@ export function apply(ctx, config) {
             })
             if (mobileMutationWasRevoked(result)) return respondDeviceRevoked(res)
             if (result.missing) return json(res, 404, { error: "会话不存在" })
+            ctx.logger.info(`dsh-links: permission preset → ${preset} session=${String(sessionId).slice(0, 8)} device=${String(device.deviceId).slice(0, 8)}`)
             return json(res, 200, { ok: true, preset, approval: spec.approval, sandbox: spec.sandbox })
           } catch (err) {
             ctx.logger.warn(`dsh-links: permission update: ${err?.message ?? err}`)
@@ -2535,7 +2637,7 @@ export function apply(ctx, config) {
         if (req.method === "GET" && streamMatch) {
           return handleStreamRoute(decodeURIComponent(streamMatch[1]), res, targetPort, config, req, rt, device)
         }
-        return handleMobileApi(req, res, targetPort, state, stateFile, device, pathname, rt)
+        return handleMobileApi(req, res, targetPort, state, stateFile, device, pathname, rt, config, ctx.logger)
       }
       return json(res, 404, { error: "not found" })
     } catch (err) {
