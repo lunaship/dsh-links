@@ -49,7 +49,8 @@ func runInit(args []string) {
   dsh-links-relay init --dir .local [--force] [--listen-all] [--host NAME]
 
 Creates a self-host working directory: keys, a localhost TLS certificate,
-config.toml, and a one-time admin password. Does not start the service.
+config.toml, and a one-time admin password in admin.password (0600).
+The password is not printed; read it from that file. Does not start the service.
 `)
 			return
 		default:
@@ -58,14 +59,17 @@ config.toml, and a one-time admin password. Does not start the service.
 		}
 	}
 
-	password, configPath, err := initLayout(dir, force, listenAll, extraHosts)
+	_, configPath, err := initLayout(dir, force, listenAll, extraHosts)
 	if err != nil {
 		logFatal("%v", err)
 	}
 
+	// The generated password is a secret: it is written to admin.password
+	// (mode 0600) by initLayout and never echoed to stdout or logs.
+	adminPasswordPath := filepath.Join(filepath.Dir(configPath), "admin.password")
 	fmt.Printf("Wrote %s\n", configPath)
 	fmt.Printf("Admin user: admin\n")
-	fmt.Printf("Admin password: %s\n", password)
+	fmt.Printf("Admin password written to %s (mode 0600)\n", adminPasswordPath)
 	certPath := filepath.Join(filepath.Dir(configPath), "relay.crt")
 	if fp, err := cryptoutil.CertSHA256FingerprintFile(certPath); err == nil {
 		fmt.Printf("TLS SHA-256 fingerprint: %s\n", fp)

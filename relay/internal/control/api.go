@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"mime"
 	"net"
 	"net/http"
@@ -19,6 +20,7 @@ import (
 	"time"
 
 	"github.com/lunaship/dsh-links/relay/internal/cryptoutil"
+	"github.com/lunaship/dsh-links/relay/internal/logutil"
 	"github.com/lunaship/dsh-links/relay/internal/protocol"
 	"github.com/lunaship/dsh-links/relay/internal/registry"
 	"github.com/lunaship/dsh-links/relay/internal/store"
@@ -75,6 +77,7 @@ type Server struct {
 	loginLimiter     *registry.RateLimiter
 	sessionsMu       sync.Mutex
 	sessions         map[[sha256.Size]byte]sessionRec
+	logger           *log.Logger
 }
 
 func NewServer(ctrl *Control, adminToken, adminUser, adminPassword string) *Server {
@@ -87,6 +90,7 @@ func NewServerWithSecureCookies(ctrl *Control, adminToken, adminUser, adminPassw
 		secureCookies: secureCookies,
 		loginLimiter:  registry.NewRateLimiter(loginBurstAttempts, 5),
 		sessions:      make(map[[sha256.Size]byte]sessionRec),
+		logger:        log.Default(),
 	}
 }
 
@@ -181,7 +185,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		if s.passwordChangeRequired(p) && !passwordChangeAllowed(r) {
-			writeControlError(w, store.ErrPasswordMustChange)
+			s.writeControlError(w, r, store.ErrPasswordMustChange)
 			return
 		}
 		ctx := context.WithValue(r.Context(), principalKey{}, p)
@@ -377,10 +381,10 @@ func (s *Server) handleInvites(w http.ResponseWriter, r *http.Request) {
 		code, rec, replaced, err := s.control.mintInvite(p.UserID, ttl, req.ReplaceOldestUnused)
 		if err != nil {
 			if errors.Is(err, store.ErrTenantInviteLimit) {
-				writeControlError(w, err)
+				s.writeControlError(w, r, err)
 				return
 			}
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			s.failRequest(w, r, err, http.StatusInternalServerError, "internal error")
 			return
 		}
 		if replaced != nil {
@@ -406,7 +410,7 @@ func (s *Server) handleInvites(w http.ResponseWriter, r *http.Request) {
 	case "GET":
 		list, err := s.control.ListInvitesFor(p.UserID, p.Admin)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			s.failRequest(w, r, err, http.StatusInternalServerError, "internal error")
 			return
 		}
 		// Map to sanitized view (don't expose raw code_hash)
@@ -506,24 +510,55 @@ func (s *Server) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
 	return false
 }
 
-func writeControlError(w http.ResponseWriter, err error) {
+// logControlError records the real control-plane error with its request
+// context. The client never sees this text: failRequest/writeControlError
+// always answer with a fixed body so SQL, path, JSON and protocol detail
+// cannot leak. logutil.Value bounds and escapes untrusted error text.
+func (s *Server) logControlError(r *http.Request, err error) {
+	logger := s.logger
+	if logger == nil {
+		logger = log.Default()
+	}
+	if r != nil {
+		logger.Printf("control api error method=%s path=%s: %s", r.Method, logutil.Value(r.URL.Path), logutil.Value(err.Error()))
+		return
+	}
+	logger.Printf("control api error: %s", logutil.Value(err.Error()))
+}
+
+// failRequest logs err server-side and returns a fixed generic JSON body.
+// Use it instead of echoing err.Error() to HTTP clients.
+func (s *Server) failRequest(w http.ResponseWriter, r *http.Request, err error, status int, message string) {
+	s.logControlError(r, err)
+	http.Error(w, `{"error":"`+message+`"}`, status)
+}
+
+// writeControlError maps a domain error to a stable, user-facing JSON body.
+// Sentinel validation messages that are part of the UI contract are echoed
+// via their constant text (never err.Error(), which could carry wrapping
+// detail); anything unrecognized is treated as internal and logged.
+func (s *Server) writeControlError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, store.ErrInviteNotFound), errors.Is(err, store.ErrHostNotFound), errors.Is(err, store.ErrUserNotFound):
 		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
-	case errors.Is(err, store.ErrInvalidLogin), errors.Is(err, store.ErrWeakPassword):
-		http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusBadRequest)
+	case errors.Is(err, store.ErrInvalidLogin):
+		http.Error(w, `{"error":"`+store.ErrInvalidLogin.Error()+`"}`, http.StatusBadRequest)
+	case errors.Is(err, store.ErrWeakPassword):
+		http.Error(w, `{"error":"`+store.ErrWeakPassword.Error()+`"}`, http.StatusBadRequest)
 	case errors.Is(err, store.ErrCurrentPassword):
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 	case errors.Is(err, store.ErrPasswordMustChange):
 		http.Error(w, `{"error":"password change required"}`, http.StatusForbidden)
 	case errors.Is(err, store.ErrSamePassword):
-		http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusBadRequest)
+		http.Error(w, `{"error":"`+store.ErrSamePassword.Error()+`"}`, http.StatusBadRequest)
 	case errors.Is(err, store.ErrLoginTaken):
 		http.Error(w, `{"error":"login name taken"}`, http.StatusConflict)
-	case errors.Is(err, store.ErrTenantInviteLimit), errors.Is(err, store.ErrTenantHostLimit):
-		http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusConflict)
+	case errors.Is(err, store.ErrTenantInviteLimit):
+		http.Error(w, `{"error":"`+store.ErrTenantInviteLimit.Error()+`"}`, http.StatusConflict)
+	case errors.Is(err, store.ErrTenantHostLimit):
+		http.Error(w, `{"error":"`+store.ErrTenantHostLimit.Error()+`"}`, http.StatusConflict)
 	default:
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		s.failRequest(w, r, err, http.StatusBadRequest, "bad request")
 	}
 }
 
@@ -611,7 +646,7 @@ func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
 	}
 	devs, err := s.control.ListDevices()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		s.failRequest(w, r, err, http.StatusInternalServerError, "internal error")
 		return
 	}
 	writeJSONOK(w, map[string]any{"devices": devs})
@@ -627,7 +662,7 @@ func (s *Server) handleDeviceItem(w http.ResponseWriter, r *http.Request) {
 	}
 	if id, ok := actionTarget(r.URL.Path, "devices", "disable"); ok {
 		if err := s.control.DisableDevice(id); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			s.failRequest(w, r, err, http.StatusBadRequest, "bad request")
 			return
 		}
 		writeJSONOK(w, map[string]any{"ok": true})
@@ -635,7 +670,7 @@ func (s *Server) handleDeviceItem(w http.ResponseWriter, r *http.Request) {
 	}
 	if id, ok := actionTarget(r.URL.Path, "devices", "enable"); ok {
 		if err := s.control.EnableDevice(id); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			s.failRequest(w, r, err, http.StatusBadRequest, "bad request")
 			return
 		}
 		writeJSONOK(w, map[string]any{"ok": true})
@@ -643,7 +678,7 @@ func (s *Server) handleDeviceItem(w http.ResponseWriter, r *http.Request) {
 	}
 	if id, ok := actionTarget(r.URL.Path, "devices", "delete"); ok {
 		if err := s.control.DeleteDevice(id); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			s.failRequest(w, r, err, http.StatusBadRequest, "bad request")
 			return
 		}
 		writeJSONOK(w, map[string]any{"ok": true})
@@ -674,7 +709,7 @@ func (s *Server) handleAnonymousSetting(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err := s.control.SetAnonymousEnabled(body.Enabled); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		s.failRequest(w, r, err, http.StatusInternalServerError, "internal error")
 		return
 	}
 	writeJSONOK(w, map[string]any{"ok": true, "anonymousEnroll": body.Enabled})
@@ -712,7 +747,7 @@ func (s *Server) handleInviteItem(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSuffix(r.URL.Path, "/") == "/v1/invites/purge" {
 		n, err := s.control.PurgeStaleInvitesOwned(p.UserID, p.Admin)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			s.failRequest(w, r, err, http.StatusInternalServerError, "internal error")
 			return
 		}
 		writeJSONOK(w, map[string]any{"deleted": n})
@@ -721,7 +756,7 @@ func (s *Server) handleInviteItem(w http.ResponseWriter, r *http.Request) {
 	if id, ok := actionTarget(r.URL.Path, "invites", "revoke"); ok {
 		inv, _ := s.control.GetInvite(id)
 		if err := s.control.RevokeInviteOwned(id, p.UserID, p.Admin); err != nil {
-			writeControlError(w, err)
+			s.writeControlError(w, r, err)
 			return
 		}
 		subject := ""
@@ -735,7 +770,7 @@ func (s *Server) handleInviteItem(w http.ResponseWriter, r *http.Request) {
 	if id, ok := actionTarget(r.URL.Path, "invites", "delete"); ok {
 		inv, _ := s.control.GetInvite(id)
 		if err := s.control.DeleteInviteOwned(id, p.UserID, p.Admin); err != nil {
-			writeControlError(w, err)
+			s.writeControlError(w, r, err)
 			return
 		}
 		subject := ""
@@ -757,7 +792,7 @@ func (s *Server) handleHosts(w http.ResponseWriter, r *http.Request) {
 	p := principalOf(r)
 	list, err := s.control.ListHostsFor(p.UserID, p.Admin)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		s.failRequest(w, r, err, http.StatusInternalServerError, "internal error")
 		return
 	}
 	type hostOut struct {
@@ -803,7 +838,7 @@ func (s *Server) handleHostItem(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSuffix(r.URL.Path, "/") == "/v1/hosts/purge" {
 		n, err := s.control.PurgeRevokedHostsOwned(p.UserID, p.Admin)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			s.failRequest(w, r, err, http.StatusInternalServerError, "internal error")
 			return
 		}
 		writeJSONOK(w, map[string]any{"deleted": n})
@@ -816,7 +851,7 @@ func (s *Server) handleHostItem(w http.ResponseWriter, r *http.Request) {
 		}
 		delivered, acked, err := s.control.RevokeHostOwned(id, p.UserID, p.Admin)
 		if err != nil {
-			writeControlError(w, err)
+			s.writeControlError(w, r, err)
 			return
 		}
 		subject := ""
@@ -843,7 +878,7 @@ func (s *Server) handleHostItem(w http.ResponseWriter, r *http.Request) {
 		h, _ := s.control.GetHost(id)
 		delivered, acked, err := s.control.DeleteHostOwned(id, p.UserID, p.Admin)
 		if err != nil {
-			writeControlError(w, err)
+			s.writeControlError(w, r, err)
 			return
 		}
 		subject := ""
@@ -916,7 +951,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	list, err := s.control.ListControlEvents(p.UserID, p.Admin)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		s.failRequest(w, r, err, http.StatusInternalServerError, "internal error")
 		return
 	}
 	type out struct {
@@ -1059,7 +1094,7 @@ func (s *Server) handleTenants(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		list, err := s.control.ListTenants()
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			s.failRequest(w, r, err, http.StatusInternalServerError, "internal error")
 			return
 		}
 		type out struct {
@@ -1100,7 +1135,7 @@ func (s *Server) handleTenants(w http.ResponseWriter, r *http.Request) {
 		}
 		u, err := s.control.CreateTenant(req.LoginName, req.DisplayName, req.Password, s.adminUser)
 		if err != nil {
-			writeControlError(w, err)
+			s.writeControlError(w, r, err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -1124,7 +1159,7 @@ func (s *Server) handleTenantItem(w http.ResponseWriter, r *http.Request) {
 	if id, ok := actionTarget(r.URL.Path, "tenants", "disable"); ok {
 		p := principalOf(r)
 		if err := s.control.DisableTenant(id); err != nil {
-			writeControlError(w, err)
+			s.writeControlError(w, r, err)
 			return
 		}
 		s.recordEvent(p, store.ControlEventTenantDisable, "tenant", id, id, "")
@@ -1134,7 +1169,7 @@ func (s *Server) handleTenantItem(w http.ResponseWriter, r *http.Request) {
 	if id, ok := actionTarget(r.URL.Path, "tenants", "enable"); ok {
 		p := principalOf(r)
 		if err := s.control.EnableTenant(id); err != nil {
-			writeControlError(w, err)
+			s.writeControlError(w, r, err)
 			return
 		}
 		s.recordEvent(p, store.ControlEventTenantEnable, "tenant", id, id, "")
@@ -1150,7 +1185,7 @@ func (s *Server) handleTenantItem(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := s.control.SetTenantPassword(id, req.Password); err != nil {
-			writeControlError(w, err)
+			s.writeControlError(w, r, err)
 			return
 		}
 		s.revokeUserSessions(id, "")
@@ -1180,7 +1215,7 @@ func (s *Server) handleAccountPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.control.ChangeTenantPassword(p.UserID, req.CurrentPassword, req.NewPassword); err != nil {
-		writeControlError(w, err)
+		s.writeControlError(w, r, err)
 		return
 	}
 	keep := ""

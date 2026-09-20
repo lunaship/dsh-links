@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lunaship/dsh-links/relay/internal/cryptoutil"
 	"github.com/lunaship/dsh-links/relay/internal/store"
 )
 
@@ -105,12 +106,11 @@ type IPCServer struct {
 	// authToken is the shared IPC secret. The real trust boundary is the Unix
 	// socket file permissions (0770, dedicated shared group) plus the container
 	// network isolation between the control and relay roles; the handshake below
-	// is only a shared-secret possession proof between those two trusted
-	// processes. Note it is NOT encryption and NOT a replay defense against a
-	// peer that already holds the token or a socket observer inside the allowed
-	// group — the token and its derived HMAC both transit this socket in the
-	// clear (key == data in the current scheme), so any party that can read the
-	// socket stream can impersonate the relay. Keep the socket and container
+	// is a shared-secret possession proof between those two trusted processes.
+	// The server issues a fresh random challenge per connection and the client
+	// answers with HMAC(token, challenge); the token itself never traverses the
+	// socket and each challenge is single-use, so a captured handshake cannot be
+	// replayed. It is still NOT encryption: keep the socket and container
 	// boundaries as the authoritative control, not this frame.
 	authToken string // empty = no auth; otherwise HMAC-SHA256 keyed
 }
@@ -207,9 +207,19 @@ func (s *IPCServer) handleConn(conn net.Conn) {
 		conn.Close()
 	}()
 	reader := bufio.NewReaderSize(conn, maxIPCFrameBytes)
-	// Auth check: first message must be an auth frame with valid HMAC.
+	// Auth check: the server issues a fresh random challenge and the client
+	// proves possession of the shared token with HMAC(token, challenge). The
+	// token never traverses the socket and the challenge is single-use, so a
+	// captured handshake cannot be replayed by a socket observer.
 	if s.authToken != "" {
 		_ = conn.SetDeadline(time.Now().Add(ipcAuthTotalTimeout))
+		challenge, err := cryptoutil.RandomBytes(ipcChallengeBytes)
+		if err != nil {
+			return
+		}
+		s.sendIPCResponse(conn, "ipc_auth_challenge", map[string]string{
+			"challenge": base64.RawURLEncoding.EncodeToString(challenge),
+		})
 		authLine, err := readIPCFrame(conn, reader, ipcAuthTotalTimeout)
 		if err != nil {
 			return
@@ -219,14 +229,13 @@ func (s *IPCServer) handleConn(conn net.Conn) {
 			return
 		}
 		type authPayload struct {
-			Token string `json:"token"`
-			Hmac  string `json:"hmac"`
+			Hmac string `json:"hmac"`
 		}
 		var ap authPayload
 		if err := json.Unmarshal(authMsg.Payload, &ap); err != nil {
 			return
 		}
-		expectedHmac := hex.EncodeToString(hmacSHA256([]byte(s.authToken), []byte(ap.Token)))
+		expectedHmac := hex.EncodeToString(ipcAuthMAC(s.authToken, challenge))
 		if !hmac.Equal([]byte(ap.Hmac), []byte(expectedHmac)) {
 			return
 		}
@@ -765,16 +774,45 @@ func (c *IPCClient) Connect() error {
 	}
 	c.conn = conn
 	c.reader = bufio.NewReaderSize(conn, maxIPCFrameBytes)
-	// Send auth frame if token is configured. The proof is HMAC(key=token,
-	// data=token): possession of the shared token is what matters, and both
-	// sides already hold it, so the HMAC adds no authentication the token
-	// itself does not. It is intentionally not a challenge-response — see the
-	// IPCServer.authToken note for where the real trust boundary lives.
+	// Read the server's fresh challenge, then answer with HMAC(token,
+	// challenge). The token is the HMAC key and never leaves the process, so a
+	// passive socket reader cannot capture it and the single-use challenge
+	// makes the proof non-replayable.
 	if c.authToken != "" {
-		hmacStr := hex.EncodeToString(hmacSHA256([]byte(c.authToken), []byte(c.authToken)))
+		challengeLine, err := readIPCFrame(conn, c.reader, ipcAuthTotalTimeout)
+		if err != nil {
+			_ = conn.Close()
+			c.conn = nil
+			c.reader = nil
+			return err
+		}
+		var challengeMsg IPCMessage
+		if err := json.Unmarshal(challengeLine, &challengeMsg); err != nil || challengeMsg.Type != "ipc_auth_challenge" {
+			_ = conn.Close()
+			c.conn = nil
+			c.reader = nil
+			return fmt.Errorf("ipc handshake: missing auth challenge")
+		}
+		var cp struct {
+			Challenge string `json:"challenge"`
+		}
+		if err := json.Unmarshal(challengeMsg.Payload, &cp); err != nil {
+			_ = conn.Close()
+			c.conn = nil
+			c.reader = nil
+			return fmt.Errorf("ipc handshake: bad auth challenge")
+		}
+		challenge, err := base64.RawURLEncoding.DecodeString(cp.Challenge)
+		if err != nil || len(challenge) != ipcChallengeBytes {
+			_ = conn.Close()
+			c.conn = nil
+			c.reader = nil
+			return fmt.Errorf("ipc handshake: invalid auth challenge")
+		}
+		hmacStr := hex.EncodeToString(ipcAuthMAC(c.authToken, challenge))
 		authMsg := IPCMessage{
 			Type:    "ipc_auth",
-			Payload: json.RawMessage(fmt.Sprintf(`{"token":%s,"hmac":%s}`, jsonString(c.authToken), jsonString(hmacStr))),
+			Payload: json.RawMessage(fmt.Sprintf(`{"hmac":%s}`, jsonString(hmacStr))),
 		}
 		authLine, _ := json.Marshal(authMsg)
 		authLine = append(authLine, '\n')
@@ -1203,6 +1241,21 @@ type RenewIPCRequest struct {
 	Challenge     []byte
 	Proof         []byte
 	OldCapability string
+}
+
+// ipcChallengeBytes is the size of the per-connection auth challenge nonce.
+const ipcChallengeBytes = 32
+
+// ipcAuthDomain separates this HMAC from any other use of the shared token.
+var ipcAuthDomain = []byte("dsh-links/ipc-auth/v1\x00")
+
+// ipcAuthMAC proves possession of the shared token without sending it: the
+// token is the HMAC key and the server's fresh challenge is the message.
+func ipcAuthMAC(token string, challenge []byte) []byte {
+	data := make([]byte, 0, len(ipcAuthDomain)+len(challenge))
+	data = append(data, ipcAuthDomain...)
+	data = append(data, challenge...)
+	return hmacSHA256([]byte(token), data)
 }
 
 func hmacSHA256(key, data []byte) []byte {

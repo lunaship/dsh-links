@@ -1,11 +1,14 @@
 package control
 
 import (
+	"bufio"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -541,6 +544,100 @@ func TestRevokeAckMismatchedRouteNotCounted(t *testing.T) {
 }
 
 func jsonRaw(s string) json.RawMessage { return json.RawMessage(s) }
+
+// A captured handshake proof must not be replayable: the server issues a fresh
+// random challenge per connection and the HMAC is bound to it. The shared token
+// is the HMAC key and is never sent, so a passive socket reader cannot lift it.
+func TestIPCHandshakeRejectsReplayedProof(t *testing.T) {
+	ctrl, st := newTestControl(t)
+	defer st.Close()
+	tempDir, err := os.MkdirTemp("", "dlr-ipc-replay-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tempDir)
+	socket := filepath.Join(tempDir, "control.sock")
+	token := "0123456789abcdef0123456789abcdef"
+	server := NewIPCServer(ctrl, socket, token)
+	if err := server.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+
+	readChallenge := func(conn net.Conn) []byte {
+		t.Helper()
+		reader := bufio.NewReaderSize(conn, maxIPCFrameBytes)
+		line, err := readIPCFrame(conn, reader, 2*time.Second)
+		if err != nil {
+			t.Fatalf("read challenge: %v", err)
+		}
+		var msg IPCMessage
+		if err := json.Unmarshal(line, &msg); err != nil || msg.Type != "ipc_auth_challenge" {
+			t.Fatalf("expected auth challenge, got %s (err %v)", line, err)
+		}
+		var cp struct {
+			Challenge string `json:"challenge"`
+		}
+		if err := json.Unmarshal(msg.Payload, &cp); err != nil {
+			t.Fatal(err)
+		}
+		challenge, err := base64.RawURLEncoding.DecodeString(cp.Challenge)
+		if err != nil || len(challenge) != ipcChallengeBytes {
+			t.Fatalf("bad challenge: %v", err)
+		}
+		return challenge
+	}
+
+	conn1, err := net.Dial("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn1.Close()
+	challenge1 := readChallenge(conn1)
+	replayed := IPCMessage{Type: "ipc_auth", Payload: json.RawMessage(fmt.Sprintf(`{"hmac":%q}`, hex.EncodeToString(ipcAuthMAC(token, challenge1))))}
+
+	conn2, err := net.Dial("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn2.Close()
+	challenge2 := readChallenge(conn2)
+	if string(challenge1) == string(challenge2) {
+		t.Fatal("server reused an auth challenge across connections")
+	}
+	line, _ := json.Marshal(replayed)
+	line = append(line, '\n')
+	if _, err := conn2.Write(line); err != nil {
+		return // server may reject before the write completes
+	}
+	_ = conn2.SetReadDeadline(time.Now().Add(2 * time.Second))
+	buf := make([]byte, 1)
+	if _, err := conn2.Read(buf); err == nil {
+		t.Fatal("replayed handshake proof was accepted")
+	}
+
+	// A proof bound to the current challenge still authenticates.
+	conn3, err := net.Dial("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn3.Close()
+	challenge3 := readChallenge(conn3)
+	good := IPCMessage{Type: "ipc_auth", Payload: json.RawMessage(fmt.Sprintf(`{"hmac":%q}`, hex.EncodeToString(ipcAuthMAC(token, challenge3))))}
+	goodLine, _ := json.Marshal(good)
+	goodLine = append(goodLine, '\n')
+	if _, err := conn3.Write(goodLine); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if server.BroadcastRevoke("route-auth-ok", "host-auth-ok") == 1 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("valid challenge-bound handshake was not accepted")
+}
 
 func TestEnrollControlErrorPreservesQuotaSentinel(t *testing.T) {
 	if !errors.Is(enrollControlError(store.ErrTenantHostLimit.Error()), store.ErrTenantHostLimit) {
