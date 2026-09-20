@@ -1792,6 +1792,41 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
       return json(res, 200, { ok: true, sessionId })
     }
 
+    const feedbackMatch = pathname.match(/^\/dsh-link\/mobile\/sessions\/([^/]+)\/feedback$/)
+    if (feedbackMatch) {
+      const sessionId = decodeURIComponent(feedbackMatch[1])
+      // 反馈是会话日志级数据：设备已通过外层鉴权即可读写，不要求此刻有活跃 SSE 订阅
+      // （App 打开会话时会与订阅建立并发请求，强校验会命中竞态 403）。
+      if (req.method === "GET") {
+        const value = await callLocalRpc(targetPort, "messageFeedback.list", { sessionId })
+        return json(res, 200, value ?? { ok: true, value: { items: [] } })
+      }
+      if (req.method === "POST") {
+        const body = await readAuthorizedJson(req, res, state, device, 64 * 1024)
+        if (!body) return
+        const messageId = String(body.messageId ?? "").trim()
+        if (!messageId) return json(res, 400, { error: "缺少 messageId" })
+        const action = String(body.action ?? "put")
+        const operation = action === "delete"
+          ? () => callLocalRpc(targetPort, "messageFeedback.delete", {
+              sessionId,
+              messageId,
+              ifVersion: body.ifVersion ?? null,
+            })
+          : () => callLocalRpc(targetPort, "messageFeedback.put", {
+              sessionId,
+              messageId,
+              rating: body.rating === "negative" ? "negative" : "positive",
+              ...(typeof body.note === "string" && body.note.trim() ? { note: body.note.trim() } : {}),
+              ...(typeof body.category === "string" && body.category.trim() ? { category: body.category.trim() } : {}),
+              ifVersion: body.ifVersion ?? null,
+            })
+        const result = await runMobileDeviceMutation(rt, state, device, operation)
+        if (mobileMutationWasRevoked(result)) return respondDeviceRevoked(res)
+        return json(res, 200, result ?? { ok: true })
+      }
+    }
+
     return json(res, 404, { error: "mobile endpoint not found" })
   } catch (error) {
     console.error(`dsh-links: mobile API error: ${error?.message ?? error}`)

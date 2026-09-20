@@ -16,6 +16,9 @@ test("白名单是预期闭集（增删方法需同步本测试）", () => {
   assert.deepEqual([...RPC_METHOD_ALLOWLIST], [
     "agentPreset.list",
     "llm.models",
+    "messageFeedback.delete",
+    "messageFeedback.list",
+    "messageFeedback.put",
     "session.cancel",
     "session.create",
     "session.fork",

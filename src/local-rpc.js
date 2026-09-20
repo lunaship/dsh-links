@@ -13,6 +13,9 @@ import { randomBytes } from "node:crypto"
 export const RPC_METHOD_ALLOWLIST = Object.freeze([
   "agentPreset.list",
   "llm.models",
+  "messageFeedback.delete",
+  "messageFeedback.list",
+  "messageFeedback.put",
   "session.cancel",
   "session.create",
   "session.fork",
@@ -138,6 +141,9 @@ function settingsUpdateArgs(payload) {
 const WIRE = Object.freeze({
   "agentPreset.list": { namespace: "agentPresets", method: "list", args: () => ({}) },
   "llm.models": { namespace: "session", method: "modelCatalog", args: () => ({}) },
+  "messageFeedback.list": { namespace: "messageFeedback", method: "list", args: requestArgs },
+  "messageFeedback.put": { namespace: "messageFeedback", method: "put", args: requestArgs },
+  "messageFeedback.delete": { namespace: "messageFeedback", method: "delete", args: requestArgs },
   "session.cancel": { namespace: "session", method: "cancel", args: requestArgs },
   "session.create": { namespace: "session", method: "create", args: requestArgs },
   "session.fork": { namespace: "session", method: "fork", args: requestArgs },
