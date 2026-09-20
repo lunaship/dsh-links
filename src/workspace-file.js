@@ -55,19 +55,22 @@ export function resolveWorkspaceFile(cwd, requested) {
   }
 }
 
+const MIME_TYPES = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+  svg: "image/svg+xml",
+  md: "text/markdown; charset=utf-8",
+  txt: "text/plain; charset=utf-8",
+  json: "application/json; charset=utf-8",
+  html: "text/html; charset=utf-8",
+  pdf: "application/pdf",
+}
+
 export function mimeFromName(name) {
   const ext = String(name ?? "").split(".").pop()?.toLowerCase()
-  return {
-    png: "image/png",
-    jpg: "image/jpeg",
-    jpeg: "image/jpeg",
-    gif: "image/gif",
-    webp: "image/webp",
-    svg: "image/svg+xml",
-    md: "text/markdown; charset=utf-8",
-    txt: "text/plain; charset=utf-8",
-    json: "application/json; charset=utf-8",
-    html: "text/html; charset=utf-8",
-    pdf: "application/pdf",
-  }[ext] ?? "application/octet-stream"
+  if (!ext || !Object.prototype.hasOwnProperty.call(MIME_TYPES, ext)) return "application/octet-stream"
+  return MIME_TYPES[ext]
 }

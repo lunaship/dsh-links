@@ -318,6 +318,9 @@ function json(res, code, obj, extraHeaders) {
     "content-type": "application/json; charset=utf-8",
     "content-length": String(body.length),
     connection: "close",
+    "x-content-type-options": "nosniff",
+    "x-frame-options": "DENY",
+    "referrer-policy": "no-referrer",
     ...extraHeaders,
   })
   res.end(body)
@@ -418,7 +421,9 @@ function requireJsonWrite(req, res) {
 }
 
 function filterSettingsPatch(ns, patch) {
-  const allowed = SETTINGS_WRITE_ALLOWLIST[ns]
+  const allowed = Object.prototype.hasOwnProperty.call(SETTINGS_WRITE_ALLOWLIST, ns)
+    ? SETTINGS_WRITE_ALLOWLIST[ns]
+    : undefined
   if (!allowed) return { error: "该设置命名空间不允许从手机端写入" }
   const keys = Object.keys(patch)
   if (keys.length === 0) return { error: "patch 为空" }
@@ -1710,12 +1715,17 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
         const resolved = resolveWorkspaceFile(cwd, requested)
         const body = readFileSync(resolved.abs)
         const mime = mimeFromName(resolved.name)
-        res.writeHead(200, {
+        const headers = {
           "content-type": mime,
           "content-length": body.length,
           "cache-control": "private, max-age=60",
+          "x-content-type-options": "nosniff",
           "x-dsh-link-filename": encodeURIComponent(resolved.name),
-        })
+        }
+        if (mime.startsWith("text/html") || mime === "image/svg+xml") {
+          headers["content-disposition"] = `attachment; filename="${encodeURIComponent(resolved.name)}"`
+        }
+        res.writeHead(200, headers)
         res.end(body)
       } catch (err) {
         const status = Number.isInteger(err?.status) ? err.status : 500
@@ -2501,7 +2511,7 @@ export function apply(ctx, config) {
             "workspace-write": { sandbox: "workspace-write", approval: "ask" },
             "danger-full-access": { sandbox: "danger-full-access", approval: "never" }, // dsh: never=需审批的操作自动拒绝；是否符合「Full access」需真机核对
           }
-          const spec = PRESET_SPECS[preset]
+          const spec = Object.prototype.hasOwnProperty.call(PRESET_SPECS, preset) ? PRESET_SPECS[preset] : undefined
           if (!spec) return json(res, 400, { error: "preset 无效" })
           try {
             const sessions = ctx.get("sessions")

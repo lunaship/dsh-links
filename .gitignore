@@ -13,6 +13,7 @@ state.json
 *.token
 *.pem
 *.key
+*.crt
 secrets*
 .env
 .env.*

@@ -17,6 +17,7 @@ export async function loadOrCreateTls(stateDir) {
   try { chmodSync(stateDir, 0o700) } catch {}
   const file = join(stateDir, "tls.json")
   if (existsSync(file)) {
+    try { chmodSync(file, 0o600) } catch {}
     try {
       const data = JSON.parse(readFileSync(file, "utf8"))
       if (data?.key && data?.cert) {

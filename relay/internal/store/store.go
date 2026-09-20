@@ -41,6 +41,12 @@ func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
+	// A pre-existing directory keeps its old mode, and the SQLite driver creates
+	// the database and its WAL/SHM sidecars under the process umask. Tighten both
+	// so a loose parent directory can never expose pairing/credential state.
+	if err := os.Chmod(dir, 0700); err != nil {
+		return nil, err
+	}
 	dsn := fmt.Sprintf("file:%s?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(1)", path)
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -53,6 +59,11 @@ func Open(path string) (*Store, error) {
 	if err := s.migrate(); err != nil {
 		db.Close()
 		return nil, err
+	}
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		if _, statErr := os.Stat(path + suffix); statErr == nil {
+			_ = os.Chmod(path+suffix, 0600)
+		}
 	}
 	return s, nil
 }
