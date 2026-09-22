@@ -1,5 +1,5 @@
 import { isContextInjectionText } from "./context-injection.js"
-import { mutationPath, toolResultIsError, uniquePaths } from "./produced-files.js"
+import { mutationPath, toolResultContent, toolResultIsError, toolResultMeta, uniquePaths } from "./produced-files.js"
 
 /** session.history 单页消息数上限（客户端 maxMessages 不得突破）。 */
 export const MAX_HISTORY_MESSAGES = 200
@@ -211,8 +211,8 @@ export function projectHistoryPage({ events, reasoningBySeq = new Map(), hasMore
       })
     } else if (e.type === "tool/result") {
       flushReasoning(e.time)
-      const content = (e.data?.message?.content ?? []).map((c) => c.text || JSON.stringify(c)).join("\n")
-      const callId = e.data?.message?.source?.callId
+      const content = toolResultContent(e).map((c) => c.text || JSON.stringify(c)).join("\n")
+      const callId = toolResultMeta(e)?.callId ?? null
       const start = toolCalls.get(callId)?.time
       const mutation = callId != null ? mutationCalls.get(String(callId)) : null
       if (!toolResultIsError(e) && mutation) {

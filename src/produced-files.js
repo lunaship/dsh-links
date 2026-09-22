@@ -58,9 +58,44 @@ export function mutationPath(name, argsRaw) {
   }
 }
 
+/**
+ * tool/result 消息的两种物理形状都要认——同一个历史窗口里可能混着 v3 与 v4 会话：
+ *
+ * - V3：`role: "user"` + `content: [ToolResultBlock]`，callId / 内层 content / isError
+ *   挂在这个 `tool-result` 包装块上，`message.source.callId` 另有一份。
+ * - V4（DSH 0.1.7 起）：提升为一等 `role: "tool"` 消息，`toolCallId` / `isError`
+ *   提到 message 上，`content` 直接是内层内容数组。
+ *
+ * 判定以 `toolCallId` 为准：V4 必填，V3 不存在。
+ */
+export function toolResultMeta(event) {
+  const message = event?.data?.message
+  if (!isRecord(message)) return null
+  const blocks = Array.isArray(message.content) ? message.content : []
+  const head = isRecord(blocks[0]) ? blocks[0] : null
+  if (typeof message.toolCallId === "string" && message.toolCallId.length > 0) {
+    return { callId: message.toolCallId, isError: message.isError === true }
+  }
+  const sourceCallId = message.source?.callId
+  return {
+    callId: typeof sourceCallId === "string" && sourceCallId.length > 0
+      ? sourceCallId
+      : (typeof head?.toolCallId === "string" && head.toolCallId.length > 0 ? head.toolCallId : null),
+    isError: head?.isError === true,
+  }
+}
+
+/** 结果正文块：V3 在 `tool-result` 包装块内层，V4 直接就是 `message.content`。 */
+export function toolResultContent(event) {
+  const message = event?.data?.message
+  if (!isRecord(message)) return []
+  const blocks = Array.isArray(message.content) ? message.content : []
+  const head = isRecord(blocks[0]) ? blocks[0] : null
+  return head?.type === "tool-result" && Array.isArray(head.content) ? head.content : blocks
+}
+
 export function toolResultIsError(event) {
-  const first = event?.data?.message?.content?.[0]
-  return first?.isError === true
+  return toolResultMeta(event)?.isError === true
 }
 
 export function uniquePaths(entries) {

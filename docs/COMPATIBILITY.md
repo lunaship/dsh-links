@@ -13,8 +13,8 @@ published.
 
 | Component | Source baseline | Published / released status | Verified compatibility status |
 |---|---|---|---|
-| DSH | `0.1.5-rc.2` (host package updated 2026-09-20; published `lib/*.js` are byte-identical to `0.1.5-rc.1` and the resolved sub-packages were already `rc.2`, so this is a version-string bump with no code change) | Upstream dependency; npm dist-tag `latest` as of 2026-09-20. 2026-09-20: `dsh-plugin-upgrade-016` five-seam scanner (E1–E5, `0.1.5-rc.2 → 0.1.6-alpha.2` corridor) over this repo: 56 files, 0 hits — necessary but not sufficient; `0.1.6-alpha` remains an unverified upstream channel. Host smoke below; full phone end-to-end remains in the closed-beta scope |
-| Plugin `dsh-links` | package `0.1.0-beta.17`; GitHub tag `v0.1.0-beta.17`; working tree follows DSH `0.1.5-rc.1` (V3 session log path; omit null session fields; produced files + workspace file GET; terminal approvals/questions session-bound; mobile archive-set contract; pairing readiness gate 503 `proxy_not_ready` before HTTPS listen; no-callId approval waterfall fallback binding; mobile `session_busy` 409 mapping; security hardening: mobile `danger-full-access` refused unless `allowMobileDangerFullAccess`, permission/file actions require an active session SSE subscription, `session.create` cwd confined to registered workspaces; relay control API errors sanitized, IPC handshake challenge-bound, `init` no longer prints the admin password; `@deepseek-ai/schemastery` 3.18.2) | npm dist-tag `beta` is `0.1.0-beta.17` (`latest` remains `0.1.0-beta.1`) | Unit tests 177 green locally 2026-09-20 (security hardening); e2e arch smoke not rerun for this baseline; last real-device LAN e2e 2026-09-13/14 (below) |
+| DSH | `0.1.7-alpha.1` (host package + resolved sub-packages updated 2026-09-22 on the operator machine; npm `alpha`) | Upstream dependency. npm dist-tags on 2026-09-22: `latest` `0.1.5-rc.2`, `next` `0.1.5-rc.3`, `alpha` `0.1.7-alpha.1`. `0.1.5-rc.3` was verified to be a version-string-only build for the surfaces this plugin touches (CLI `lib/*.js` and 12 seam sub-packages — session-format, api-gateway, api-remotes, client-ui-layout/settings/slots, terminal, tool-ask-user, typert-loader/protocol/registry, web-app — byte-identical to `rc.2` except `package.json`), so it is not a code update. `0.1.7-alpha.1` carries real plugin-facing changes; the seam review and migration consequences are recorded under “DSH `0.1.7-alpha.1` migration notes” below |
+| Plugin `dsh-links` | package `0.1.0-beta.17`; GitHub tag `v0.1.0-beta.17`; working tree follows DSH `0.1.7-alpha.1` (adds the V4 `tool/result` seam: `toolResultMeta`/`toolResultContent` accept both the V3 `role: user` + `tool-result` wrapper message and the V4 first-class `role: tool` message, so `isError` and the result text resolve on v3 and v4 sessions alike) on top of the beta.17 baseline (V3 session log path; omit null session fields; produced files + workspace file GET; terminal approvals/questions session-bound; mobile archive-set contract; pairing readiness gate 503 `proxy_not_ready` before HTTPS listen; no-callId approval waterfall fallback binding; mobile `session_busy` 409 mapping; security hardening: mobile `danger-full-access` refused unless `allowMobileDangerFullAccess`, permission/file actions require an active session SSE subscription, `session.create` cwd confined to registered workspaces; relay control API errors sanitized, IPC handshake challenge-bound, `init` no longer prints the admin password; `@deepseek-ai/schemastery` 3.18.2) | npm dist-tag `beta` is `0.1.0-beta.17` (`latest` remains `0.1.0-beta.1`); the V4 seam fix is **unreleased** working-tree source | Unit tests 183 green locally 2026-09-22 (6 new V3/V4 `tool/result` cases; the new cases fail against the pre-fix source — verified by reverting `src/` under `git stash`); e2e arch smoke 35/35 green against `0.1.7-alpha.1` 2026-09-22 (isolated scratch `stateDir`, operator `state.json` hash unchanged); host restarted on `0.1.7-alpha.1` with both existing phone pairings and the relay route intact; phone end-to-end on this baseline not rerun |
 | Android `deeplinks` | `versionName 0.5.0-beta.19`; GitHub tag `v0.5.0-beta.19`; working tree adds the security hardening pass: bundled Mermaid 11.17.2, locked-down untrusted WebViews (no content/file-URL access, Safe Browsing), share target accepts only `content://`, release log redaction + R8 log stripping, `FLAG_SECURE`, Gradle wrapper SHA-256 | Official signed APK on the private App GitHub Release `v0.5.0-beta.19`; SHA-256 recorded on the release | Unit tests + lint + screenshot validation green locally 2026-09-20; real-device e2e not rerun for this build (last phone e2e 2026-09-14 with `0.5.0-beta.18`, below) |
 | Relay (`relay/` in this repo) | Same source baseline as the plugin (`v0.1.0-beta.17`) | No separate Relay package or public deployment is asserted here | DLR/1 remains invite-only test scope; source is public in this repository |
 
@@ -22,6 +22,7 @@ published.
 
 | DSH | Plugin | Android App | Relay | Verified path |
 |---|---|---|---|---|
+| `0.1.7-alpha.1` | `0.1.0-beta.17` + V4 seam fix (unreleased working tree) | `0.5.0-beta.19` | `v0.1.0-beta.17` `relay/` | 2026-09-22, host-only (no phone): isolated-host arch smoke `scripts/e2e-arch-smoke.mjs` 35/35 against `0.1.7-alpha.1` (scratch `stateDir`, random free ports) — plugin load + TLS ready + port bind, loopback `pair-info` 200 with a valid 64-hex fingerprint pinned against the live peer certificate, `qr.png`, scratch pairing with requestId replay + consumed-code rejection, cross-site 403, `bootstrap`/`sessions`/`models`/`llm-models`/`workspaces`/`settings`/`agent-presets`/`devices` 200, SSE `ready` frame with protocol caps, client bundle serves the `settings.section` panel, smoke device confined to scratch state. Operator host then restarted on `0.1.7-alpha.1` (pid 94479, port 3080): loopback `pair-info`/`devices`/`relay-status` 200, the two existing phone pairings (LAN + cloud route) and the relay route credentials survived the upgrade, `settings.yaml` imported losslessly into `profiles/web/cordis.patch.yml` (4 providers / 31 models unchanged), `storages/workspace.json` intact (2 workspaces, 283 archived session ids). Pending: real-device e2e on this baseline, and a first V4-written session to confirm the mobile produced-file card on live data |
 | `0.1.5-rc.1` | `0.1.0-beta.16` (readiness 503 gate, no-callId approval fallback, session_busy 409) | `0.5.0-beta.18` | `v0.1.0-beta.16` `relay/` | 2026-09-13/14: isolated-host LAN e2e with the fixed plugin + app (scratch `stateDir`, mobile port 18642): manual pairing with TOFU fingerprint matched bit-for-bit against `pair-info` and the live peer certificate, host-side device active (lan), device card online; session create + prompt + exact model reply verified server-side and on-device; generation-time Wi-Fi outage (10s) auto-recovered with no re-pair and no loss/duplication in the server-side history; background-during-generation and force-stop restore kept pairing and history; cold-start pairing-info readiness regression covered by `test/readiness.test.mjs` (503 gate, fingerprint match after listen, corrupt TLS creds, port occupied). Pending device confirmation: in-window approval decision end-to-end, image attach e2e (MIUI safe-access openInputStream failure is fixed in 0.5.0-beta.18 but unverified on device), relay path.
 | `0.1.5-rc.1` | `0.1.0-beta.15` (schemastery 3.18.2, session-bound terminals, archive-set contract) | `0.5.0-beta.17` | `v0.1.0-beta.15` `relay/` | 2026-09-12: host smoke on a scratch profile. Note: the smoke ran with the plugin's default global state dir, which shared pairing state with the operator's real profile and revoked two real phone pairings during teardown (see warning below; recovered by re-pairing) and reset the workspace registry (recovered by resetting `storages/workspace.json` to `initialized: false` so the host re-bootstraps from session history). Verified: plugin load + port bind, loopback `pair-info`/`qr.png`, LAN pairing with one-time code + requestId replay + host approval, `bootstrap`/`sessions`/`models`/`llm-models`/`workspaces`/`settings`/`agent-presets`/`devices` 200, session history tail + `maxMessages` paging + `nextBeforeSeq` on V3 `session.v3.jsonl.zstd` logs, prompt accepted with model reply, workspace register (absolute path, existing dir) + list, session file GET with 403 on workspace-escape, SSE `ready` frame with protocol caps, client bundle serves the `settings.section` panel. `session.list` items may omit `projections` for cold sessions (projection cache miss), so paged history must not rely on `list.projections.asOfSeq`; the plugin's list+page fallback handles it. Content `session.search` degrades to title match when the query provider is absent (by design). 2026-09-12 (evening), real-device LAN e2e with the release builds: phone paired and online in the panel, session list + history render on the device, and the app auto-reconnected after a host restart; instrumented tests OK (5) on the device. Live archive-set follow-up (archive on Web, observe the app) remains in the closed-beta scope. |
 | `0.1.5-alpha.2` | `0.1.0-beta.14` working tree (V3 log path + omit null + produced files) | `0.5.0-beta.16` working tree | `v0.1.0-beta.14` `relay/` | 2026-09-09: host upgraded to alpha.2; plugin/App source aligned for produced files, workspace file GET, `/feedback`. Phone APK still `0.5.0-beta.15` until a new build is installed. |
@@ -35,6 +36,91 @@ same source snapshots have passed a public production deployment, a public
 CA/TLS check, capacity testing, or a real Android → Relay → plugin end-to-end
 run. Relay use remains a separate private test path until those checks are
 recorded explicitly.
+
+## DSH `0.1.7-alpha.1` migration notes
+
+Recorded 2026-09-22 from the seam review that accompanied the operator
+host upgrade (`0.1.5-rc.2` → `0.1.7-alpha.1`). These are the surface
+facts a future upgrade or rollback has to know; they are not a claim
+about upstream intent.
+
+**Session logs are now V4.** `0.1.7-alpha.1` ships
+`@deepseek-ai/dsh-session-format-catalog` with `currentVersion: 4` and
+`releasedV4SessionFormatCodec` as the current encoder, so new sessions
+are written as `session.v4.jsonl[.zstd]`. V3 files are restored through
+the `v3-to-v4` migration without rewriting the stored generation. The
+plugin's `session-log-path.js` already picks the highest `vN`, and
+`assistant/chunk`, `tool/call`, `tool/result`, `turn/end`,
+`user/message`, `approval/asked`, `compaction/*`, `todo/write` are all
+still event names in the V4 vocabulary (V4 adds `developer/message`,
+`image/offload`, `workspace/changes`; none removed). The one shape
+change that reaches this plugin is the `tool/result` message:
+
+| | V3 | V4 |
+|---|---|---|
+| `message.role` | `user` | `tool` |
+| call id | `message.content[0].toolCallId`, `message.source.callId` | `message.toolCallId` (`source` retained) |
+| error flag | `message.content[0].isError` | `message.isError` |
+| result blocks | `message.content[0].content` | `message.content` |
+
+Before the V4 seam fix, `toolResultIsError` read `content[0].isError`
+only, so on a V4 session a failed `write`/`edit` would have been counted
+as a successful mutation and the mobile produced-file card would have
+listed files from failed operations; the result text was also read from
+the wrong level on real V3 sessions (the `tool-result` wrapper was
+stringified instead of unwrapped). Both are covered by
+`test/produced-files.test.mjs` and `test/history.test.mjs`.
+
+**Rollback is one-way for new sessions.** `0.1.5-rc.2` only ships
+codecs v0–v3, and its catalog classifies an unknown stored version as
+`unsupported`. Sessions created after the upgrade are therefore
+unreadable on the RC line (`readHeader` refuses them); sessions created
+before it stay readable. Re-upgrading restores the V4 sessions. No v3
+file is rewritten in place.
+
+**Settings moved out of `~/.dsh/settings.yaml`.** On first boot,
+`0.1.7-alpha.1` imports that file into the current profile's plugin
+configuration (`~/.dsh/profiles/web/cordis.patch.yml`) and renames the
+original to `~/.dsh/settings.yaml.imported`. The import is attempted
+once. Verified lossless on 2026-09-22: 4 `llm-pi-ai` providers and all
+31 model rows preserved, `ui-onboarding` → `ui-settings-general`,
+`agent-default-model`, `locale`, `ui-conversation`, `permission`,
+`ui-theme` carried over. The legacy `agent-presets` key has no direct
+target — upstream now declares and installs agent presets through
+plugin bundles, so legacy directory-based presets need migration.
+`~/.dsh/storages/workspace.json` and the plugin's global
+`~/.dsh/dsh-links/state.json` are **not** part of this migration; the
+2026-09-22 upgrade left both intact (2 workspaces / 283 archived session
+ids, 2 phone pairings, relay route credentials).
+
+**Seams reviewed as compatible** (no plugin change needed): the
+`session`, `settings`, `workspace`, `messageFeedback`,
+`agentPreset(s)`, and `credentials` Remote namespaces and the methods
+this plugin calls (`session/list|page|follow|create|prompt|cancel|fork|rename|search|selectModel|modelCatalog`,
+`settings/describe|update`, `workspace/list|create|delete|archiveSession|follow`,
+`agentPresets/list`) — additive only, e.g. `SessionSummary` gained
+`agentAvailable`, `session` gained `projections` /
+`workspacePathApplications`, and `session/fork` now accepts an open cut.
+The `typert` protocol additions (bidirectional stream uplink, owned
+values, binary results) are opt-in; the in-process
+`ctx.typertGateway` `invoke`/`stream` calls this plugin makes keep their
+shape. `prompt` content parts still accept `{ type: 'image', mediaType,
+ data }`. The `settings.section` client slot is unchanged (only a new
+optional `settings.launcher` was added) and the plugin does not use the
+renamed `ctx.settingsScope` / `ctx.configForms` context. The V3→V4
+`readBytes` unification in `@deepseek-ai/dsh-api-workspace-files` (V3
+`readBytes(path, range)` / `readAll` / `readRelated` → V4
+`readBytes(path, { range, baseFile })`) does not apply: this plugin reads
+workspace files from disk itself and never calls that Remote. The
+single-file `dsh.bundle.patch` form still loads.
+
+**Optional follow-ups** (not defects): the new Plugin Manager reads
+localized titles/descriptions and an icon from `package.json`, which
+this plugin does not declare yet, and the V4 `developer/message` event is
+ignored by the mobile projection — if new sessions deliver runtime
+context or instruction text as developer messages instead of user
+messages, the mobile context-injection chip will simply not appear for
+them.
 
 ## Support boundary
 

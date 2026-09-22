@@ -317,6 +317,101 @@ test("成功的 write 在 turn/end 投影为本轮产出文件", () => {
   assert.deepEqual(files[0].files, ["notes/hi.md"])
 })
 
+test("V4 一等 tool 消息仍能关联 callId：产出文件 + 工具耗时", () => {
+  const events = [
+    userMsg(1, "写个文件"),
+    ev(2, "tool/call", {
+      callId: "c1",
+      name: "write",
+      arguments: JSON.stringify({ file_path: "notes/v4.md", content: "hi" }),
+      turn: 1,
+      step: 1,
+    }),
+    // DSH 0.1.7 起的 V4 形状：role=tool，toolCallId/isError 在 message 上
+    ev(3, "tool/result", {
+      turn: 1,
+      step: 1,
+      message: {
+        role: "tool",
+        source: { kind: "tool", callId: "c1" },
+        toolCallId: "c1",
+        content: [{ type: "text", text: "written" }],
+      },
+    }),
+    ev(4, "turn/end", { turn: 1, reason: { kind: "completed" } }),
+  ]
+  const { messages } = projectHistoryPage({ events, reasoningBySeq: new Map(), hasMore: false })
+  const files = messages.filter((m) => m.role === "produced_files")
+  assert.equal(files.length, 1)
+  assert.deepEqual(files[0].files, ["notes/v4.md"])
+  const result = messages.find((m) => m.role === "tool_result")
+  assert.equal(result.callId, "c1")
+  assert.equal(result.text, "written")
+  assert.equal(result.durationMs, 1)
+})
+
+test("V4 失败的 write（message.isError）不投影产出文件", () => {
+  const events = [
+    userMsg(1, "写个文件"),
+    ev(2, "tool/call", {
+      callId: "c1",
+      name: "write",
+      arguments: JSON.stringify({ file_path: "notes/v4.md", content: "hi" }),
+      turn: 1,
+      step: 1,
+    }),
+    ev(3, "tool/result", {
+      turn: 1,
+      step: 1,
+      message: {
+        role: "tool",
+        source: { kind: "tool", callId: "c1" },
+        toolCallId: "c1",
+        content: [{ type: "text", text: "fail" }],
+        isError: true,
+      },
+    }),
+    ev(4, "turn/end", { turn: 1, reason: { kind: "completed" } }),
+  ]
+  const { messages } = projectHistoryPage({ events, reasoningBySeq: new Map(), hasMore: false })
+  assert.equal(messages.filter((m) => m.role === "produced_files").length, 0)
+})
+
+test("V3 真实包装块取内层正文，不把 ToolResultBlock 序列化出来", () => {
+  const events = [
+    userMsg(1, "写个文件"),
+    ev(2, "tool/call", {
+      callId: "c1",
+      name: "write",
+      arguments: JSON.stringify({ file_path: "notes/v3.md", content: "hi" }),
+      turn: 1,
+      step: 1,
+    }),
+    ev(3, "tool/result", {
+      turn: 1,
+      step: 1,
+      message: {
+        role: "user",
+        source: { kind: "tool", callId: "c1" },
+        content: [{
+          type: "tool-result",
+          toolCallId: "c1",
+          content: [{ type: "text", text: "first" }, { type: "text", text: "second" }],
+        }],
+      },
+    }),
+    ev(4, "turn/end", { turn: 1, reason: { kind: "completed" } }),
+  ]
+  const { messages } = projectHistoryPage({ events, reasoningBySeq: new Map(), hasMore: false })
+  const result = messages.find((m) => m.role === "tool_result")
+  assert.equal(result.text, "first\nsecond")
+  assert.equal(result.callId, "c1")
+  assert.deepEqual(
+    messages.filter((m) => m.role === "produced_files").map((m) => m.files),
+    [["notes/v3.md"]],
+  )
+})
+
 test("clampHistoryMaxMessages caps and rejects non-positive", () => {
   assert.equal(clampHistoryMaxMessages(20), 20)
   assert.equal(clampHistoryMaxMessages(MAX_HISTORY_MESSAGES + 999), MAX_HISTORY_MESSAGES)
