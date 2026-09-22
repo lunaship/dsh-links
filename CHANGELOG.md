@@ -1,5 +1,21 @@
 # Changelog
 
+## 未发布（working tree）— DSH `0.1.7-alpha.1` 适配 — 2026-09-22
+
+尚未发包；npm `beta` 仍为 `0.1.0-beta.17`。
+
+- 适配 DSH `0.1.7-alpha.1` 的 V4 session 日志：`tool/result` 从「`role: user` + `tool-result` 包装块」升为一等 `role: tool` 消息（`toolCallId` / `isError` 提到 `message` 上，`content` 直接是内层内容数组）。新增 `toolResultMeta()` / `toolResultContent()`，两种形状都认：`callId` 以 `message.toolCallId` 为先、回落 `source.callId`；`isError` 以 `message.isError` 为先、回落包装块；结果正文在包装块存在时取内层 `content`。
+- 修复：V4 会话上失败的 `write`/`edit` 会被当成成功变更，手机端「产出文件」卡片把失败操作写过的文件也列进来。
+- 修复：真实 V3 会话的结果正文原本是把整个 `ToolResultBlock` 序列化后的 JSON，现在取内层正文块（App 侧把 `tool_result` 的 `text` 当纯文本渲染，无需 App 改动）。
+- 兼容性：DSH 源码基线由 `0.1.5-rc.2` 升至 `0.1.7-alpha.1`（npm `alpha`）。`next`/`0.1.5-rc.3` 经逐字节比对为本插件相关面上无代码变更（仅 `package.json` 版本号）。迁移面与回滚限制（V4 新会话无法在 RC 线读取、`settings.yaml` 一次性导入 `profiles/web/cordis.patch.yml`）详见 `docs/COMPATIBILITY.md` 的「DSH `0.1.7-alpha.1` migration notes」。
+- 证据：单测 183 绿（新增 6 条 V3/V4 `tool/result` 用例，先 `git stash` 掉 `src/` 验证过新用例确会失败）；`scripts/e2e-arch-smoke.mjs` 对 `0.1.7-alpha.1` 35/35（隔离 `stateDir`，操作者 `state.json` 哈希未变）；操作者 host 已在 `0.1.7-alpha.1` 上重启，两台既有手机配对与 Relay 路由凭据完好。真机端到端尚未在本基线重跑。
+- 修复：会话日志的多帧 zstd 没被解完。`session*.jsonl.zstd` 是按追加逐帧写的容器，而 Node 的 `zstdDecompressSync` / `createZstdDecompress` **只解第一帧**（后续帧不报错也不出现在输出里），原来的 `zstdDecompressAll()` 单次调用只能拿到会话头那一行（实测：973,558 字节的日志只消费了 178 字节）——「从会话文件补全 reasoning」因此一直静默失效（返回空 Map）。新增 `src/zstd-frames.js`，逐帧解压并按解码器自身消费的压缩字节数（`bytesWritten`）推进；实测同一文件 562 帧 / 1,489 行 / 3.5MB 正文、耗时约 48–99ms。同时该路径现在也能直接读未压缩的 `session.vN.jsonl`。
+- 证据：单测 194 绿（新增 `test/zstd-frames.test.mjs` 8 条 + `test/session-log-reasoning.test.mjs` 3 条：多帧、单帧、空输入、逐帧 jsonl 保序、尾随非 zstd 字节只返回前缀、非 zstd 返回空、输出上限抛错、64 帧覆盖、文件→推理→投影端到端）。把 `decompressZstdFrames` 临时换回“单次调用旧行为”后这批用例 11 条中 7 条失败，确认测试锁住了该回归。
+- 为能真正测到「文件补全思考」这条链路，把日志扫描从 `src/index.js` 抽成 `src/session-log-reasoning.js` 的纯函数 `reasoningBlocksFromSessionLog()`（flush 点仍与 `src/history.js` 同源），`readSessionReasoning` 只留 IO、路径解析与缓存。
+- 验证：`scripts/e2e-arch-smoke.mjs` 在 `0.1.7-alpha.1` 上 35/35（含插件加载，即新模块 import 生效）；host 已重启加载新源码，loopback `pair-info`/`devices`/`relay-status` 与手机端 `18640/dsh-link/health` 均 200，两台配对完好。
+- 未复现：上述验证过程中有一次 `npm run prepack` 报 193/1（未记下用例名），随后连续 8 次全量 + 6 次集成子集重跑均 194/0，无稳定复现。
+- 未修复的已知缺口（已确认，非本次改动引入）：seeded/forked 会话（日志含 `session/end-seed`）没有 `assistant/chunk` 行，reasoning 只存在 `assistant/message` 的 `content` reasoning 块里；而 `history.js` 的 `assistant/message` 分支只取 `text` 块、文件扫描只认 chunk 行，所以这类会话在手机上不显示思考。
+
 ## dsh-links 0.1.0-beta.17 — 2026-09-20
 
 - 安全加固（手机 API）：权限预设与 `settings.update` 的 `permission.defaultPreset` 拒绝原型键；新增宿主开关 `allowMobileDangerFullAccess`（默认关闭），手机端 `danger-full-access` 一律 403 拒绝而非静默降级；权限变更与文件下载要求该设备正持有对应会话的活跃 SSE 订阅。

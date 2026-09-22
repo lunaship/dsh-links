@@ -13,12 +13,13 @@ import { readFile as readFileAsync } from "node:fs/promises"
 import { dirname, isAbsolute, join, resolve, sep } from "node:path"
 import { homedir, hostname, networkInterfaces } from "node:os"
 import { randomBytes } from "node:crypto"
-import { zstdDecompressSync } from "node:zlib"
 import z from "@deepseek-ai/schemastery"
 import QRCode from "qrcode"
+import { decompressZstdFrames } from "./zstd-frames.js"
 import { clampHistoryMaxMessages, projectHistoryPage } from "./history.js"
 import { mimeFromName, resolveWorkspaceFile } from "./workspace-file.js"
 import { resolveSessionLogPath } from "./session-log-path.js"
+import { reasoningBlocksFromSessionLog } from "./session-log-reasoning.js"
 import { mobileSessionSummary } from "./mobile-session-summary.js"
 import { omitNullFields, optionalString } from "./optional-string.js"
 import {
@@ -701,9 +702,11 @@ async function handlePair(req, res, config, state, stateFile, rt) {
 
 const MAX_ZSTD_OUTPUT_BYTES = 32 * 1024 * 1024
 
-/** 拼接多帧 zstd 解压（DSH 存储按帧追加写入）。输出字节数硬顶，防压缩炸弹。 */
-function zstdDecompressAll(buf) {
-  return zstdDecompressSync(buf, { maxOutputLength: MAX_ZSTD_OUTPUT_BYTES })
+/** 会话日志正文：`.zstd` 是逐帧追加的容器，必须逐帧解完；未压缩的 jsonl 直接读文本。 */
+async function readSessionLogText(path) {
+  const raw = await readFileAsync(path)
+  if (!path.endsWith(".zstd")) return raw.toString("utf8")
+  return (await decompressZstdFrames(raw, { maxOutputBytes: MAX_ZSTD_OUTPUT_BYTES })).toString("utf8")
 }
 
 /**
@@ -733,41 +736,8 @@ async function readSessionReasoning(targetPort, sessionId, rt) {
     if (st.size > 32 * 1024 * 1024) return new Map()
     const hit = rt?.reasoningCache?.get(p)
     if (hit && hit.mtime === st.mtimeMs && hit.size === st.size) return hit.map
-    const text = zstdDecompressAll(await readFileAsync(p)).toString("utf8")
-    const reasoning = new Map()
-    let pending = null // { seq, time, text }
-    const flush = (time) => {
-      if (pending) {
-        const text = pending.text.trim()
-        if (text) reasoning.set(pending.seq, { seq: pending.seq, time: pending.time || time, text })
-        pending = null
-      }
-    }
-    // 与 src/history.js 的投影 flush 点保持一致，保证事件侧与文件侧分组相同
-    const FLUSH_TYPES = new Set(["user/message", "approval/asked", "tool/call", "tool/result", "compaction/start", "todo/write"])
-    for (const line of text.split("\n")) {
-      if (!line.trim()) continue
-      let e
-      try { e = JSON.parse(line) } catch { continue }
-      if (e?.type === "assistant/chunk") {
-        const chunk = e?.data?.chunk
-        if (chunk?.type === "block-end" && chunk.block?.type === "reasoning") {
-          const blockText = chunk.block?.text
-          if (blockText) {
-            pending = pending
-              ? { seq: pending.seq, time: pending.time, text: pending.text + "\n" + blockText }
-              : { seq: e.seq, time: e.time, text: blockText }
-          }
-          continue
-        }
-        if (chunk?.type === "block-end" && chunk.block?.text) flush(e?.time ?? 0)
-      } else if (e?.type === "assistant/message") {
-        flush(e?.time ?? 0)
-      } else if (FLUSH_TYPES.has(e?.type)) {
-        flush(e?.time ?? 0)
-      }
-    }
-    flush(0)
+    const text = await readSessionLogText(p)
+    const reasoning = reasoningBlocksFromSessionLog(text)
     rt?.reasoningCache?.set(p, { mtime: st.mtimeMs, size: st.size, map: reasoning })
     return reasoning
   } catch (err) {
