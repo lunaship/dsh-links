@@ -1,8 +1,8 @@
 # Changelog
 
-## 未发布（working tree）— DSH `0.1.7-alpha.1` 适配 — 2026-09-22
+## dsh-links 0.1.0-beta.18 — 2026-09-23
 
-尚未发包；npm `beta` 仍为 `0.1.0-beta.17`。
+DSH `0.1.7-alpha.1` 适配（V4 `tool/result` 缝合）+ 多帧 zstd 会话日志修复。
 
 - 适配 DSH `0.1.7-alpha.1` 的 V4 session 日志：`tool/result` 从「`role: user` + `tool-result` 包装块」升为一等 `role: tool` 消息（`toolCallId` / `isError` 提到 `message` 上，`content` 直接是内层内容数组）。新增 `toolResultMeta()` / `toolResultContent()`，两种形状都认：`callId` 以 `message.toolCallId` 为先、回落 `source.callId`；`isError` 以 `message.isError` 为先、回落包装块；结果正文在包装块存在时取内层 `content`。
 - 修复：V4 会话上失败的 `write`/`edit` 会被当成成功变更，手机端「产出文件」卡片把失败操作写过的文件也列进来。
@@ -15,6 +15,8 @@
 - 验证：`scripts/e2e-arch-smoke.mjs` 在 `0.1.7-alpha.1` 上 35/35（含插件加载，即新模块 import 生效）；host 已重启加载新源码，loopback `pair-info`/`devices`/`relay-status` 与手机端 `18640/dsh-link/health` 均 200，两台配对完好。
 - 未复现：上述验证过程中有一次 `npm run prepack` 报 193/1（未记下用例名），随后连续 8 次全量 + 6 次集成子集重跑均 194/0，无稳定复现。
 - 未修复的已知缺口（已确认，非本次改动引入）：seeded/forked 会话（日志含 `session/end-seed`）没有 `assistant/chunk` 行，reasoning 只存在 `assistant/message` 的 `content` reasoning 块里；而 `history.js` 的 `assistant/message` 分支只取 `text` 块、文件扫描只认 chunk 行，所以这类会话在手机上不显示思考。
+- 仓库卫生：`test/pairing-qr-payload.test.mjs` 的配对夹具原是从真实 `pair-info` 响应抄下来的，含维护者真实主机名、局域网/Tailscale 地址、设备 id、配对码与主机证书指纹。本仓公开，已全部替换为同形状占位值，并重写历史清除旧值。
+- Android App 配套版本 `0.5.0-beta.20`（自适应工作台与导航重构、Mermaid 位图缓存像素预算、高权限命令统一确认、系统分享缓存配额、二级窗口 `FLAG_SECURE`）。
 
 ## dsh-links 0.1.0-beta.17 — 2026-09-20
 
