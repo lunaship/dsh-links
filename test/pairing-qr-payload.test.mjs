@@ -31,7 +31,7 @@ function modulesFor(payload) {
   return QRCode.create(JSON.stringify(payload), {}).modules.size + 4
 }
 
-/** 现场真实形状：局域网码（本机 192.168.x + Tailscale 100.x 两个地址）。 */
+/** 局域网码的现场形状：本机 192.168.x + Tailscale 100.x 两个地址（均为占位值）。 */
 function lanInfo() {
   return {
     v: 1,
@@ -64,7 +64,7 @@ function relayInfo() {
       client: "relay.dshlinks.com:8443",
       routeId: "ROUTEID00000000000000",
       routeSecret: "dummy-route-secret-0000000000000000000000",
-      tlsFingerprint: "6fbe09cb8809714ec1c9eec1b982212bdc78e06870abd5ed21442bd4e6d3f9ea",
+      tlsFingerprint: "aa11bb22cc33dd44ee55ff6677889900aa11bb22cc33dd44ee55ff6677889900",
     },
   }
 }
