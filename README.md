@@ -5,127 +5,92 @@
   让运行在电脑、家中主机或远程服务器上的 DSH，拥有一个经过配对的原生 Android 入口。
 </p>
 
-<p align="center"><strong>Beta</strong> · <strong>Android only</strong> · <strong>Trusted LAN</strong> · <strong>Relay 内测（需接入码）</strong> · <strong>Unofficial</strong></p>
-
 <p align="center">
-  <img src="docs/images/dsh-workbench-latest.png" width="900" alt="当前 DSH Web 工作台，展示会话、思考事件、消息和模型选择。">
+  <img src="docs/images/dsh-workbench-latest.png" width="900" alt="DSH Web 工作台">
 </p>
 
-<p align="center"><sub>电脑继续运行 DSH、工具和工作区；手机负责查看会话、发送消息、接收实时事件和处理审批。</sub></p>
+---
 
 ## 这是什么
 
-这不是远程桌面，也不是把 DSH Web 页面塞进手机浏览器。DSH Links 将手机作为 DSH 的一个已配对客户端：电脑继续运行 DSH、工具和工作区；Android App 负责在手机上查看会话、发送消息、接收实时事件和处理审批。
+DSH Links 是一个 **DSH 手机插件**，它把 Android 手机变成 DSH 的已配对客户端。电脑继续运行 DSH、工具和工作区；手机负责查看会话、发送消息、接收实时事件和处理审批。
+
+这不是远程桌面，也不是把 DSH Web 页面塞进手机浏览器。
 
 | 组成 | 作用 | 发布方式 |
 |---|---|---|
 | **本仓库 `dsh-links`** | DSH 插件、手机 HTTPS 接入代理、电脑端配对与设备管理面板；Relay 源码在 [`relay/`](relay/) | 开源 npm 插件；Relay 源码同仓公开，使用仍需维护者接入码 |
 | **DSH Links Android App** | 扫码/手动配对、设备入口、原生会话工作台、实时流与审批 | 私有源码；仅发布官方签名 APK |
 
-## Android App 能做什么
+---
 
-- 扫描电脑端二维码，或手动输入地址和一次性配对码添加 DSH。
-- 保存多个已配对设备，显示连接状态，并可随时移除本机记录。
-- 在原生工作台中浏览会话与历史、继续对话、查看工具/思考事件，并通过 SSE 接收实时更新。
-- 在手机上处理 DSH 的审批请求；短暂断线（默认 30 秒内重连，且不超过原 5 分钟期限）仍可继续处理。超时未处理按「不可用」结束，该次工具调用失败，可重试。丢失设备时，可从电脑端立即吊销该设备。
-- 系统通知只覆盖 App 仍能收到当前会话 SSE 时的本地提醒；进程被杀、锁屏推送和全会话后台通知尚未交付（渠道待定）。完整说明见 [`PRIVACY.md`](PRIVACY.md) 与 [`docs/MOBILE_SYNC_CONTRACT.md`](docs/MOBILE_SYNC_CONTRACT.md)。
-- 使用手机本地加密保存配对 Token 与 TLS 证书指纹；App 禁用云备份和明文 HTTP。完整说明见 [`PRIVACY.md`](PRIVACY.md)。
+## 核心功能
 
-Android App 当前最低支持 Android 8.0（API 26）。源码不在本仓库；请只安装 GitHub Release 随版本号和 SHA-256 发布的官方签名 APK。
+- **扫码配对**：电脑端生成二维码或 6 位配对码，手机扫码或手动输入即可完成配对。
+- **设备管理**：电脑端可查看已配对设备、一键吊销全部设备；支持同名设备替换流程。
+- **原生工作台**：Android App 提供原生会话列表、消息输入、思考事件查看、模型选择。
+- **实时同步**：SSE 推送会话事件，断线自动重连（默认 30 秒内，不超过 5 分钟期限）。
+- **审批处理**：在手机上直接处理 DSH 的审批请求，超时未处理自动标记为不可用。
+- **远端 Relay（内测）**：通过维护者接入码接入 Relay，实现跨网络远程配对。
+
+---
 
 ## 三步开始
 
-1. 在运行 DSH 的电脑或服务器安装本插件，并启动 `dsh web`。
-2. 打开「设置 → 手机连接」，使用二维码或当前 6 位配对码添加设备。
-3. 在 Android App 选择已添加的 DSH，进入会话工作台；设备管理和吊销始终在电脑端可见。
-
-局域网不需要接入码。远端 Relay 目前不是公开自助能力：只有拿到维护者发放的接入码，才能在「远端连接」里把电脑接入 Relay，并再扫第二张云端码。
-
-## 最新界面截图
-
-*电脑端截图于 2026-09-25 从当时本地运行版本截取；二维码、配对码、主机名、内网地址和设备标识均已脱敏。Android 截图来自 `0.5.0-beta.16` 构建。当前发布 App 是 `0.5.0-beta.18`，界面未重拍。*
-
-### 电脑端手机连接与 Android 设备
-
-<table>
-  <tr>
-    <td width="60%" valign="top"><img src="docs/images/phone-connection-latest-sanitized.png" alt="当前 DSH Links 电脑端手机连接设置，展示局域网配对入口和已配对设备。"><br><sub><b>电脑端手机连接</b>：从当前 DSH Web 设置发起局域网配对。</sub></td>
-    <td width="40%" valign="top"><img src="docs/images/android-devices-latest-sanitized.png" alt="当前 DSH Links Android App 设备列表，展示局域网和云端设备入口。"><br><sub><b>Android 设备</b>：查看多个已配对设备及其连接状态。</sub></td>
-  </tr>
-</table>
-
-### 手机上的 DSH 工作台
-
-<table>
-  <tr>
-    <td width="50%" valign="top"><img src="docs/images/android-workspace-latest.png" alt="当前 Android App 原生会话工作台，展示对话、思考事件、模型选择和消息输入。"><br><sub><b>原生工作台</b>：在手机上继续会话、查看思考事件并发送消息。</sub></td>
-    <td width="50%" valign="top"><img src="docs/images/android-navigation-latest.png" alt="当前 Android App 工作区导航抽屉，展示工作区、会话和设置入口。"><br><sub><b>工作区导航</b>：切换设备、工作区、会话与设置。</sub></td>
-  </tr>
-</table>
-
-### Android App 设置
-
-<img src="docs/images/android-settings-latest.png" width="60%" alt="当前 Android App 设置页，展示通用设置、模型、会话、插件和外观选项。">
-
-## App 卸载重装后扫码连不上？
-
-卸载 App 会销毁手机 Keystore 里的设备 token（这是刻意的安全语义：卸载即失效），
-重装后必须重新扫码。重新扫码时：
-
-1. **刷新电脑面板再扫**。配对码是一次性且默认 10 分钟过期的，扫旧截图/旧二维码会报
-   「配对码已使用/已过期」。二维码新带 `issuedAt`/`expiresAt` 时效戳，配套新版 App
-   会据此直接提示刷新面板，不拿过期码撞限流（旧版 App 提交后仍会收到错误提示）。
-2. 报「已存在同名设备」是正常的：卸载不会在电脑上删除旧设备记录。当前 App 版本
-   请先在电脑面板「手机连接」手动吊销该设备再扫码；配套新版 App 会弹窗直接提供
-   「替换」选项（同一张配对码换发新 token 并吊销旧设备）。开了「配对需本机确认」
-   时替换需在面板点一次批准，批准前旧设备不受影响。
-3. 反复失败触发限流（单客户端 5 次失败冷却 15 分钟）属预期，等冷却结束再试。
-
-时效戳预检与「替换」弹窗依赖 App 侧更新，随配套 App 版本发布；插件侧字段向后
-兼容，旧 App 行为不变。
-
-这与 Relay **接入码**无关：接入码只在电脑首次接入 Relay 时用一次，之后凭据长期
-保存并自动续期；App 更新、卸载重装都不需要重新填接入码。局域网配对也不需要接入码。
-
-## Beta support boundary
-
-This release is an **Android Beta**. The supported public path remains a trusted LAN.
-
-- **Supported:** Android phone and DSH on the same trusted LAN. The current
-  source baseline and verified combination are maintained in
-  [`dsh-links/docs/COMPATIBILITY.md`](https://github.com/lunaship/dsh-links/blob/main/docs/COMPATIBILITY.md).
-- **Private testing:** DSH Links Relay. End-to-end remote pairing has been exercised, but it is still invite-only. Invite codes are issued only by the maintainer. This repository, GitHub Releases, and the npm package do not contain invite codes, Relay host credentials, or `state.json`.
-- **Experimental, at your own risk:** a Tailscale or Cloudflare Tunnel path you operate yourself. It is not a supported Beta path and is not covered by the security or compatibility promise.
-- **Not supported:** exposing port `18640` directly to the public Internet or using frp. Public self-serve Relay enrollment is not available.
-
-The Android APK is distributed only as an official signed release. Verify the version and SHA-256 published with that release; do not install repackaged APKs. This repository contains the plugin, Relay source under [`relay/`](relay/), and documentation. Android source stays in a private repository.
-
-## 安装
+1. **安装插件**：在运行 DSH 的电脑上安装本插件，并启动 `dsh web`。
+2. **扫码配对**：打开 DSH Web 设置 →「手机连接」，扫描二维码或输入配对码。
+3. **开始使用**：在 Android App 中选择已添加的 DSH，进入会话工作台。
 
 ```bash
-dsh plugin --profile web add dsh-links@<published-version>
+# 安装发布版本
+dsh plugin --profile web add dsh-links@<version>
 dsh web
-```
 
-开发期本地目录（本仓库根目录含 `package.json`）：
-
-```bash
+# 或开发期本地目录
 dsh plugin --profile web add /path/to/dsh-links
 ```
 
-然后重启 `dsh web`，设置 →「手机连接」扫码或手动配对。扫码中的地址或手动填写的地址可以指向家中电脑或远程服务器上运行的 DSH；当前公开 Beta 正式支持同一可信局域网。跨网络可自管 Tailscale / Cloudflare Tunnel，或在持有维护者接入码的情况下使用内测 Relay。
+> **注意**：局域网配对不需要接入码。远端 Relay 目前仅限持有维护者接入码的内测用户。
 
-当前源码基线、发布状态和已验证组合统一见
-[`dsh-links/docs/COMPATIBILITY.md`](https://github.com/lunaship/dsh-links/blob/main/docs/COMPATIBILITY.md)，本 README 不重复维护版本事实。
+---
 
-## 能力摘要
+## 界面截图
 
-- 扫码 / 配对码 → 设备 token（`x-dsh-link-token`）；可选本机确认后才放行
-- `0.0.0.0:18640` HTTPS 手机接入代理（面板展示监听地址与可达网段）
-- `/dsh-link/mobile/*` 会话、SSE、审批、吊销；面板可一键吊销全部设备
-- 局域网码与云端码分开：云端码只在电脑用接入码连上 Relay 之后出现
+*截图于 2026-09-25，二维码、配对码、主机名、内网地址和设备标识均已脱敏。Android 截图来自 `0.5.0-beta.16` 构建。当前发布 App 是 `0.5.0-beta.18`，界面未重拍。*
 
-详情见 [`SECURITY.md`](SECURITY.md)、[`PRIVACY.md`](PRIVACY.md) 与 [`REMOTE_ACCESS.md`](REMOTE_ACCESS.md)。
+### 电脑端手机连接
+
+<img src="docs/images/phone-connection-latest-sanitized.png" width="70%" alt="电脑端手机连接设置">
+
+### Android 设备列表
+
+<img src="docs/images/android-devices-latest-sanitized.png" width="40%" alt="Android 设备列表">
+
+### 手机工作台
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/android-workspace-latest.png" alt="原生工作台"><br><sub>原生工作台：继续会话、查看思考事件</sub></td>
+    <td width="50%"><img src="docs/images/android-navigation-latest.png" alt="工作区导航"><br><sub>工作区导航：切换设备、会话与设置</sub></td>
+  </tr>
+</table>
+
+### Android 设置
+
+<img src="docs/images/android-settings-latest.png" width="50%" alt="Android 设置">
+
+---
+
+## 安全与隐私
+
+- 配对 Token 与 TLS 证书指纹保存在手机本地加密存储（Keystore），禁用云备份。
+- App 禁用明文 HTTP，仅通过 TLS 接入。
+- 卸载 App 会销毁本地设备 Token（安全语义：卸载即失效），重装需重新扫码。
+- 不会在 issue、截图或 PR 中张贴接入码或 Relay 路由凭据。
+
+完整说明见 [`PRIVACY.md`](PRIVACY.md) 与 [`SECURITY.md`](SECURITY.md)。
+
+---
 
 ## 远端连接
 
@@ -133,16 +98,23 @@ dsh plugin --profile web add /path/to/dsh-links
 
 - [Tailscale / Cloudflare Tunnel / DSH Links Relay 说明](REMOTE_ACCESS.md)
 - 不要把 `18640` 直接做路由器端口转发。
-- **DSH Links Relay 正在内测。** 电脑和手机都主动连接 Relay；Relay 只实时转发已配对设备的请求与响应，不持久化会话内容、文件、工作区或设备内容。没有维护者发放的接入码无法接入；请不要在 issue、截图或 PR 里张贴接入码。控制台「复制」给出可粘贴进插件的完整接入串（含主机）；自建不要只贴裸邀请码。云端二维码本身内含 Relay 路由凭据（`routeSecret`），与接入码同等敏感：请勿截图、录屏或投屏分享；怀疑泄露时到控制台吊销该 Host。插件「断开」只是暂停接入、保留凭据，可重连，不能当作作废。换到另一台 Relay 前插件会确认，并在新接入成功后尝试对原 Relay 发 `REVOKE_SELF` 以空出名额；原 Relay 不可达时仍提醒去原控制台吊销，若记得原控制台地址则可从插件打开。插件也可在本机点「释放名额」自己吊销。接入名额已满时插件会提示先吊销不用的电脑，而不是再签发接入码。满额不消耗该码，吊销后同一张码再点接入即可。控制台此时也不把再签发当主操作。吊销腾出名额后若仍有未用码，让新电脑再点接入。控制台满额时也会标明离线电脑仍占名额，把最久未见的标成建议吊销，并可从横幅一键吊销。换到别的 Relay 不必先在控制台吊销。控制台吊销后，插件会停止重连并提示签发新接入码；若接入串带有控制台地址，插件可直接打开（不是 App 登录）；满额时贴入接入串也可打开控制台去吊销；满额失败后插件仍记住该公网地址，刷新面板不必再贴。更换或换 Relay 后，同一网络下的手机下次打开即可跟上，纯远程请重新扫云端配对码（插件已有有效路由即显示云端码，换路由后刷新，不必等心跳在线；App 设备列表留下本机「扫码恢复云端」，不登录 Control）。
+- **DSH Links Relay 正在内测**，仅通过维护者接入码邀请加入。云端二维码内含 Relay 路由凭据（`routeSecret`），与接入码同等敏感，请勿截图分享。
+
+---
 
 ## 开发
 
 ```bash
+# 生成客户端代码
 node build-client.mjs
+
+# 运行测试
 node --test test/*.mjs
 ```
 
-改 `src/module2.js` 后必须重新生成 `src/client.js`。
+> 修改 `src/module2.js` 后必须重新生成 `src/client.js`。
+
+---
 
 ## License
 
