@@ -10,11 +10,11 @@ const createPanelModule = (require) => {
 
   function deviceSeenLabel(lastSeenAt) {
     if (!lastSeenAt) return '暂未连接'
-    const diff = Date.now() - lastSeenAt
-    if (diff < 60_000) return '刚刚在线'
-    if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前在线`
-    if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前在线`
-    return `${Math.floor(diff / 86_400_000)} 天前在线`
+    const d = Date.now() - lastSeenAt
+    if (d < 6e4) return '刚刚在线'
+    if (d < 36e5) return `${d / 6e4 | 0} 分钟前在线`
+    if (d < 864e5) return `${d / 36e5 | 0} 小时前在线`
+    return `${d / 864e5 | 0} 天前在线`
   }
 
   /** 默认 Agent/Client 端口不展示；自定义端口仍原样显示。 */
@@ -63,13 +63,11 @@ const createPanelModule = (require) => {
     if (!text || text.length > 512) return ''
     let parsed
     try { parsed = new URL(text) } catch { return '' }
-    if (parsed.protocol !== 'https:') return ''
-    if (parsed.username || parsed.password || parsed.search || parsed.hash) return ''
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.search || parsed.hash) return ''
     const host = String(parsed.hostname || '').toLowerCase().replace(/^\[|\]$/g, '')
     if (!host) return ''
-    if (host === 'localhost' || host === 'localhost.' || host === '::1' || host === '0.0.0.0' || host === '::') return ''
-    if (host === '0:0:0:0:0:0:0:0' || host === '0:0:0:0:0:0:0:1') return ''
-    if (host === '127.0.0.1' || host.startsWith('127.')) return ''
+    const locals = new Set(['localhost', 'localhost.', '::1', '0.0.0.0', '::', '0:0:0:0:0:0:0:0', '0:0:0:0:0:0:0:1'])
+    if (locals.has(host) || host === '127.0.0.1' || host.startsWith('127.')) return ''
     const path = String(parsed.pathname || '').replace(/\/+$/, '')
     return path && path !== '/' ? `https://${parsed.host}${path}` : `https://${parsed.host}`
   }
@@ -654,16 +652,11 @@ const createPanelModule = (require) => {
 
   function connectionStatus(info, relay, devices) {
     const pending = (devices ?? []).filter((d) => d?.status === 'pending')
-    if (pending.length > 0) {
-      return { tone: 'warn', text: `${pending.length} 台待确认` }
-    }
+    if (pending.length) return { tone: 'warn', text: `${pending.length} 台待确认` }
     const paired = (devices ?? []).filter((d) => d && d.status !== 'pending')
-    if (paired.length > 0) {
-      return { tone: 'ok', text: `${paired.length} 台手机在线` }
-    }
+    if (paired.length) return { tone: 'ok', text: `${paired.length} 台手机在线` }
     if (relay?.status === 'online') return { tone: 'accent', text: '中继就绪 · 等待扫码' }
     if (info) return { tone: 'ok', text: '局域网就绪' }
-    return null
   }
 
   function BrandHeader({ status }) {
