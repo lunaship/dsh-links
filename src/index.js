@@ -18,6 +18,7 @@ import QRCode from "qrcode"
 import { decompressZstdFrames } from "./zstd-frames.js"
 import { clampHistoryMaxMessages, projectHistoryPage } from "./history.js"
 import { mimeFromName, resolveWorkspaceFile } from "./workspace-file.js"
+import { parseChangesCoordinates, projectChangesSummary, projectFileDiff, workspaceChangesService } from "./workspace-changes.js"
 import { resolveSessionLogPath } from "./session-log-path.js"
 import { reasoningBlocksFromSessionLog } from "./session-log-reasoning.js"
 import { mobileSessionSummary } from "./mobile-session-summary.js"
@@ -1248,7 +1249,7 @@ async function handleStreamRoute(sessionId, res, targetPort, config, req, rt, de
   res.write(`event: ready\ndata: ${JSON.stringify({
     resumeSeq: conn.lastSeq,
     protocol: PLUGIN_PROTOCOL,
-    capabilities: pluginCapabilities(),
+    capabilities: pluginCapabilities({ changes: Boolean(workspaceChangesService(rt.workspaceChanges)) }),
   })}\n\n`)
   try { res.flush?.() } catch {}
   ;(async () => {
@@ -1407,7 +1408,7 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
       return json(res, 200, {
         version: 1,
         protocol: PLUGIN_PROTOCOL,
-        capabilities: pluginCapabilities(),
+        capabilities: pluginCapabilities({ changes: Boolean(workspaceChangesService(rt.workspaceChanges)) }),
         host: { name: hostname(), deviceId: state.deviceId },
         device: { name: device.name },
         sessions,
@@ -1860,6 +1861,40 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
       return
     }
 
+    // 本轮改动文件：转发 Host workspaceChanges（摘要 = 路径 + 行数；对比 = 按需取的 hunk）。
+    const changesMatch = pathname.match(/^\/dsh-link\/mobile\/sessions\/([^/]+)\/changes(\/diff)?$/)
+    if (req.method === "GET" && changesMatch) {
+      const sessionId = decodeURIComponent(changesMatch[1])
+      const isDiff = Boolean(changesMatch[2])
+      const service = workspaceChangesService(rt.workspaceChanges)
+      if (!service) return json(res, 404, { error: "主机不支持改动文件", code: "changes_unsupported" })
+      const coords = parseChangesCoordinates(new URL(req.url ?? "/", "http://x").searchParams, { needIndex: isDiff })
+      if (!coords) return json(res, 400, { error: "改动坐标无效" })
+      if (!isDiff) {
+        const summary = projectChangesSummary(service.summary(sessionId, coords.seq))
+        if (!summary) return json(res, 404, { error: "改动摘要已不可用", code: "changes_unavailable" })
+        return json(res, 200, { ok: true, seq: coords.seq, ...summary })
+      }
+      // 对比送出文件全文（含工作区外文件），与文件下载同规则：只给正在查看该会话的设备。
+      if (!isDeviceSubscribedToSession(rt, sessionId, device.deviceId)) {
+        return json(res, 403, { error: "仅正在查看该会话的设备可查看改动" })
+      }
+      const controller = new AbortController()
+      const onClose = () => controller.abort()
+      res.once("close", onClose)
+      try {
+        const diff = projectFileDiff(await service.diff(sessionId, coords.seq, coords.index, controller.signal))
+        if (!diff) return json(res, 404, { error: "改动对比已不可用", code: "changes_unavailable" })
+        return json(res, 200, { ok: true, seq: coords.seq, index: coords.index, ...diff })
+      } catch (err) {
+        if (controller.signal.aborted) return
+        logger?.warn?.(`dsh-links: changes diff: ${err?.message ?? err}`)
+        return json(res, 500, { error: "读取改动对比失败" })
+      } finally {
+        res.off("close", onClose)
+      }
+    }
+
     const historyMatch = pathname.match(/^\/dsh-link\/mobile\/sessions\/([^/]+)\/history$/)
     if (req.method === "GET" && historyMatch) {
       const sessionId = decodeURIComponent(historyMatch[1])
@@ -1889,10 +1924,12 @@ async function handleMobileApi(req, res, targetPort, state, stateFile, device, p
       const reasoningBySeq = pageNeedsReasoningFile(rawEvents)
         ? await readSessionReasoning(targetPort, sessionId, rt)
         : new Map()
+      const changesService = workspaceChangesService(rt.workspaceChanges)
       const projected = projectHistoryPage({
         events: rawEvents,
         reasoningBySeq,
         hasMore: value.hasMore ?? false,
+        changesSummary: changesService ? (seq) => changesService.summary(sessionId, seq) : null,
       })
       const messages = projected.messages
       // 会话被停止/失败/截断时，最后一条 turn/end reason 非 completed（如 interrupted/stopped/error/maxTokens）
@@ -2053,6 +2090,8 @@ function findApprovalId(req) {
 
 export function apply(ctx, config) {
   const rt = createRuntime()
+  // 可选服务：旧 Host 没有 workspaceChanges，不能进 inject（会阻止插件加载），按请求取。
+  rt.workspaceChanges = () => ctx.get("workspaceChanges")
   const web = ctx.get("webServer")
   const gateway = ctx.get("typertGateway") ?? ctx.typertGateway
   if (gateway && typeof gateway.invoke === "function") {

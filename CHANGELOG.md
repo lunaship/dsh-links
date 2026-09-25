@@ -11,6 +11,13 @@
 - 文档：README 新增「App 卸载重装后扫码连不上？」恢复步骤；重申接入码与 App 更新/卸载无关（ENROLL 一次性、凭据长期自动续期，Relay 层无改动）。
 - 证据：单测 198 绿（原 194 + 新增 4 条：立即替换、确认闸门下批准时替换、拒绝保旧、无冲突 replace；另扩展 2 条既有用例覆盖结构化 409 与二维码时效戳）。`git stash src/` 回退源码后，这 6 条相关用例中 5 条失败（「无冲突 replace」通过属预期：它是兼容守卫，旧代码本就忽略未知 `replace` 字段），另有 1 条既有用例因前序新用例中断在状态恢复之前而连带失败——断言确实锁住了新行为。
 
+### 本轮改动文件（转发 DSH `workspaceChanges`）
+
+- 新增能力 `capabilities.files.changes` / `diff` / `diffMaxLines`：仅当 Host 挂载了 `@deepseek-ai/dsh-workspace-changes`（DSH 0.1.7 起 Web 组合默认挂载）时下发；旧 Host 不下发，旧 App 忽略。插件不自己做快照，运行时按请求 `ctx.get("workspaceChanges")`（不进 `inject`，避免在旧 Host 上阻止插件加载）。
+- 历史投影新增 `role: "workspace_changes"`：`workspace/changes` 事件（只带轮号）按其 seq 取 Host 摘要内嵌为卡片（路径、`display`、增删行数、`binary`/`oversized`，最多 100 个文件，`total` 为完整数量；不送 `cwd` 与快照 tree id）。同轮后一条宣告取代前一条（含取代为空）；Host 重启后取不到摘要的旧轮次不出卡片。
+- 新路由 `GET /dsh-link/mobile/sessions/:id/changes?seq=`（完整摘要，最多 500 个文件）与 `GET .../changes/diff?seq=&index=`（单文件 hunk，按 5000 行 / 150 万字符截断并给出 `truncated`）。对比会送出文件全文（含工作区外文件），与文件下载同规则：只给持有该会话活跃 SSE 订阅的设备。
+- 证据：单测 210 绿（新增 `test/workspace-changes.test.mjs` 12 条：摘要裁剪与降级标记、坐标校验、对比按行 / 按字符截断、binary/oversized、服务缺失容错、能力门禁、历史内嵌 / 取不到摘要 / 同轮取代）。
+
 ## dsh-links 0.1.0-beta.18 — 2026-09-23
 
 DSH `0.1.7-alpha.1` 适配（V4 `tool/result` 缝合）+ 多帧 zstd 会话日志修复。

@@ -1,6 +1,7 @@
 /** 业务层能力协商。DLR/1 与内层证书固定不因这些字段改变。 */
 
 import { MAX_WORKSPACE_FILE_BYTES } from "./workspace-file.js"
+import { MAX_DIFF_LINES } from "./workspace-changes.js"
 
 export const PLUGIN_PROTOCOL = 2
 export const CAP_SYNC2 = "sync2"
@@ -19,13 +20,21 @@ export function parseClientCaps(raw) {
   }
 }
 
-export function pluginCapabilities() {
+/**
+ * @param {{ changes?: boolean }} [host] changes：Host 挂载了 workspaceChanges 服务
+ *   （DSH 0.1.7 起的 `@deepseek-ai/dsh-workspace-changes`）。旧 App 忽略未知字段。
+ */
+export function pluginCapabilities({ changes = false } = {}) {
   return {
     protocol: PLUGIN_PROTOCOL,
     sync: { resync: true, catchupIntegrity: true },
     questions: { multi: true, serverValidation: true },
     requests: { snapshot: true, reconnectGraceMs: RECONNECT_GRACE_MS },
-    files: { workspace: true, maxBytes: MAX_WORKSPACE_FILE_BYTES },
+    files: {
+      workspace: true,
+      maxBytes: MAX_WORKSPACE_FILE_BYTES,
+      ...(changes ? { changes: true, diff: true, diffMaxLines: MAX_DIFF_LINES } : {}),
+    },
   }
 }
 

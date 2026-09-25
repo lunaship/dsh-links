@@ -1,5 +1,6 @@
 import { isContextInjectionText } from "./context-injection.js"
 import { mutationPath, toolResultContent, toolResultIsError, toolResultMeta, uniquePaths } from "./produced-files.js"
+import { MAX_EMBEDDED_CHANGED_FILES, projectChangesSummary } from "./workspace-changes.js"
 
 /** session.history 单页消息数上限（客户端 maxMessages 不得突破）。 */
 export const MAX_HISTORY_MESSAGES = 200
@@ -35,8 +36,11 @@ export function clampHistoryMaxMessages(raw) {
  * - assistant/message 的文本块通过 sourceEventSeqs 定位同页 text block-end，
  *   共享同一 id，避免同页重复；block-end 不在本页时（分页边界）仍以 block-end
  *   seq 为 id，客户端按 id 去重。
+ * - workspace/changes 只带轮号：changesSummary(seq) 从 Host 取该宣告的摘要，内嵌为
+ *   role "workspace_changes"。同轮后一条宣告取代前一条（含取代为空列表）；Host 已取不到
+ *   摘要时不出卡片。跨页的同轮取代由客户端按 turn 保留最大 seq。
  */
-export function projectHistoryPage({ events, reasoningBySeq = new Map(), hasMore = false }) {
+export function projectHistoryPage({ events, reasoningBySeq = new Map(), hasMore = false, changesSummary = null }) {
   const messages = []
   // 页窗口：本页最早/最晚事件的 seq（reasoning 归属边界）
   const firstEvent = events[0]?.event ?? null
@@ -251,6 +255,26 @@ export function projectHistoryPage({ events, reasoningBySeq = new Map(), hasMore
     } else if (e.type === "todo/write") {
       flushReasoning(e.time)
       push({ id: `todo-${e.seq}`, seq: e.seq, role: "todo", todos: Array.isArray(e.data?.todos) ? e.data.todos : [], time: e.time, type: "todo" })
+    } else if (e.type === "workspace/changes") {
+      const turn = e.data?.turn
+      const previous = messages.findIndex((m) => m.role === "workspace_changes" && m.turn === turn)
+      if (previous >= 0) messages.splice(previous, 1)
+      let summary
+      try { summary = changesSummary?.(e.seq) } catch { summary = undefined }
+      const changes = projectChangesSummary(summary, { maxFiles: MAX_EMBEDDED_CHANGED_FILES })
+      if (changes) {
+        flushReasoning(e.time)
+        push({
+          id: `changes-${e.seq}`,
+          seq: e.seq,
+          role: "workspace_changes",
+          text: "",
+          turn,
+          changes,
+          time: e.time,
+          type: "workspace_changes",
+        })
+      }
     } else if (e.type === "turn/end") {
       lastTurnEndReason = e.data?.reason?.kind ?? null
       const files = uniquePaths(producedByTurn.get(e.data?.turn))

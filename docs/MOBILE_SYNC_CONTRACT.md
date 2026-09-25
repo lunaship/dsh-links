@@ -31,6 +31,25 @@
 
 产出文件：历史投影可含 `role: "produced_files"` 与 `files` 路径列表。具备 `capabilities.files.workspace` 时，`GET /dsh-link/mobile/sessions/:id/file?path=` 在该会话 cwd 沙箱内返回原始字节（默认上限 8MB）。路径越出工作区返回 403。旧 App 忽略未知 role，仍可走工具结果文本。
 
+## 本轮改动文件（`capabilities.files.changes`）
+
+数据源是 DSH Host 的 `workspaceChanges` 服务（`@deepseek-ai/dsh-workspace-changes`）：每个顶层轮次末尾追加一条只带轮号的 `workspace/changes` 事件，摘要与对比按事件 seq 留在 Host 内存，Session 释放或 Host 重启后即不可取。插件只转发与裁剪，不自己做快照。
+
+Host 挂载了该服务时 bootstrap / SSE `ready` 下发：
+
+```json
+"files": { "workspace": true, "maxBytes": 8388608, "changes": true, "diff": true, "diffMaxLines": 5000 }
+```
+
+未下发 `changes` 时 App 不显示任何改动入口。
+
+- **历史**：`workspace/changes` 投影为 `{ id: "changes-<seq>", seq, role: "workspace_changes", turn, changes: { turn, total, added, deleted, files: [...] } }`，`files` 最多 100 个。同一页内同轮后一条宣告取代前一条（后一条为空列表时直接移除）；跨页由 App 按 `turn` 保留最大 `seq`。Host 取不到摘要时不出这条消息。
+- **实时**：SSE 照常转发原始 `workspace/changes` 事件（`data.turn`）。App 以该事件的 `seq` 调摘要路由；404 时静默不出卡片。
+- **摘要** `GET /dsh-link/mobile/sessions/:id/changes?seq=`：`{ ok, seq, turn, total, added, deleted, files }`，`files` 保持 Host 顺序（按 `display` 码元序），最多 500 个；数组下标即对比路由的 `index`。文件行：`path`（工作目录内相对、否则绝对）、`display`（斜杠分隔，`../`、`~` 或绝对路径）、`added`、`deleted`，以及可选 `binary` / `oversized`（二者都没有行数与对比）。
+- **对比** `GET /dsh-link/mobile/sessions/:id/changes/diff?seq=&index=`：`kind` 为 `text` / `binary` / `oversized`。`text` 带 `before` / `after`（轮首 / 轮末是否存在，据此判定新建 / 删除）、`coarse`（逐行对比超时，整文件替换）、`hunks[{ oldStart, oldLines, newStart, newLines, lines }]`（每行保留 `+` / `-` / 空格前缀，三行上下文），`hunks` 为空表示两侧相同。超过 `diffMaxLines` 行或 150 万字符（压缩脚本等超长行）时只丢尾部行并带 `truncated: { shownLines, totalLines }`；App 按 4MB 读取该 JSON。
+- **权限**：对比会送出文件全文（包括被忽略的文件与工作区外文件），与文件下载同规则，只给持有该会话活跃 SSE 订阅的设备，否则 403。摘要与历史同级。
+- **错误**：Host 无该服务 404 `code: "changes_unsupported"`；摘要 / 对比已不可用 404 `code: "changes_unavailable"`；坐标非法 400。
+
 ## 配对与重装恢复（`POST /dsh-link/pair`）
 
 同名设备默认拒绝静默替换，409 返回结构化字段：
