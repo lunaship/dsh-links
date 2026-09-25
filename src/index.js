@@ -195,6 +195,8 @@ function publicDevice(device) {
     lastSeenAt: device.lastSeenAt,
     via: normalizeDeviceVia(device),
     status: pending ? "pending" : "active",
+    // replace 配对（见 handlePair）进 pending 时告诉面板/手机：批准将吊销同名旧设备。
+    replacing: pending && Array.isArray(device.replaces) && device.replaces.length > 0,
     pendingExpiresAt: pending ? (device.pendingExpiresAt ?? null) : null,
     pairedFrom: pending ? displayRemoteAddress(device.pairedFrom) : "",
   }
@@ -321,6 +323,10 @@ function pairInfo(config, state, certFingerprint, via = "lan") {
   if (via === "relay" && snap) info.relay = snap
   info.requireConfirm = pairRequireConfirm(config, state)
   info.exposure = listenExposure(config, lan.infos)
+  // 时效戳（主机时钟，Unix 毫秒）：App 扫码后可判断码是否已过期/陈旧，
+  // 把「旧截图、面板未刷新」这一类 401 消灭在提交之前。
+  info.issuedAt = Date.now()
+  info.expiresAt = state.pairing?.expiresAt ?? null
   return info
 }
 
@@ -582,6 +588,8 @@ export function qrPayload(info) {
   }
   if (info.relay) out.relay = info.relay
   if (info.requireConfirm !== undefined) out.requireConfirm = info.requireConfirm
+  if (typeof info.issuedAt === "number") out.issuedAt = info.issuedAt
+  if (typeof info.expiresAt === "number") out.expiresAt = info.expiresAt
   return out
 }
 
@@ -622,7 +630,7 @@ function cachedPairRequest(rt, requestId, fingerprint) {
   return hit.body
 }
 
-async function handlePair(req, res, config, state, stateFile, rt) {
+async function handlePair(req, res, config, state, stateFile, rt, logger) {
   if (!requireJsonWrite(req, res)) return
   const body = await readJson(req, res)
   if (!body) return
@@ -658,15 +666,43 @@ async function handlePair(req, res, config, state, stateFile, rt) {
     json(res, throttled ? 429 : 401, { error: ver.error })
     return
   }
-  // 同名设备不允许静默替换：先吊销旧设备或改名
-  const existing = (state.devices ?? []).find((d) => d.name === deviceName)
-  if (existing) {
-    json(res, 409, { error: "已存在同名设备，请先吊销旧设备或更换名称" })
+  // 同名设备默认拒绝静默替换：结构化 409 告知冲突对象，由 App 显式带
+  // replace: true 重发才进入替换流程（409 不消费配对码，同一张码可直接重试）。
+  // 不做自动改名/自动顶替：持码者不该能在电脑端不知情时换掉现有设备。
+  const replace = body.replace === true
+  const sameName = (state.devices ?? []).filter((d) => d.name === deviceName)
+  if (sameName.length && !replace) {
+    const first = sameName[0]
+    json(res, 409, {
+      error: "已存在同名设备，请先吊销旧设备或更换名称",
+      code: "SAME_NAME",
+      existing: {
+        deviceId: first.deviceId,
+        name: first.name,
+        status: isDevicePending(first) ? "pending" : "active",
+      },
+    })
     return
   }
   const token = randomToken(24)
   const deviceId = `dev-${randomToken(8)}`
   const requireConfirm = pairRequireConfirm(config, state)
+  // 替换的落点由 requireConfirm 决定：无确认闸门时持码即等同授权，立即吊销
+  // 同名旧设备；有闸门时旧设备保持在线、新设备进 pending，批准的那一刻才替换
+  // （拒绝/超时不伤旧设备），替换动作始终被现有确认闸门覆盖。
+  // 摘除与新设备写入全同步且共用末尾一次 saveState：verify→consume 临界区不被
+  // await 打断（一张码原子配一台），崩溃时也不会留下“旧已删、新未入”的中间态。
+  const replacedIds = []
+  const replacedDevices = []
+  if (sameName.length && replace && !requireConfirm) {
+    for (const old of sameName) {
+      old[DEVICE_REVOKING] = true
+      replacedIds.push(old.deviceId)
+      replacedDevices.push(old)
+    }
+    state.devices = (state.devices ?? []).filter((d) => !replacedIds.includes(d.deviceId))
+    for (const old of replacedDevices) dropDevice(state, rt, old)
+  }
   const device = {
     deviceId,
     name: deviceName,
@@ -682,11 +718,19 @@ async function handlePair(req, res, config, state, stateFile, rt) {
     device.pairedFrom = displayRemoteAddress(
       req.socket?.remoteAddress ?? req.connection?.remoteAddress ?? "",
     )
+    if (sameName.length && replace) device.replaces = sameName.map((d) => d.deviceId)
   }
   state.devices = state.devices ?? []
   state.devices.push(device)
   consumePairingCode(state) // 配对码一次性：成功后立即失效
   saveState(stateFile, state)
+  // 同 revokeDeviceEntry 的线性化边界：被替换设备的在途操作排空后才确认应答。
+  for (const old of replacedDevices) await rt.deviceMutations.drain(old.deviceId)
+  if (replacedIds.length) {
+    logger?.info(
+      `dsh-links: device replace device=${replacedIds.map((id) => String(id).slice(0, 8)).join(",")} new=${deviceId.slice(0, 8)}`,
+    )
+  }
   const result = {
     ok: true,
     token,
@@ -695,6 +739,8 @@ async function handlePair(req, res, config, state, stateFile, rt) {
     urls: lanUrls(config).urls,
     pending: requireConfirm,
     pendingExpiresAt: requireConfirm ? device.pendingExpiresAt : undefined,
+    ...(replacedIds.length ? { replacedDeviceIds: replacedIds } : {}),
+    ...(device.replaces ? { replacing: true } : {}),
   }
   rememberPairRequest(rt, requestId, requestFingerprint, result)
   json(res, 200, result)
@@ -1280,7 +1326,7 @@ function sweepExpiredPending(state, stateFile, rt) {
   saveState(stateFile, state)
 }
 
-function activatePendingDevice(state, stateFile, deviceId) {
+async function activatePendingDevice(state, stateFile, rt, deviceId) {
   const id = String(deviceId ?? "").trim()
   if (!id) return { status: 400, body: { error: "缺少 deviceId" } }
   const target = (state.devices ?? []).find((d) => d.deviceId === id)
@@ -1289,11 +1335,34 @@ function activatePendingDevice(state, stateFile, deviceId) {
   if (Date.now() >= (target.pendingExpiresAt ?? 0)) {
     return { status: 404, body: { error: "待确认已过期，请重新配对" } }
   }
+  // 批准即执行替换：摘除旧设备、放行新设备、单次落盘全同步（并发重复批准
+  // 会同步命中「设备无需确认」409），之后排空旧设备在途操作才确认应答。
+  // 拒绝或 pending 超时走 drop/revoke，不触碰 replaces 列表，旧设备原样保留。
+  const replacedIds = []
+  for (const oldId of target.replaces ?? []) {
+    if (oldId === target.deviceId) continue
+    const old = (state.devices ?? []).find((d) => d.deviceId === oldId)
+    if (!old || old[DEVICE_REVOKING]) continue
+    old[DEVICE_REVOKING] = true
+    state.devices = (state.devices ?? []).filter((d) => d.deviceId !== oldId)
+    dropDevice(state, rt, old)
+    replacedIds.push(oldId)
+  }
   delete target.status
   delete target.pendingExpiresAt
   delete target.pairedFrom
+  delete target.replaces
   saveState(stateFile, state)
-  return { status: 200, body: { ok: true, deviceId: target.deviceId, name: target.name } }
+  for (const oldId of replacedIds) await rt.deviceMutations.drain(oldId)
+  return {
+    status: 200,
+    body: {
+      ok: true,
+      deviceId: target.deviceId,
+      name: target.name,
+      ...(replacedIds.length ? { replacedDeviceIds: replacedIds } : {}),
+    },
+  }
 }
 
 /**
@@ -2183,7 +2252,12 @@ export function apply(ctx, config) {
         const body = await readJson(req, res)
         if (!body) return
         sweepExpiredPending(state, stateFile, rt)
-        const result = activatePendingDevice(state, stateFile, body.deviceId)
+        const result = await activatePendingDevice(state, stateFile, rt, body.deviceId)
+        if (result.status === 200 && result.body?.replacedDeviceIds?.length) {
+          ctx.logger.info(
+            `dsh-links: device replace approve device=${String(result.body.deviceId).slice(0, 8)} replaced=${result.body.replacedDeviceIds.map((x) => String(x).slice(0, 8)).join(",")}`,
+          )
+        }
         json(res, result.status, result.body)
       },
     }),
@@ -2540,7 +2614,7 @@ export function apply(ctx, config) {
         return json(res, 200, { ok: true })
       }
       if (pathname === "/dsh-link/pair" && req.method === "POST") {
-        return handlePair(req, res, config, state, stateFile, rt)
+        return handlePair(req, res, config, state, stateFile, rt, ctx.logger)
       }
       if (PANEL_ONLY_PATHS.has(pathname)) {
         return json(res, 404, { error: "not found" })

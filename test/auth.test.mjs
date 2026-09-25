@@ -278,6 +278,156 @@ test("同名设备不能静默替换", async () => {
     body: JSON.stringify({ code, deviceName: "测试机" }),
   })
   assert.equal(r.status, 409)
+  const body = await r.json()
+  // 结构化 409：code 供新 App 分支，existing 供对话框展示；旧 App 只读 error 文本。
+  assert.equal(body.code, "SAME_NAME")
+  assert.equal(body.error, "已存在同名设备，请先吊销旧设备或更换名称")
+  assert.equal(body.existing?.deviceId, globalThis.__testDevice.deviceId)
+  assert.equal(body.existing?.name, "测试机")
+  assert.equal(body.existing?.status, "active")
+})
+
+test("replace 立即吊销同名旧设备并换发新 token（409 不消费配对码）", async () => {
+  const info = await callRoute(pairInfoRoute())
+  const code = info.body.pairingCode
+  const conflict = await proxyFetch(`/dsh-link/pair`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code, deviceName: "测试机", requestId: "pair-replace-1" }),
+  })
+  assert.equal(conflict.status, 409)
+
+  const oldDeviceId = globalThis.__testDevice.deviceId
+  const oldToken = globalThis.__testDevice.token
+  // 同一张码重试：409 验码通过但未消费，replace 是同一逻辑配对的显式重试。
+  const replaced = await proxyFetch(`/dsh-link/pair`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code, deviceName: "测试机", requestId: "pair-replace-1", replace: true }),
+  })
+  assert.equal(replaced.status, 200)
+  const body = await replaced.json()
+  assert.ok(body.token)
+  assert.deepEqual(body.replacedDeviceIds, [oldDeviceId])
+  assert.equal(body.pending, false)
+
+  const oldAuth = await proxyFetch(`/dsh-link/mobile/devices`, {
+    headers: tokenHeaders(oldToken),
+  })
+  assert.equal(oldAuth.status, 401)
+
+  const listed = await callRoute(devicesRoute())
+  const rows = listed.body.devices.filter((d) => d.name === "测试机")
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0].deviceId, body.deviceId)
+  assert.equal(rows[0].replacing, false)
+
+  // 后续用例依赖全局设备句柄，指向替换后的新设备。
+  globalThis.__testDevice = { token: body.token, deviceId: body.deviceId }
+})
+
+test("开启确认时 replace 保留旧设备，批准的那一刻才吊销", async () => {
+  const off = await callRoute(pairSettingsRoute(), { body: { requireConfirm: false } })
+  assert.equal(off.status, 200)
+  const first = await callRoute(pairInfoRoute())
+  const seed = await proxyFetch(`/dsh-link/pair`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code: first.body.pairingCode, deviceName: "替换甲" }),
+  })
+  assert.equal(seed.status, 200)
+  const seedBody = await seed.json()
+
+  const on = await callRoute(pairSettingsRoute(), { body: { requireConfirm: true } })
+  assert.equal(on.status, 200)
+  const next = await callRoute(pairInfoRoute())
+  const pending = await proxyFetch(`/dsh-link/pair`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code: next.body.pairingCode, deviceName: "替换甲", replace: true }),
+  })
+  assert.equal(pending.status, 200)
+  const pendingBody = await pending.json()
+  assert.equal(pendingBody.pending, true)
+  assert.equal(pendingBody.replacing, true)
+  assert.equal(pendingBody.replacedDeviceIds, undefined)
+
+  // 新设备待批准期间，旧设备必须仍可访问——替换不能先于本机确认发生。
+  const stillOld = await proxyFetch(`/dsh-link/mobile/devices`, {
+    headers: tokenHeaders(seedBody.token),
+  })
+  assert.equal(stillOld.status, 200)
+
+  const listed = await callRoute(devicesRoute())
+  const row = listed.body.devices.find((d) => d.deviceId === pendingBody.deviceId)
+  assert.equal(row?.status, "pending")
+  assert.equal(row?.replacing, true)
+
+  const approve = await callRoute(pairApproveRoute(), { body: { deviceId: pendingBody.deviceId } })
+  assert.equal(approve.status, 200)
+  assert.deepEqual(approve.body.replacedDeviceIds, [seedBody.deviceId])
+
+  const oldAfter = await proxyFetch(`/dsh-link/mobile/devices`, {
+    headers: tokenHeaders(seedBody.token),
+  })
+  assert.equal(oldAfter.status, 401)
+  const newActive = await proxyFetch(`/dsh-link/mobile/devices`, {
+    headers: tokenHeaders(pendingBody.token),
+  })
+  assert.equal(newActive.status, 200)
+
+  assert.equal((await callRoute(revokeRoute(), { body: { deviceId: pendingBody.deviceId } })).status, 200)
+  const offAgain = await callRoute(pairSettingsRoute(), { body: { requireConfirm: false } })
+  assert.equal(offAgain.status, 200)
+})
+
+test("拒绝 replace 配对不碰旧设备", async () => {
+  const first = await callRoute(pairInfoRoute())
+  const seed = await proxyFetch(`/dsh-link/pair`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code: first.body.pairingCode, deviceName: "替换乙" }),
+  })
+  assert.equal(seed.status, 200)
+  const seedBody = await seed.json()
+
+  await callRoute(pairSettingsRoute(), { body: { requireConfirm: true } })
+  const next = await callRoute(pairInfoRoute())
+  const pending = await proxyFetch(`/dsh-link/pair`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code: next.body.pairingCode, deviceName: "替换乙", replace: true }),
+  })
+  assert.equal(pending.status, 200)
+  const pendingBody = await pending.json()
+  assert.equal(pendingBody.replacing, true)
+
+  // 面板「拒绝」= 吊销 pending 设备；replaces 只活在 pending 记录上，旧设备不受影响。
+  assert.equal((await callRoute(revokeRoute(), { body: { deviceId: pendingBody.deviceId } })).status, 200)
+  const oldAfter = await proxyFetch(`/dsh-link/mobile/devices`, {
+    headers: tokenHeaders(seedBody.token),
+  })
+  assert.equal(oldAfter.status, 200)
+  const listed = await callRoute(devicesRoute())
+  assert.equal(listed.body.devices.filter((d) => d.name === "替换乙").length, 1)
+
+  assert.equal((await callRoute(revokeRoute(), { body: { deviceId: seedBody.deviceId } })).status, 200)
+  const off = await callRoute(pairSettingsRoute(), { body: { requireConfirm: false } })
+  assert.equal(off.status, 200)
+})
+
+test("replace 对不存在的同名设备是普通配对", async () => {
+  const info = await callRoute(pairInfoRoute())
+  const r = await proxyFetch(`/dsh-link/pair`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code: info.body.pairingCode, deviceName: "替换丙-无冲突", replace: true }),
+  })
+  assert.equal(r.status, 200)
+  const body = await r.json()
+  assert.equal(body.replacedDeviceIds, undefined)
+  assert.equal(body.replacing, undefined)
+  assert.equal((await callRoute(revokeRoute(), { body: { deviceId: body.deviceId } })).status, 200)
 })
 
 test("pair via=relay 与局域网设备分开列出", async () => {

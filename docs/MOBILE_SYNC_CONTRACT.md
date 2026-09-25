@@ -31,6 +31,39 @@
 
 产出文件：历史投影可含 `role: "produced_files"` 与 `files` 路径列表。具备 `capabilities.files.workspace` 时，`GET /dsh-link/mobile/sessions/:id/file?path=` 在该会话 cwd 沙箱内返回原始字节（默认上限 8MB）。路径越出工作区返回 403。旧 App 忽略未知 role，仍可走工具结果文本。
 
+## 配对与重装恢复（`POST /dsh-link/pair`）
+
+同名设备默认拒绝静默替换，409 返回结构化字段：
+
+```json
+{
+  "error": "已存在同名设备，请先吊销旧设备或更换名称",
+  "code": "SAME_NAME",
+  "existing": { "deviceId": "dev-...", "name": "手机", "status": "active" }
+}
+```
+
+- 旧 App 只读 `error` 文本，不受影响；新 App 应据 `code == "SAME_NAME"` 弹对话框：
+  「已有同名设备（可能来自上次安装）：[替换它] [换个名字]」。
+- `GET /dsh-link/devices` 与 `GET /dsh-link/mobile/devices` 的设备行新增布尔 `replacing`：
+  仅 `status: "pending"` 且批准后会吊销同名旧设备时为 `true`，面板/App 用它提示
+  「批准即替换」；旧 App 忽略未知字段。
+- 409 验码通过但**不消费配对码**；用户选「替换」后用同一张码重发，额外带 `"replace": true`。
+- 替换的落点由主机的「配对需本机确认」（`requireConfirm`）决定：
+  - 关：立即吊销同名旧设备，新设备直接生效，200 响应带 `replacedDeviceIds: ["dev-..."]`；
+  - 开：旧设备保持在线，新设备进 `pending` 且 `replacing: true`；**面板批准的那一刻**才吊销
+    `replaces` 里的旧设备（批准响应用 `replacedDeviceIds` 返回），拒绝/超时不碰旧设备。
+- `replace: true` 而无同名冲突时就是普通配对（不返回 `replacedDeviceIds`）。
+- 手机卸载重装会销毁 Keystore 里的 token，重装后必须重新扫码；上述流程让重装恢复
+  不需要先到电脑端手工吊销。接入码（Relay ENROLL）与此无关，不受 App 更新/卸载影响。
+
+二维码 / `pair-info` 载荷新增两个时效戳（Unix 毫秒，主机时钟）：
+
+- `issuedAt`：本次渲染时刻；`expiresAt`：当前配对码过期时刻。
+- App 扫码后应先比较本机时间：超过 `expiresAt`（或 `issuedAt` 过旧）直接提示
+  「请刷新电脑面板上的二维码」，不要提交注定 401 的码，避免撞限流冷却。
+- 旧插件不下发这两个字段；缺失时 App 回退为直接尝试配对。
+
 ## 云端路由快照
 
 `GET /dsh-link/mobile/bootstrap` 在设备 token 鉴权后附带当前插件 Relay 路由（与扫码 `pair-info?via=relay` 同形）：

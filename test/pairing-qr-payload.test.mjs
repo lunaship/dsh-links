@@ -47,6 +47,9 @@ function lanInfo() {
     pairingCode: "123456",
     certFingerprint: "aa11bb22cc33dd44ee55ff6677889900aa11bb22cc33dd44ee55ff6677889900",
     requireConfirm: true,
+    // pairInfo 每次渲染都写入：issuedAt=渲染时刻，expiresAt=当前配对码过期时刻。
+    issuedAt: 1789891800000,
+    expiresAt: 1789892400000,
     exposure: {
       listen: { address: "0.0.0.0", port: 18640 },
       networks: [{ label: "192.168.1.10", category: "private", url: "https://192.168.1.10:18640" }],
@@ -85,10 +88,19 @@ test("二维码载荷保留客户端解析所需的全部字段", () => {
   // PairingQr.kt：code 与 urls 至少要有其一；有 relay 则必须有 routeSecret 与代理指纹。
   assert.ok(lan.pairingCode)
   assert.ok(lan.urls.length > 0)
+  // 时效戳：App 扫码后判断码是否已过期/陈旧，避免拿旧截图的码撞 401。
+  assert.equal(lan.issuedAt, lanInfo().issuedAt)
+  assert.equal(lan.expiresAt, lanInfo().expiresAt)
   const withRelay = qrPayload(relayInfo())
   assert.deepEqual(withRelay.relay, relayInfo().relay)
   assert.ok(withRelay.relay.routeSecret)
   assert.ok(withRelay.relay.tlsFingerprint)
+  // 无时效戳的 pairInfo（兼容路径）不得把 undefined 编进二维码。
+  const legacy = { ...lanInfo() }
+  delete legacy.issuedAt
+  delete legacy.expiresAt
+  assert.equal(qrPayload(legacy).issuedAt, undefined)
+  assert.equal(qrPayload(legacy).expiresAt, undefined)
 })
 
 test("局域网与云端二维码都塞得进 160px 底托（≥3 物理像素/模块）", () => {

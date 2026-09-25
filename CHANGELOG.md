@@ -1,5 +1,16 @@
 # Changelog
 
+## dsh-links 未发布
+
+解决「App 卸载重装后重新扫码连不上」：把同名设备冲突从死胡同变成显式替换流程，并给二维码加时效戳。
+
+- 配对 409 结构化：`POST /dsh-link/pair` 同名冲突时返回 `code: "SAME_NAME"` 与 `existing {deviceId, name, status}`，旧 App 只读 `error` 文本不受影响。409 验码通过但不消费配对码，同一张码可直接重试。
+- 新增显式替换：请求带 `replace: true` 时吊销同名旧设备再换发新 token（200 带 `replacedDeviceIds`）；开启「配对需本机确认」时旧设备保持在线、新设备进 `pending`（`replacing: true`），**面板批准的那一刻**才吊销 `replaces` 里的旧设备，拒绝/pending 超时不碰旧设备。替换动作始终被现有确认闸门覆盖，持码者不能在电脑端不知情时顶替现有设备。无冲突时 `replace` 即普通配对。合同见 `docs/MOBILE_SYNC_CONTRACT.md`。
+- 二维码 / `pair-info` 新增 `issuedAt` 与 `expiresAt`（Unix 毫秒，主机时钟）：App 扫码后先比对本机时间，过期/陈旧的码直接提示刷新面板，不再拿旧截图的码撞 401/限流（吸取 OpenClaw 一次性码消费后重试死循环的教训）。实测云端二维码 85 模块 ≤ 93 上限，可扫性回归测试同步覆盖新字段。
+- 面板待确认行在替换配对时显示「批准后替换同名旧设备」；批准/立即替换分别写审计日志 `device replace` / `device replace approve`（短 id，不含 token）。
+- 文档：README 新增「App 卸载重装后扫码连不上？」恢复步骤；重申接入码与 App 更新/卸载无关（ENROLL 一次性、凭据长期自动续期，Relay 层无改动）。
+- 证据：单测 198 绿（原 194 + 新增 4 条：立即替换、确认闸门下批准时替换、拒绝保旧、无冲突 replace；另扩展 2 条既有用例覆盖结构化 409 与二维码时效戳）。`git stash src/` 回退源码后，这 6 条相关用例中 5 条失败（「无冲突 replace」通过属预期：它是兼容守卫，旧代码本就忽略未知 `replace` 字段），另有 1 条既有用例因前序新用例中断在状态恢复之前而连带失败——断言确实锁住了新行为。
+
 ## dsh-links 0.1.0-beta.18 — 2026-09-23
 
 DSH `0.1.7-alpha.1` 适配（V4 `tool/result` 缝合）+ 多帧 zstd 会话日志修复。

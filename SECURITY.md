@@ -24,9 +24,9 @@ If you use an intranet-tunnelling product yourself, treat it as an **experimenta
 - Revoke lost or unused devices from the Web UI「手机连接」panel immediately; use「吊销全部设备」if a token may have leaked.
 - Keep `18640` off the public Internet. The panel shows the listen address and reachable networks — treat a red warning as “this is not a trusted LAN”.
 - Prefer short-lived pairing codes; do not paste tokens into chat logs or screenshots.
-- After uninstalling the app, still revoke the device on the host.
+- After uninstalling the app, re-pair by scanning a **fresh** QR from the panel. If the host reports the old device name still exists, the updated official app offers an explicit replace: the same pairing code revokes the stale record and issues a new token (or waits for your panel approval when「配对需本机确认」is on). With an app build that predates this flow, revoke the old record from the panel first — a stale record left by an uninstall is harmless but occupies the name.
 - Leave `allowMobileDangerFullAccess` off unless you specifically need mobile「完全访问」and accept that the paired phone can then run with full host access.
-- Watch the host log for the audit lines `dsh-links: device revoke device=<8>`, `dsh-links: device revoke-all removed=<n>`, and `dsh-links: permission preset -> <preset> session=<8> device=<8>`; they record revocations and permission-preset changes (short ids only, never tokens).
+- Watch the host log for the audit lines `dsh-links: device revoke device=<8>`, `dsh-links: device revoke-all removed=<n>`, `dsh-links: device replace device=<8>[,<8>] new=<8>`, `dsh-links: device replace approve device=<8> replaced=<8>[,<8>]`, and `dsh-links: permission preset -> <preset> session=<8> device=<8>`; they record revocations, replacements, and permission-preset changes (short ids only, never tokens).
 
 ## Do not
 
