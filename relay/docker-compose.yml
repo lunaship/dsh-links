@@ -82,10 +82,12 @@ services:
       - ipc-auth
 
 networks:
-  control-admin:
-    internal: true
-  relay-public:
-    internal: true
+  # Control is isolated by having its own network and by publishing only to
+  # host loopback; an internal network would also suppress the SSH-tunnel port.
+  control-admin: {}
+  # Relay is the public data plane. Keep Control isolated, but do not mark
+  # this network internal or Docker will not expose the published TLS ports.
+  relay-public: {}
 
 volumes:
   control-data:

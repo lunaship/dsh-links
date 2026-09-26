@@ -87,6 +87,9 @@ dsh plugin --profile web add /path/to/dsh-links
 - App 禁用明文 HTTP，仅通过 TLS 接入。
 - 卸载 App 会销毁本地设备 Token（安全语义：卸载即失效），重装需重新扫码。
 - 不会在 issue、截图或 PR 中张贴接入码或 Relay 路由凭据。
+- Relay 只实时转发 App 与已配对电脑之间的加密字节流，不持久化聊天正文、Prompt、文件、工作区内容、审批内容或响应正文。
+- Relay 的 Control 控制面会保留设备、路由、凭证生命周期、撤销状态、在线心跳、聚合流量统计和必要的审计元数据，用于鉴权、撤销和运维；这些不是会话内容。
+- 因此外部表述是“Relay 不存储业务内容，仅保存最小控制元数据”，而不是“完全不存储任何数据”。
 
 完整说明见 [`PRIVACY.md`](PRIVACY.md) 与 [`SECURITY.md`](SECURITY.md)。
 
@@ -127,7 +130,10 @@ cd apps/android
 
 ## 官方 APK 签名证书 SHA-256 指纹
 
-> TODO: 在 Release 时由 `apksigner verify --print-certs` 填入
+```
+CN=DSH Links, OU=lunaship, O=lunaship, C=CN
+SHA-256: 38f71adf8b67d81042c99a3ec0dfdafb4303dd31e3fc491068ccd534cb482a47
+```
 
 ---
 
