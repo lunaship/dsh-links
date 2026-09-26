@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url"
 const root = resolve(process.argv[2] ?? fileURLToPath(new URL("../", import.meta.url)))
 const repos = {
   plugin: root,
-  app: resolve(root, "../deeplinks"),
+  app: resolve(root, "apps/android"),
   relay: resolve(root, "relay"),
 }
 
@@ -42,7 +42,7 @@ const evidence = {
   },
   commands: {
     plugin: "pnpm install --frozen-lockfile && pnpm build:client && pnpm test && pnpm audit --prod",
-    app: "./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug",
+    app: "cd apps/android && ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug",
     relay: "go test ./... -race -count=1 -timeout 120s && CGO_ENABLED=0 go vet ./...",
   },
   boundaries: {

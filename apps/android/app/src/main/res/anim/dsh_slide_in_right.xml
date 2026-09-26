@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  二级页进场（如 会话 → 设置）：从右侧 28% 滑入。
+  刻意不加 alpha：进场页从第一帧起就不透明，避免下层文字透上来。
+-->
+<set xmlns:android="http://schemas.android.com/apk/res/android"
+    android:interpolator="@anim/dsh_easing_out"
+    android:duration="300"
+    android:shareInterpolator="true">
+    <translate
+        android:fromXDelta="28%p"
+        android:toXDelta="0%p" />
+</set>

@@ -1,0 +1,38 @@
+<resources>
+    <!-- ================================================
+         DSH / DeepSeek Harness 色板（与 Compose DshColors 对齐）
+         XML 运行时色名一律 dsh_*；见 docs/visual-rules.md。
+         ================================================ -->
+    <color name="dsh_bg_base">#FFFFFF</color>
+    <color name="dsh_bg_card">#FFFFFF</color>
+    <color name="dsh_bg_secondary">#F1F3F5</color>
+
+    <color name="dsh_label_primary">#0F1115</color>
+    <color name="dsh_label_secondary">#50555C</color>
+    <color name="dsh_label_muted">#70757A</color>
+
+    <color name="dsh_border">#1F000000</color>
+    <color name="dsh_border_light">#1A000000</color>
+
+    <!-- 主强调：DeepSeek Blue -->
+    <color name="dsh_brand">#4D6BFE</color>
+    <color name="dsh_on_brand">#FFFFFF</color>
+    <color name="dsh_pressed">#0F263148</color>
+    <color name="dsh_overlay">#52000000</color>
+
+    <!-- 语义色：对齐 Dsh.success / cloud / system -->
+    <color name="dsh_online">#22C55E</color>
+    <color name="dsh_online_bg">#1A22C55E</color>
+    <color name="dsh_source_cloud">#3B5BDB</color>
+    <color name="dsh_source_cloud_bg">#1A3B5BDB</color>
+    <color name="dsh_endpoint_web">#5B7A9D</color>
+    <color name="dsh_endpoint_web_bg">#1A5B7A9D</color>
+
+    <color name="dsh_offline">#9CA3AF</color>
+    <color name="dsh_checking">#C7CDD6</color>
+    <color name="dsh_avatar_bg">#F1F3F5</color>
+    <color name="dsh_avatar_text">#0F1115</color>
+
+    <!-- Splash: 与浅色画布一致 -->
+    <color name="splash_field">#FFFFFF</color>
+</resources>

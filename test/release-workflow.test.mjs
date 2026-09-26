@@ -8,6 +8,7 @@ import { dirname } from "node:path"
 const root = dirname(fileURLToPath(new URL("../package.json", import.meta.url)))
 const workflow = readFileSync(fileURLToPath(new URL("../.github/workflows/publish-npm.yml", import.meta.url)), "utf8")
 const ci = readFileSync(fileURLToPath(new URL("../.github/workflows/ci.yml", import.meta.url)), "utf8")
+const ciAndroid = readFileSync(fileURLToPath(new URL("../.github/workflows/ci-android.yml", import.meta.url)), "utf8")
 const pkg = JSON.parse(readFileSync(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8"))
 
 test("npm 发布工作流将第三方 Action 固定到已核验提交", () => {
@@ -17,6 +18,12 @@ test("npm 发布工作流将第三方 Action 固定到已核验提交", () => {
   assert.doesNotMatch(workflow, /actions\/checkout@v\d+\b/)
   assert.doesNotMatch(workflow, /actions\/setup-node@v\d+\b/)
   assert.doesNotMatch(workflow, /pnpm\/action-setup@v4\b/)
+})
+
+test("Android CI 存在且限定 apps/android 路径", () => {
+  assert.match(ciAndroid, /name: CI - Android/)
+  assert.match(ciAndroid, /paths:\n      - 'apps\/android\/\*\*'/)
+  assert.match(ciAndroid, /working-directory: apps\/android/)
 })
 
 test("npm files 不含 Go Relay 树，CI 比对同仓 DLR/1 镜像", () => {

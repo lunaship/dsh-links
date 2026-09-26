@@ -2,7 +2,11 @@ name: CI
 
 on:
   push:
+    paths-ignore:
+      - 'android/**'
   pull_request:
+    paths-ignore:
+      - 'android/**'
   workflow_dispatch:
 
 permissions:
@@ -35,7 +39,9 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Verify DLR/1 vectors
-        run: node scripts/check-dlr1-vectors.mjs testdata/dlr1-vectors.json relay/testdata/dlr1-vectors.json
+        run: |
+          node scripts/check-dlr1-vectors.mjs testdata/dlr1-vectors.json relay/testdata/dlr1-vectors.json
+          node scripts/check-dlr1-vectors.mjs testdata/dlr1-vectors.json apps/android/app/src/test/resources/dlr1-vectors.json
 
       - name: Generate client and verify clean tree
         run: pnpm build:client && git diff --exit-code -- src/client.js
