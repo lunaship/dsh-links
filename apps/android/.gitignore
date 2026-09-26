@@ -1,0 +1,24 @@
+local.properties
+.gradle/
+.kotlin/
+build/
+app/build/
+captures/
+*.apk
+*.aab
+*.jks
+*.keystore
+keystore.properties
+signing.properties
+*.keystore.properties
+.idea/
+*.iml
+.DS_Store
+*.log
+.env
+.env.*
+!.env.example
+.local/
+# Temporary debug/scan files
+e3m.txt
+e3scan.txt

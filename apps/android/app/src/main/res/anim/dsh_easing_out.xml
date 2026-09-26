@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  DSH 出场缓动 token：CubicBezier(0.32, 0.72, 0, 1)，对齐 Compose 侧 DshEasing.out。
+  Activity 转场原先用 @android:anim/accelerate_decelerate，与注释声称的 DshEasing.out 并不相等。
+-->
+<pathInterpolator xmlns:android="http://schemas.android.com/apk/res/android"
+    android:controlX1="0.32"
+    android:controlY1="0.72"
+    android:controlX2="0"
+    android:controlY2="1" />

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Splash 启动主题。API 27+ 属性见 values-v27。
+         背景为品牌深色，故状态栏/导航栏使用浅色前景。 -->
+    <style name="Theme.DSH.Splash" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="android:windowBackground">@drawable/splash_brand</item>
+        <item name="android:colorBackground">@color/splash_field</item>
+        <item name="colorPrimary">@color/splash_field</item>
+        <item name="colorPrimaryContainer">@color/splash_field</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+
+    <!-- 主题。API 27+ 属性见 values-v27。 -->
+    <style name="Theme.DSH" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/dsh_brand</item>
+        <item name="colorOnPrimary">@color/dsh_on_brand</item>
+        <item name="colorPrimaryContainer">@color/dsh_bg_secondary</item>
+        <item name="colorOnPrimaryContainer">@color/dsh_label_primary</item>
+        <item name="colorSecondaryContainer">@color/dsh_bg_secondary</item>
+        <item name="colorOnSecondaryContainer">@color/dsh_label_primary</item>
+        <item name="android:windowBackground">@color/dsh_bg_base</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowAnimationStyle">@style/DshActivityAnimation</item>
+    </style>
+
+    <!-- Activity 切换：滑入滑出（对齐 Compose DshEasing.out / 300ms），替代系统默认的突兀切换 -->
+    <style name="DshActivityAnimation" parent="@android:style/Animation.Activity">
+        <item name="android:activityOpenEnterAnimation">@anim/dsh_slide_in_right</item>
+        <item name="android:activityOpenExitAnimation">@anim/dsh_slide_out_left</item>
+        <item name="android:activityCloseEnterAnimation">@anim/dsh_slide_in_left</item>
+        <item name="android:activityCloseExitAnimation">@anim/dsh_slide_out_right</item>
+    </style>
+</resources>

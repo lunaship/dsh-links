@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.DSH.Splash" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="android:windowBackground">@drawable/splash_bg</item>
+        <item name="android:colorBackground">@color/splash_field</item>
+        <item name="colorPrimary">@color/splash_field</item>
+        <item name="colorPrimaryContainer">@color/splash_field</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+        <item name="android:windowSplashScreenBackground">@color/splash_field</item>
+        <!-- 启动页图标 = 品牌字标（角色图本身是裁切图，做无边框 logo 会显得被切） -->
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_wordmark</item>
+    </style>
+</resources>

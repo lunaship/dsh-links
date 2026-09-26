@@ -1,0 +1,16 @@
+# 超大文件预算（行数上限）。对照 t3code detekt LongMethod / maxIssues=0 的思路，
+# 在不引入 detekt（AGP 9 内置 Kotlin 兼容性未定）的前提下让"巨型文件"机器可见。
+# 只允许下调：拆解后请把数字改小；新增文件默认上限由测试里的 DEFAULT_MAX_LINES 决定。
+dev/deeplinks/native/WorkspaceActivity.kt 3087
+dev/deeplinks/native/DshIcons.kt 4912
+dev/deeplinks/devices/DevicesActivity.kt 1313
+# SettingsActivity 一次性上调：when(dest) -> NavHost 的导航脚手架（8 个 composable + SettingsPage）。
+# 后续把 MODELS/ABOUT 子屏抽到独立文件后应下调。
+dev/deeplinks/native/SettingsActivity.kt 1770
+# AppLocale.kt 一次性上调：会话统计面板的中英文案（sessionStatsSheetTitle 等）。
+# 2026-09-25 撤掉自造的「工作模式」选择器（selectMode / modeChat / modePlan / modeGoal 共 11 个
+# key，-22 行），换成 DSH 座位的可读描述与输入提示（+1 行）；净减 21 行。
+# 2026-09-27 空画布 hero 提示（heroHint）与设置分区标题（sectionWorkspace）+6 行；
+# 后续把大段静态文案迁到资源文件后应继续下调。
+dev/deeplinks/core/AppLocale.kt 1640
+dev/deeplinks/native/WorkspaceSidebar.kt 347

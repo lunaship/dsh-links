@@ -1,0 +1,27 @@
+# 设计 token 存量基线：路径 空格 裸字号行数上限
+# 由 DesignTokenUsageTest 强制：超过上限或出现裸色值即失败。
+# 迁移减少存量后请把数字调小（只允许下调，禁止回涨）。
+# 本轮已把 12/18、13/20、11/16 三组密集字号收敛到 DshType.captionRelaxed / bodyDense / microRelaxed
+# （角色为精确匹配，validateDebugScreenshotTest 通过证明零视觉变化）。
+dev/deeplinks/devices/DevicesActivity.kt 14
+dev/deeplinks/native/ApprovalCard.kt 2
+dev/deeplinks/native/ComposerBar.kt 4
+dev/deeplinks/native/ComposerEditField.kt 2
+dev/deeplinks/native/DshMenu.kt 1
+dev/deeplinks/native/MarkdownContent.kt 7
+dev/deeplinks/native/MathRenderer.kt 1
+dev/deeplinks/native/MermaidRenderer.kt 2
+dev/deeplinks/native/MessageItem.kt 8
+dev/deeplinks/native/MessageSelectText.kt 1
+dev/deeplinks/native/ModelPicker.kt 6
+dev/deeplinks/native/PermissionSheets.kt 10
+dev/deeplinks/native/ProducedFiles.kt 2
+dev/deeplinks/native/QuestionCard.kt 2
+dev/deeplinks/native/SettingsActivity.kt 22
+dev/deeplinks/native/ThinkingTrace.kt 1
+dev/deeplinks/native/TrajectoryView.kt 2
+dev/deeplinks/native/ui/DshComponents.kt 4
+dev/deeplinks/native/WorkspaceChrome.kt 7
+dev/deeplinks/native/WorkspaceDialogs.kt 6
+dev/deeplinks/native/WorkspaceSheets.kt 10
+dev/deeplinks/native/WorkspaceSidebar.kt 1

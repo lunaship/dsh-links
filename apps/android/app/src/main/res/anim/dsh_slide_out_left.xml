@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  一级页退出（如 会话 → 设置）：向左轻推 12% 做纵深，保持不透明。
+  不加 alpha：父页被二级页完整覆盖，淡出只会让它在边缘显得发灰。
+-->
+<set xmlns:android="http://schemas.android.com/apk/res/android"
+    android:interpolator="@anim/dsh_easing_out"
+    android:duration="300"
+    android:shareInterpolator="true">
+    <translate
+        android:fromXDelta="0%p"
+        android:toXDelta="-12%p" />
+</set>
