@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
     <background android:drawable="@drawable/ic_launcher_background"/>
-    <foreground android:drawable="@drawable/ic_launcher_foreground_orca"/>
-    <monochrome android:drawable="@drawable/ic_launcher_monochrome_orca"/>
+    <foreground android:drawable="@drawable/ic_launcher_foreground"/>
+    <!-- monochrome 层暂缺：新品牌图为全出血彩色插画，无法提取单色剪影。
+         缺失时系统主题图标回退到常规图标，而不是渲染成实心色块。 -->
 </adaptive-icon>

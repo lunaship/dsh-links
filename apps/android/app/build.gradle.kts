@@ -1,9 +1,10 @@
 import java.io.File
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.screenshot)
 }
 
 val localSigningEnvFile = file(
@@ -50,15 +51,16 @@ val allowUnsignedRelease =
     providers.gradleProperty("allowUnsignedRelease").orNull == "true"
 
 android {
-    namespace = "dev.dsh.mobile"
-    compileSdk = 35
+    namespace = "dev.deeplinks"
+    compileSdk = 37
 
     defaultConfig {
-        applicationId = "dev.dsh.mobile"
+        applicationId = "dev.deeplinks"
         minSdk = 26
-        targetSdk = 35
-        versionCode = 8
-        versionName = "0.5.0-beta.1"
+        targetSdk = 36
+        versionCode = 30
+        versionName = "0.5.0-beta.20"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     signingConfigs {
@@ -73,6 +75,11 @@ android {
     }
 
     buildTypes {
+        debug {
+            // 与签名 release 共存于同一设备（instrumented 测试直接跑 debug 变体，
+            // 不必卸载用户手机上的 release 包）。
+            applicationIdSuffix = ".debug"
+        }
         release {
             isMinifyEnabled = true
             proguardFiles(
@@ -85,36 +92,63 @@ android {
         }
     }
 
-    sourceSets {
-        getByName("main") {
-            assets.srcDir(layout.buildDirectory.dir("generated/legalAssets"))
-        }
-    }
-
     buildFeatures {
         buildConfig = true
         compose = true
     }
+
+    // Compose Preview Screenshot Testing：启用 screenshotTest 源集
+    experimentalProperties["android.experimental.enableScreenshotTest"] = true
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
+    kotlin {
+        compilerOptions {
+            jvmTarget.set(JvmTarget.JVM_17)
+        }
     }
 }
 
-val copyLegalAssets by tasks.registering(Copy::class) {
-    from(rootProject.layout.projectDirectory.file("LICENSE"))
-    from(rootProject.layout.projectDirectory.file("THIRD_PARTY_NOTICES.md"))
-    into(layout.buildDirectory.dir("generated/legalAssets/legal"))
+val legalFiles = listOf(
+    rootProject.file("LICENSE"),
+    rootProject.file("THIRD_PARTY_NOTICES.md"),
+)
+
+/** 将 LICENSE / 第三方声明复制进 APK assets（Variant API 要求 DirectoryProperty 输出）。 */
+abstract class CopyLegalAssets : DefaultTask() {
+    @get:InputFiles
+    abstract val sources: ConfigurableFileCollection
+
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @TaskAction
+    fun run() {
+        val out = outputDir.get().asFile.resolve("legal")
+        out.mkdirs()
+        sources.files.forEach { f ->
+            check(f.isFile) { "Missing required legal asset: ${f.path}" }
+            f.copyTo(out.resolve(f.name), overwrite = true)
+        }
+    }
 }
 
-tasks.matching { it.name.startsWith("merge") && it.name.contains("Assets") }.configureEach {
-    dependsOn(copyLegalAssets)
+val copyLegalAssets = tasks.register<CopyLegalAssets>("copyLegalAssets") {
+    sources.from(legalFiles)
+    // 任务输出 = assets 根目录，内部再放 legal/ 子目录，保持历史打包路径 assets/legal/。
+    outputDir.set(layout.buildDirectory.dir("generated/legalAssets"))
 }
+
+// AGP 9：生成的资产目录必须走 Variant API（Provider 不能直接进 srcDir）。
+androidComponents {
+    onVariants { variant ->
+        variant.sources.assets?.addGeneratedSourceDirectory(copyLegalAssets) { it.outputDir }
+    }
+}
+
 tasks.matching { it.name == "preBuild" }.configureEach {
     dependsOn(copyLegalAssets)
 }
@@ -146,16 +180,27 @@ dependencies {
     implementation(libs.zxing.embedded)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.material3)
-    implementation("androidx.compose.material:material-icons-extended:1.7.6")
-    implementation("io.coil-kt:coil-compose:2.7.0")
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation(libs.jlatexmath.android)
+    implementation(libs.androidx.navigation.compose)
+    implementation(libs.androidx.compose.material.icons.extended)
+    implementation(libs.coil.compose)
+    implementation(libs.coil.network.okhttp)
+    implementation(libs.okhttp)
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.tooling.preview)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
+    // 截图测试源集
+    screenshotTestImplementation(libs.androidx.compose.ui.tooling)
+    screenshotTestImplementation(libs.androidx.compose.ui.tooling.preview)
+    screenshotTestImplementation(libs.screenshot.validation.api)
     testImplementation(libs.junit)
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.test.espresso.core)
     // 本地 JVM 单测：org.json 在 android.jar stub 里不可用，需真实实现
-    testImplementation("org.json:json:20240303")
+    testImplementation(libs.org.json)
 }

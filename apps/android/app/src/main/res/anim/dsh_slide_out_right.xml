@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  二级页退出（返回）：整页滑出到 100%p。
+  关键：不淡出、不半透明。之前的 28% + alpha 0.4 会让退出的设置页变成一层
+  半透明浮层压在会话页上，下层会话的文字从设置页底下透出来（"提前显示上一级文字"）。
+  整页滑出则是标准的 push/pop：上面那张纸完整滑走，露出下面那张。
+-->
+<set xmlns:android="http://schemas.android.com/apk/res/android"
+    android:interpolator="@anim/dsh_easing_out"
+    android:duration="300"
+    android:shareInterpolator="true">
+    <translate
+        android:fromXDelta="0%p"
+        android:toXDelta="100%p" />
+</set>

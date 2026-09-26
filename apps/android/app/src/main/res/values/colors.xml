@@ -1,39 +1,38 @@
 <resources>
     <!-- ================================================
-         DSH 墨色体系（对照 HStudio ink 变量 亮色主题）
+         DSH / DeepSeek Harness 色板（与 Compose DshColors 对齐）
+         XML 运行时色名一律 dsh_*；见 docs/visual-rules.md。
          ================================================ -->
-    <color name="ink_bg_primary">#FAFAFA</color>
-    <color name="ink_bg_card">#FFFFFF</color>
-    <color name="ink_bg_secondary">#F0F0F0</color>
-    <color name="ink_bg_input">#FFFFFF</color>
+    <color name="dsh_bg_base">#FFFFFF</color>
+    <color name="dsh_bg_card">#FFFFFF</color>
+    <color name="dsh_bg_secondary">#F1F3F5</color>
 
-    <color name="ink_text_primary">#1A1A1A</color>
-    <color name="ink_text_secondary">#666666</color>
-    <color name="ink_text_muted">#999999</color>
+    <color name="dsh_label_primary">#0F1115</color>
+    <color name="dsh_label_secondary">#50555C</color>
+    <color name="dsh_label_muted">#70757A</color>
 
-    <color name="ink_border">#E0E0E0</color>
-    <color name="ink_border_light">#EBEBEB</color>
+    <color name="dsh_border">#1F000000</color>
+    <color name="dsh_border_light">#1A000000</color>
 
-    <color name="ink_accent">#333333</color>
-    <color name="ink_on_accent">#FFFFFF</color>
-    <color name="ink_error">#C62828</color>
-    <color name="ink_pressed">#0A000000</color>
-    <color name="ink_overlay">#F0FFFFFF</color>
+    <!-- 主强调：DeepSeek Blue -->
+    <color name="dsh_brand">#4D6BFE</color>
+    <color name="dsh_on_brand">#FFFFFF</color>
+    <color name="dsh_pressed">#0F263148</color>
+    <color name="dsh_overlay">#52000000</color>
 
-    <!-- 语义色：在线 / 来源 / 端点（HStudio 同款） -->
-    <color name="ink_online">#397454</color>
-    <color name="ink_online_bg">#1A397454</color>
-    <color name="ink_source_cloud">#7657A6</color>
-    <color name="ink_source_cloud_bg">#1A7657A6</color>
-    <color name="ink_endpoint_desktop">#397454</color>
-    <color name="ink_endpoint_desktop_bg">#1A397454</color>
-    <color name="ink_endpoint_web">#3F648F</color>
-    <color name="ink_endpoint_web_bg">#1A3F648F</color>
+    <!-- 语义色：对齐 Dsh.success / cloud / system -->
+    <color name="dsh_online">#22C55E</color>
+    <color name="dsh_online_bg">#1A22C55E</color>
+    <color name="dsh_source_cloud">#3B5BDB</color>
+    <color name="dsh_source_cloud_bg">#1A3B5BDB</color>
+    <color name="dsh_endpoint_web">#5B7A9D</color>
+    <color name="dsh_endpoint_web_bg">#1A5B7A9D</color>
 
-    <!-- 兼容旧引用 -->
-    <color name="dsh_online">#397454</color>
     <color name="dsh_offline">#9CA3AF</color>
     <color name="dsh_checking">#C7CDD6</color>
-    <color name="dsh_avatar_bg">#F0F0F0</color>
-    <color name="dsh_avatar_text">#1A1A1A</color>
+    <color name="dsh_avatar_bg">#F1F3F5</color>
+    <color name="dsh_avatar_text">#0F1115</color>
+
+    <!-- Splash: 与浅色画布一致 -->
+    <color name="splash_field">#FFFFFF</color>
 </resources>

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  一级页回归（如 设置 → 返回会话）：从 -12% 滑回 0，保持不透明。
+  这里是下层窗口：不透明才能保证返回过程中露出的始终是完整页面。
+-->
+<set xmlns:android="http://schemas.android.com/apk/res/android"
+    android:interpolator="@anim/dsh_easing_out"
+    android:duration="300"
+    android:shareInterpolator="true">
+    <translate
+        android:fromXDelta="-12%p"
+        android:toXDelta="0%p" />
+</set>

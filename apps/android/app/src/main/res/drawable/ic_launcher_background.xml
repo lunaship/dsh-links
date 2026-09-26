@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Adaptive icon background: matches orca-4 cyan field (#0DEBF3). -->
+<!-- Adaptive icon background: 与 DeepLinks 新图标底色一致（深墨蓝），
+     前景为不透明全出血插画，此处仅在启动器缩放前景时兜底。 -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
-    <solid android:color="#FF0DEBF3" />
+    <solid android:color="#FF313234" />
 </shape>

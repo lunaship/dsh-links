@@ -1,0 +1,7 @@
+# 顶层函数体行数预算：路径::函数名 上限。默认 400 行。
+# 只允许下调：拆解 WorkspaceScreen / SettingsScreen / DevicesScreen 后把数字改小。
+# 冷启动分享丢字修复（shareConsumed/appliedShareOwner 守卫）后 +2 行。
+dev/deeplinks/native/WorkspaceActivity.kt::WorkspaceScreen 2955
+dev/deeplinks/native/SettingsActivity.kt::SettingsScreen 573
+dev/deeplinks/devices/DevicesActivity.kt::DevicesScreen 299
+dev/deeplinks/native/WorkspaceSidebar.kt::WorkspaceSidebar 277
