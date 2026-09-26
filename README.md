@@ -64,20 +64,20 @@ dsh plugin --profile web add /path/to/dsh-links
 
 ### Android 设备与配对
 
-<img src="docs/images/android-devices-latest-sanitized.png" width="40%" alt="Android 设备与配对">
+<img src="docs/images/android-devices-2026-09-26-sanitized.png" width="40%" alt="Android 设备与配对">
 
 ### 手机工作台
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/images/android-workspace-latest.png" alt="原生工作台"><br><sub>原生工作台：新建会话、选择工作区与模型</sub></td>
-    <td width="50%"><img src="docs/images/android-navigation-latest.png" alt="工作区导航"><br><sub>导航抽屉：切换设备、工作区、会话与设置</sub></td>
+    <td width="50%"><img src="docs/images/android-workspace-2026-09-26.png" alt="原生工作台"><br><sub>原生工作台：新建会话、选择工作区与模型</sub></td>
+    <td width="50%"><img src="docs/images/android-navigation-2026-09-26-sanitized.png" alt="工作区导航"><br><sub>导航抽屉：切换设备、工作区、会话与设置</sub></td>
   </tr>
 </table>
 
 ### Android 设置
 
-<img src="docs/images/android-settings-latest.png" width="50%" alt="Android 设置">
+<img src="docs/images/android-settings-2026-09-26.png" width="50%" alt="Android 设置">
 
 ---
 
