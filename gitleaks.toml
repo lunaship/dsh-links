@@ -1,6 +1,0 @@
-title = "gitleaks config for deeplinks-clean"
-
-[allowlist]
-paths = [
-  '''apps/android/app/src/test/resources/dlr1-vectors.json''',
-]

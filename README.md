@@ -20,7 +20,7 @@ DSH Links 是一个 **DSH 手机插件**，它把 Android 手机变成 DSH 的�
 | 组成 | 作用 | 发布方式 |
 |---|---|---|
 | **本仓库 `dsh-links`** | DSH 插件、手机 HTTPS 接入代理、电脑端配对与设备管理面板；Relay 源码在 [`relay/`](relay/) | 开源 npm 插件；Relay 源码同仓公开，使用仍需维护者接入码 |
-| **DSH Links Android App** | 扫码/手动配对、设备入口、原生会话工作台、实时流与审批 | 私有源码；仅发布官方签名 APK |
+| **DSH Links Android App** | 扫码/手动配对、设备入口、原生会话工作台、实时流与审批 | 源码在 `android/`；官方签名 APK 见 Releases（`app-v*`） |
 
 ---
 
@@ -116,6 +116,23 @@ node --test test/*.mjs
 
 ---
 
+## 从源码构建 App
+
+```bash
+cd android
+./gradlew :app:assembleRelease
+```
+
+构建产物位于 `android/app/build/outputs/apk/release/`。签名只在本机进行，不进入 CI。
+
+## 官方 APK 签名证书 SHA-256 指纹
+
+> TODO: 在 Release 时由 `apksigner verify --print-certs` 填入
+
+---
+
 ## License
 
-[MIT](LICENSE)。Android 客户端不在本仓库。第三方见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。
+[MIT](LICENSE)。Android 客户端源码位于 [`android/`](android/)。第三方见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) 和 [`android/THIRD_PARTY_NOTICES.md`](android/THIRD_PARTY_NOTICES.md)。
+
+> 代码以 MIT 许可发布。"DSH Links" 名称、logo 和应用图标不在 MIT 授权范围内；第三方 fork 请更换名称、图标和 `applicationId` 后再分发。
