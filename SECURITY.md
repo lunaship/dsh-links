@@ -53,7 +53,7 @@ On the host, enable「配对需本机确认」so an unexpected device still need
 
 ## Source and APK trust
 
-- The public repository opens the `dsh-links` plugin, Relay source under `relay/`, the Android client source under `android/`, and docs (MIT). Install only signed APKs from this project's GitHub Releases; the official signing certificate SHA-256 fingerprint is published in the README. The npm package still ships the plugin only; it does not include `relay/` or `android/`.
+- The public repository opens the `dsh-links` plugin, Relay source under `relay/`, the Android client source under `apps/android/`, and docs (MIT). Install only signed APKs from this project's GitHub Releases; the official signing certificate SHA-256 fingerprint is published in the README. The npm package still ships the plugin only; it does not include `relay/` or `apps/android/`.
 - Do not trust third-party rebuilds or sideloaded APKs that claim to be DSH Links.
 
 ## Reporting

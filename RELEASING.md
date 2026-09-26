@@ -1,6 +1,6 @@
 # Release 核对
 
-GitHub `lunaship/dsh-links` = **插件源码、Relay 源码（`relay/`）、Android 源码（`android/`）与文档**。Relay 为维护者内测：文档可以说明流程，但不得提交接入码、Relay 主机凭据或 `state.json`。npm 包仍只包含插件文件，不含 `relay/` 或 `android/`。
+GitHub `lunaship/dsh-links` = **插件源码、Relay 源码（`relay/`）、Android 源码（`apps/android/`）与文档**。Relay 为维护者内测：文档可以说明流程，但不得提交接入码、Relay 主机凭据或 `state.json`。npm 包仍只包含插件文件，不含 `relay/` 或 `apps/android/`。
 
 ## 发布前
 
@@ -9,7 +9,7 @@ GitHub `lunaship/dsh-links` = **插件源码、Relay 源码（`relay/`）、Andr
 - [ ] npm 已登录，包名与版本正确；发布后在干净 profile 以 `dsh plugin --profile web add dsh-links@<version>` 成功安装。
 - [ ] 用真实 Android 设备完成扫码配对、会话/SSE、审批、吊销、重启后重连验收。
 - [ ] APK 是正式签名产物；在 GitHub Release（`app-v*` tag）附版本号、SHA-256、最低 Android 版本和安装说明。
-- [ ] `android/scripts/release-apk.sh` 输出校验和与当前 tag 一致。
+- [ ] `apps/android/scripts/release-apk.sh` 输出校验和与当前 tag 一致。
 
 ## npm 自动发布
 
@@ -28,9 +28,9 @@ GitHub `lunaship/dsh-links` = **插件源码、Relay 源码（`relay/`）、Andr
 
 ## App 发版流程
 
-1. 确认 `android/` 版本号已更新，CI 全绿。
-2. 在 `android/` 目录执行 `./gradlew :app:assembleRelease`，使用维护者本机密钥签名。
-3. 运行 `apksigner verify --print-certs android/app/build/outputs/apk/release/app-release.apk | grep SHA-256`，把指纹更新到根目录 `README.md` 和 `SECURITY.md`。
+1. 确认 `apps/android/` 版本号已更新，CI 全绿。
+2. 在 `apps/android/` 目录执行 `./gradlew :app:assembleRelease`，使用维护者本机密钥签名。
+3. 运行 `apksigner verify --print-certs apps/android/app/build/outputs/apk/release/app-release.apk | grep SHA-256`，把指纹更新到根目录 `README.md` 和 `SECURITY.md`。
 4. 创建 tag `app-v<versionName>`，打 GitHub Release，上传签名 APK、`app-v<versionName>.apk.asc` 和校验和。
 5. 更新 `docs/COMPATIBILITY.md` 记录新组合。
 

@@ -1,6 +1,6 @@
 # dsh-links — AI 协作规则
 
-DSH 手机插件（npm 包）：局域网配对 + 设备管理 + 18640 接入代理 + 手机 API。Relay 源码在 `relay/`；Android 源码在 `android/`，随本仓一起发版。
+DSH 手机插件（npm 包）：局域网配对 + 设备管理 + 18640 接入代理 + 手机 API。Relay 源码在 `relay/`；Android 源码在 `apps/android/`，随本仓一起发版。
 
 ## 红线
 
@@ -11,7 +11,7 @@ DSH 手机插件（npm 包）：局域网配对 + 设备管理 + 18640 接入代
 
 - 插件：`npm run prepack`（= build-client + 全量测试）；单跑测试 `npm test`。
 - Relay（在 `relay/` 目录下）：`gofmt -l . && go vet ./... && go build ./...`。
-- Android（在 `android/` 目录下）：`cd android && ./gradlew :app:assembleDebug :app:testDebugUnitTest :app:lintDebug`。
+- Android（在 `apps/android/` 目录下）：`cd apps/android && ./gradlew :app:assembleDebug :app:testDebugUnitTest :app:lintDebug`。
 
 ## 深入文档
 
@@ -20,5 +20,5 @@ DSH 手机插件（npm 包）：局域网配对 + 设备管理 + 18640 接入代
 | 手机同步契约（字段级，改手机 API 必读） | `docs/MOBILE_SYNC_CONTRACT.md` |
 | 兼容矩阵 / DSH 基线 / 冒烟隔离警告 | `docs/COMPATIBILITY.md` |
 | 发布流程与 dist-tag 策略 | `RELEASING.md` |
-| Android 协作规则 | `android/CLAUDE.md` |
+| Android 协作规则 | `apps/android/CLAUDE.md` |
 | RC1 内测计划与证据模板 | `docs/RC1_CLOSED_BETA_TEST_PLAN.md` |
