@@ -56,22 +56,22 @@ dsh plugin --profile web add /path/to/dsh-links
 
 ## 界面截图
 
-*截图于 2026-09-25，二维码、配对码、主机名、内网地址和设备标识均已脱敏。Android 截图来自 `0.5.0-beta.16` 构建。当前发布 App 是 `0.5.0-beta.18`，界面未重拍。*
+*Android 真机截图于 2026-09-26，来自已连接的 Android 17 设备和当前源码 `0.5.0-beta.20` debug 构建。主机名、IP 地址、工作区、历史路径、二维码、配对码和设备标识均已脱敏。电脑端图片用于说明配对流程，具体文案会随 DSH Web 版本变化。*
 
 ### 电脑端手机连接
 
 <img src="docs/images/phone-connection-latest-sanitized.png" width="70%" alt="电脑端手机连接设置">
 
-### Android 设备列表
+### Android 设备与配对
 
-<img src="docs/images/android-devices-latest-sanitized.png" width="40%" alt="Android 设备列表">
+<img src="docs/images/android-devices-latest-sanitized.png" width="40%" alt="Android 设备与配对">
 
 ### 手机工作台
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/images/android-workspace-latest.png" alt="原生工作台"><br><sub>原生工作台：继续会话、查看思考事件</sub></td>
-    <td width="50%"><img src="docs/images/android-navigation-latest.png" alt="工作区导航"><br><sub>工作区导航：切换设备、会话与设置</sub></td>
+    <td width="50%"><img src="docs/images/android-workspace-latest.png" alt="原生工作台"><br><sub>原生工作台：新建会话、选择工作区与模型</sub></td>
+    <td width="50%"><img src="docs/images/android-navigation-latest.png" alt="工作区导航"><br><sub>导航抽屉：切换设备、工作区、会话与设置</sub></td>
   </tr>
 </table>
 
@@ -133,6 +133,6 @@ cd apps/android
 
 ## License
 
-[MIT](LICENSE)。Android 客户端源码位于 [`apps/android/`](apps/android/)。第三方见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) 和 [`android/THIRD_PARTY_NOTICES.md`](android/THIRD_PARTY_NOTICES.md)。
+[MIT](LICENSE)。Android 客户端源码位于 [`apps/android/`](apps/android/)。第三方见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) 和 [`apps/android/THIRD_PARTY_NOTICES.md`](apps/android/THIRD_PARTY_NOTICES.md)。
 
 > 代码以 MIT 许可发布。"DSH Links" 名称、logo 和应用图标不在 MIT 授权范围内；第三方 fork 请更换名称、图标和 `applicationId` 后再分发。
