@@ -1,41 +1,11 @@
-import DLUI
 import SwiftUI
 
+/// Existing offline demo entry; production pairing is owned by PairingFlowView.
 struct WelcomeView: View {
+    @State private var demo = false
+
     var body: some View {
-        VStack(spacing: 16) {
-            Spacer()
-            demoLink
-            #if DEBUG
-                settingsLink
-            #endif
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(DLColor.background)
+        PairingWelcomePage(demo: { demo = true })
+            .navigationDestination(isPresented: $demo) { DemoSceneList() }
     }
-
-    private var demoLink: some View {
-        NavigationLink {
-            DemoSceneList()
-        } label: {
-            Text(L10n.string("welcome.tryDemo", fallback: "Try the demo"))
-                .font(DLFont.body)
-                .foregroundStyle(DLColor.accent)
-                .frame(minHeight: 44)
-        }
-    }
-
-    #if DEBUG
-        private var settingsLink: some View {
-            NavigationLink {
-                DebugSettingsView()
-            } label: {
-                Text(L10n.string("welcome.settings", fallback: "Settings"))
-                    .font(DLFont.body)
-                    .foregroundStyle(DLColor.accent)
-                    .frame(minHeight: 44)
-            }
-        }
-    #endif
 }

@@ -104,6 +104,9 @@ jobs:
             -only-testing:DeepLinksTests/RequestStateContractTests \
             -only-testing:DeepLinksTests/RouteSelectorContractTests \
             -only-testing:DeepLinksTests/PairingContractTests \
+            -only-testing:DeepLinksTests/PairingFlowTests \
+            -only-testing:DeepLinksTests/PairingFailureTests \
+            -only-testing:DeepLinksTests/PairingPhotoDecoderTests \
             test \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO

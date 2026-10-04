@@ -9,13 +9,32 @@
 
 | v4 | 页面 | iOS 页面 / 组件 / API | 与 Android 差异 | 截图测试 |
 |---|---|---|---|---|
-| 1.1 | 启动 | 系统 Launch Screen（纯背景 + 品牌标） | — | （系统屏，无 App 截图） |
-| 1.2 | 欢迎 / 未配对 | `Features/Pairing` 全屏；主按钮「扫码配对」`.glassProminent` + BrandFill；次按钮「从相册识别」`PhotosPicker`→Vision；文字「先看看演示」 | 多演示入口 | `Snapshot_1_2_welcome_*` |
-| 1.3 | 扫码 | `DataScannerViewController`（仅二维码）；玻璃关闭按钮；不支持时退回 `AVCaptureSession` | — | `Snapshot_1_3_scan_*` |
+| 1.1 | 启动 | 系统 Launch Screen；`Info.plist` 的 `UILaunchScreen` → `LaunchBackground` / `LaunchBrand`（浅 / 深色资源） | — | （系统屏，无 App 截图） |
+| 1.2 | 欢迎 / 未配对 | `Features/Pairing/PairingWelcomePage` 全屏；主按钮「扫码配对」`.glassProminent` + BrandFill；次按钮「从相册识别」`PhotosPicker`→Vision；文字「先看看演示」 | 多演示入口 | `Snapshot_1_2_welcome_*` |
+| 1.3 | 扫码 | `Features/Pairing/QRScanner` / `DataScannerViewController`（仅二维码）；玻璃关闭按钮；不支持时退回 `AVCaptureSession` | — | `Snapshot_1_3_scan_*` |
 | 1.4 | 输入配对码 | **不做** | 同 Android / #64 | — |
-| 1.5 | 等电脑批准 | push；显示本机名与连接方式；可取消（删本机记录）；轮询 `/mobile/sessions` | — | `Snapshot_1_5_pending_*` |
-| 1.6 | 配对失败 | push；标题 + 原因 + 三条建议 +「返回」 | — | `Snapshot_1_6_fail_*` |
-| — | 本地网络说明 | 首次连局域网前；一句话 +「继续」 | Android 无对应页 | `Snapshot_1_lan_explain_*` |
+| 1.5 | 等电脑批准 | `PairingPendingPage` push；显示本机名与连接方式；可取消（删本机记录）；轮询 `/mobile/sessions` | — | `Snapshot_1_5_pending_*` |
+| 1.6 | 配对失败 | `PairingFailurePage` push；标题 + 原因 + 三条建议 +「返回」 | — | `Snapshot_1_6_fail_*` |
+| — | 本地网络说明 | `LocalNetworkExplanationPage`；首次连局域网前；一句话 +「继续」 | Android 无对应页 | `Snapshot_1_lan_explain_*` |
+
+I4.1 截图登记：`Tests/PairingSnapshotTests.swift`，由 `ci-ios.yml` 与 `ios-regen-screenshots.yml` 的原有 `-skip-testing` 范围自动包含。文件名 `Snapshot_<pageId>_<scene>_<light|dark>_<zh|en>.<variant>.png`；variant 为 `default`、`large`（accessibility3）或 `default_reducedTransparency`。五个主页面各为浅 / 深 × 中 / 英 × 默认 / 大字号（accessibility3）的 8 张，外加浅色、中文、默认字号的降低透明度 1 张。其他状态只保留浅色、中文、默认字号 1 张；sameName 与 rename 各补 1 张英文。`PairingSnapshotTests` 共 66 张，不含原有欢迎基线；iPad / 宽屏留到 I4.8。1.3 相机在两种外观下都使用深色系统色；只截图离线相机表面，不启动摄像头。
+
+| 页面 | scene | 张数 |
+|---|---|---|
+| 1.1 | 系统启动屏，无 App 截图 | — |
+| 1.2 | `1_2_welcome` | 9 |
+| 1.2 状态 | `1_2_submitting`、`1_2_photoReading` | 各 1 |
+| 1.2 同名 / 改名 | `1_2_sameName`、`1_2_rename` | 各 2（中 / 英） |
+| 本地网络说明 | `1_lan_explain` | 9 |
+| 1.3 | `1_3_scan`（离线相机表面） | 9 |
+| 1.3 无效码 | `1_3_scan_invalid` | 1 |
+| 1.5 | `1_5_pending` | 9 |
+| 1.5 状态 | `1_5_pending_tailscale`、`1_5_pending_cleanupFailed` | 各 1 |
+| 1.6 代表原因 | `1_6_fail_network` | 9 |
+| 1.6 其他原因 | `1_6_fail_expired`、`1_6_fail_certificate`、`1_6_fail_missingPin`、`1_6_fail_rejected`、`1_6_fail_cameraDenied`、`1_6_fail_cameraUnavailable`、`1_6_fail_invalidQR`、`1_6_fail_noPhotoQR`、`1_6_fail_rateLimit`、`1_6_fail_unsupported`、`1_6_fail_hostHint`、`1_6_fail_storage` | 各 1，共 12 |
+| 原有 1.2 基线 | `WelcomeSnapshotTests/testWelcomeLight.light.png`，由 CI 重生成 | 1（不计入新增 66 张） |
+
+1.1 使用 `UILaunchScreen` 字典中的 `UIColorName = LaunchBackground` 与 `UIImageName = LaunchBrand`，Assets.xcassets 提供浅 / 深色背景和矢量品牌字标；不使用 storyboard。I4.1 配对成功仅交接已保存 hostId；首页目的地由 I4.2 接入。
 
 ## 2.x 首页收件箱
 

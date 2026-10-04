@@ -51,6 +51,8 @@
 
 封装组件（`DLUI`）：`DLStatusSlot` `DLInboxRow` `DLComposerView` `DLDecisionBar` `DLChip` `DLProcessLine` `DLCodeBlock` `DLEmptyState` `DLBanner`。
 
+1.x 配对页面直接使用 `PhotosPicker`、`DataScannerViewController`（不支持时 `AVCaptureSession`）、系统 `alert` 与改名 `Form` sheet；扫描器桥接留在 App，不新增 DLUI 组件。
+
 系统组件直接用：`NavigationStack` `List` `Form` `.sheet` `confirmationDialog` `alert` `Menu` `Picker` `Toggle` `contextMenu` `swipeActions` `searchable`。新增封装组件先改本文件。
 
 ## 8. 动效
@@ -63,8 +65,9 @@
 
 ## 10. 截图矩阵
 
-- 设备：iPhone 17 Pro（iOS 26.x）基线；另加一台 iPad 宽屏。型号与系统版本改动需维护者批准。
-- 外观：浅色 / 深色；语言：中文 / 英文；字号：默认 / 大字号；另加「降低透明度」一套。
+- 设备：iPhone 17 Pro（iOS 26.x）基线；iPad / 宽屏在 I4.8 验收。型号与系统版本改动需维护者批准。
+- 主页面：浅 / 深 × 中 / 英 × 默认 / 大字号共 8 张，外加浅色、中文、默认字号的「降低透明度」1 张。
+- I4.1 其余状态各 1 张（浅色、中文、默认字号）；同名 / 改名各加 1 张英文，完整登记见 page-mapping.md。
 - 基线只允许由 `ios-regen-screenshots.yml` 生成；禁止提交本地基线。
 
 ## 11. 禁止清单

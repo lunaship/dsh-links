@@ -45,7 +45,7 @@ targets:
       - path: App
         excludes:
           - Info.plist
-          - Demo/fixtures/components.json
+          - Demo/fixtures
       - path: App/Demo/fixtures
         buildPhase: resources
     dependencies:

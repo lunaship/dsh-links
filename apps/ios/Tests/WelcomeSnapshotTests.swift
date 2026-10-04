@@ -1,6 +1,7 @@
 import SnapshotTesting
 import SwiftUI
 import XCTest
+
 @testable import DeepLinks
 
 final class WelcomeSnapshotTests: XCTestCase {
@@ -10,7 +11,7 @@ final class WelcomeSnapshotTests: XCTestCase {
     }
 
     func testWelcomeLight() {
-        let view = RootView()
+        let view = NavigationStack { WelcomeView() }
         assertSnapshot(
             of: view,
             as: .image(layout: .fixed(width: 402, height: 874)),
